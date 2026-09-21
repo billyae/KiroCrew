@@ -1030,3 +1030,44 @@ async def test_hook_based_policy_still_approves_a_read_kind_tool():
     provider = await _run_read_only(_read_only_event(), policy=ToolApprovalPolicy.HOOK_BASED)
     assert provider.approved == ["r1"]
     assert provider.rejected == []
+
+
+@pytest.mark.asyncio
+async def test_hook_based_resolves_push_verdict_activation_off_loop_for_a_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GPT 6.1 F2: the HOOK_BASED/READ_ONLY path must resolve the push-verdict activation
+    reading OFF the event loop and PASS it to ``on_tool_call``, so the hook's ``is_denied``
+    never reads the activation keystone synchronously on the loop.
+
+    The hook is a MagicMock, so this asserts the KWARG ``_resolve_permission`` hands it: a
+    ``push_verdict_activation`` that is a resolved ``PushVerdictActivation`` (not ``None``) for a
+    git-publish title.
+
+    Mutation check: before the fix the call passed no ``push_verdict_activation`` (defaulting to
+    ``None``), so the hook's ``is_denied`` read the keystone inline on the loop -- this assertion
+    (non-None kwarg) fails under that behaviour.
+    """
+    from kiro_crew.hooks import ToolHookResult
+    from kiro_crew.llm_helpers import _resolve_permission
+    from kiro_crew.security import PushVerdictActivation
+
+    provider = _ScriptedProvider([])
+    hooks = MagicMock()
+    hooks.on_tool_call = MagicMock(return_value=ToolHookResult.auto_approve())
+    hooks.effective_denied_regexes = MagicMock(return_value=[])
+
+    event = LLMEvent(
+        kind=EVENT_PERMISSION_REQUEST, title="git push origin feature-x", request_id="r1"
+    )
+    approved = await _resolve_permission(
+        provider,  # type: ignore[arg-type]
+        event,
+        ToolApprovalPolicy.HOOK_BASED,
+        hooks,
+    )
+    assert approved is True
+    assert hooks.on_tool_call.call_count == 1
+    _kwargs = hooks.on_tool_call.call_args.kwargs
+    assert "push_verdict_activation" in _kwargs
+    assert isinstance(_kwargs["push_verdict_activation"], PushVerdictActivation)
