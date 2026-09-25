@@ -91,6 +91,8 @@ type AppInfo = Pick<RegistryApp, '_registry' | 'provenance'> & {
   installedVersion?: string
   enabled?: boolean
   sessionApprovalConsentPending?: boolean
+  /** Server prose: why the backend is not running and what the user must do. */
+  backendNotice?: string
   managed?: string
   source?: string
   installedAt?: string
@@ -784,6 +786,7 @@ export default function AppDetailPage() {
             installedVersion: installed.version,
             enabled: installed.enabled,
             sessionApprovalConsentPending: installed.sessionApprovalConsentPending,
+            backendNotice: installed.backend_notice,
             managed: installed.managed,
             source: installed.source,
             installedAt: installed.installedAt,
@@ -908,6 +911,7 @@ export default function AppDetailPage() {
             installedVersion: installed.version,
             enabled: installed.enabled,
             sessionApprovalConsentPending: installed.sessionApprovalConsentPending,
+            backendNotice: installed.backend_notice,
             managed: installed.managed,
             source: installed.source,
             installedAt: installed.installedAt,
@@ -1391,6 +1395,22 @@ export default function AppDetailPage() {
             <ShieldAlert size={14} className="mt-[3px] shrink-0 text-warn" />
             <span className="text-text text-sm">{reconsentMsg}</span>
           </div>
+        )}
+
+        {/* The backend of an enabled app did not start for a reason only the user
+            can fix (a port held by another program, an update that skipped its
+            restart). A failed start, so it uses the shared error surface. The agent
+            hand-off is on: the user may need help finding and closing the program on
+            that port, and the page holds no draft to lose. No dismiss control: the
+            server clears the notice on the next successful start. */}
+        {app.enabled && (
+          <ErrorNotice
+            message={app.backendNotice}
+            askAgent
+            testId="app-backend-notice"
+            className="mb-4 animate-rise"
+            messageClassName="whitespace-pre-line"
+          />
         )}
 
         {/* Error. No special execution-policy branch here any more: an untrusted
