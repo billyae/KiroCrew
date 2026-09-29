@@ -63,6 +63,11 @@ def _grant(_floor_monkeypatch: pytest.MonkeyPatch, sel_calls: MagicMock) -> None
         "_app_api_allowlist",
         lambda name: ("/api/crons",) if name in (APP_A, APP_B) else (),
     )
+    # The scope check now also fail-closes on an app that is not installed and
+    # enabled. These test apps exist only as a declared allowlist, so stub the
+    # enablement gate to not-denied -- the real middleware sees an installed,
+    # enabled app, and this test is about cron ownership scoping, not enablement.
+    _floor_monkeypatch.setattr(token_auth, "_app_enablement_denied", lambda name: False)
 
 
 @pytest.fixture
@@ -128,7 +133,7 @@ def _server(svc: CronService, app_claim: str) -> web.Application:
         request["user"] = OWNER_SUBJECT
         request["app"] = app_claim
         if app_claim:
-            denied = token_auth._enforce_app_scope(request, app_claim, request.path)
+            denied = await token_auth._enforce_app_scope(request, app_claim, request.path)
             if denied is not None:
                 return denied
         return await handler(request)
