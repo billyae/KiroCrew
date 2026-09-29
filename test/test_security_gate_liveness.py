@@ -164,6 +164,20 @@ def _url_payload_command(n: int) -> str:
 #: holds the canonical spelling and is off the event loop, so the anchors resolve
 #: inline. No new entry point, no target, no matching rule and no threshold moved.
 #:
+#: Raised again, from 28,572, for naming the program and target tokens in a self-kill
+#: refusal: ``argv_floor`` splits the command into shell words at their real source
+#: offsets through the shared quote/escape state machine, aligns those raw word spans
+#: to the resolved frame's tokens by index, and brackets the kill program and its
+#: target at their true offsets even when the program entered through a ``$VAR``
+#: expansion, so the assignment that only mentions the name is not mistaken for the
+#: target; only the offset-mappable top-level frame is bracketed and a raw/token count
+#: mismatch falls back to the whole span. ``diagnostics`` carries the optional program
+#: and target spans plus the ``RefusalTokenSpan`` record, keeping the ``span=`` line
+#: byte-identical when they are omitted. The offset machinery lives in a new
+#: ``argv_spans`` module -- the raw word-span splitter and its index alignment -- so
+#: ``argv_floor`` stays under its per-module cap; most of the cost is that machinery
+#: and its record, not new matching logic.
+#:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
 #: added here fails this gate and has to be re-pinned deliberately, with its reason
@@ -194,6 +208,11 @@ def _url_payload_command(n: int) -> str:
 #: helper strips a local-drive namespace prefix and a default-stream suffix, and
 #: ``_candidate_forms`` resolves the folded spelling while keeping the raw one as a
 #: candidate. No target, no matching rule and no threshold moved.
+#:
+#: Raised again, from 28,572, for naming the program and target tokens in a self-kill
+#: refusal: the ``argv_spans`` module and the optional program/target span fields on
+#: ``diagnostics`` are the measured growth; the number below is re-pinned to the new
+#: measured total.
 _PACKAGE_LINE_BUDGET = 28_572
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
