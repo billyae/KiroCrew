@@ -243,6 +243,19 @@ export const CHUNK_BUDGETS = {
   // so ordinary first-party growth does not re-trip this on the next PR.
   App: 2094 * KB, // measured 2,041,857 B on main @ 2d4278a18 with route-only pages lazy (~5% headroom)
 
+  // The chat-pane shell (`src/components/ChatPane.tsx` and the message
+  // renderers it statically pulls in). This epic adds the always-on thread
+  // affordances to it: the Reply-in-thread row action and sticky opener header
+  // live on every assistant/user message row, the thread drawer/footer and the
+  // thread hooks (`messageRenderers`/`threadHooks`) are part of the chat
+  // surface itself, not a lazily-opened dialog, so no `import()` boundary can
+  // move them off first paint of the row actions without regressing them. The
+  // analyze build measures the chunk at 519.6 KB against the 500 KB default --
+  // 19.6 KB of this feature's first-party UI, no new dependency. Give it its
+  // own entry at ~5% headroom over the measured size (the file-wide convention)
+  // so ordinary first-party chat-surface growth does not re-trip the default.
+  ChatPane: 546 * KB, // measured 519.6 KB on this branch (threads row affordances; ~5% headroom)
+
   // Markdown/math/syntax rendering stack (katex, highlight.js, remark/rehype)
   // -- one deliberate `codeSplitting` group, see vite.config.ts.
   'vendor-markdown': 712 * KB, // measured 678 KB

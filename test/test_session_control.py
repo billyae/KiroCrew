@@ -4165,6 +4165,7 @@ _DASHBOARD_TOOL_CALLS = {
     "chat_tag_column_create": {"name": "Urgent", "tag": "todo"},
     "chat_tag_column_move": {"column": "Todo", "after": "Live"},
     "session_create": {},
+    "thread_open": {"title": "aside"},
     "session_fork": {},
     "session_stop": {"target": "chat-2"},
     "session_end_wait": {"target": "chat-2"},

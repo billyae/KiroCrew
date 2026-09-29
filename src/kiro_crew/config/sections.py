@@ -2632,12 +2632,13 @@ class DashboardConfig:
     crewmate_threads: bool = field(
         default=False,
         metadata=_meta(
-            "Reply threads on crewmate chat messages",
-            "Let any message in a crewmate's chat carry its own reply thread, "
-            "opened in the side panel while the main chat stays visible. Off by "
-            "default: the thread routes answer not-found, no thread frame is sent, "
-            "and the dashboard draws no Reply in thread control. Takes effect on "
-            "the next request; no restart.",
+            "Reply threads on the crewmate page",
+            "Gate the crewmate page's own reply-thread panel: with it on, a message "
+            "in a crewmate's chat carries a Reply in thread control that opens in the "
+            "side panel while the main chat stays visible. The backend thread routes "
+            "and the thread_open tool are not gated by this flag -- threads are "
+            "reachable on ordinary chat regardless of it; this gates only the "
+            "crewmate page's panel. Takes effect on the next request; no restart.",
         ),
     )
     crewmates_in_agent_picker: bool = field(

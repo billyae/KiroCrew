@@ -2019,13 +2019,14 @@ export default function MembersPage() {
   // beside the transcript; the open thread takes over the side panel while it
   // is on screen, and closing it hands the panel's tabs back. Keyed on the
   // CONFIRMED slot only, like every other slot-bound view here.
-  // Behind `dashboard.crewmate_threads` (off by default): off, no footer read
-  // is made, no Reply in thread control is offered and no panel is mounted --
-  // the routes answer 404 then, so a control drawn anyway would only reach a
-  // refusal. Flipping the flag off closes an open thread. A config read that
-  // FAILED is not "off": the flag keeps its last known value and the failure
-  // is said below (ErrorNotice + Retry), so threads that are on do not vanish
-  // as if the switch had been flipped.
+  // Behind `dashboard.crewmate_threads` (off by default) on THIS page: off, no
+  // footer read is made, no Reply in thread control is offered here and no panel
+  // is mounted. The backend thread routes are no longer flag-gated (a thread is a
+  // full session openable from any surface), so the flag now gates only the
+  // Crewmates page's own panel, not the routes themselves. Flipping the flag off
+  // closes an open thread here. A config read that FAILED is not "off": the flag
+  // keeps its last known value and the failure is said below (ErrorNotice +
+  // Retry), so threads that are on do not vanish as if the switch had been flipped.
   const {
     on: threadsOn,
     failed: threadsFlagFailed,
@@ -2041,7 +2042,8 @@ export default function MembersPage() {
     staleTime: 30_000,
   })
   const threadSummaries = threadsQuery.data?.threads
-  const openReplyThread = useCallback((mid: string) => {
+  const openReplyThread = useCallback((mid: string | undefined) => {
+    if (!mid) return
     setOpenThreadMid(mid)
     if (beside) setDockedOpen(true)
     else setOverlayOpen(true)

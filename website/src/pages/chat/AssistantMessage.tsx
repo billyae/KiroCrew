@@ -91,7 +91,7 @@ const LazyShareMessageModal = lazy(() => import('./share/ShareMessageModal'))
     unavailable fork affordance that sits outside it. */
 const ACTIONS_REVEAL_CLS = `flex items-center gap-y-1 mt-1 opacity-0 transition-opacity duration-300 delay-100 group-hover/msg:opacity-100 group-hover/msg:delay-300 group-focus-within/msg:opacity-100 group-focus-within/msg:delay-300 ${ICON_ACTION_ROW_CLS}`
 
-const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, onFileOpen, onFolderOpen, onArtifactOpen, onSessionOpen, sessions, activeSession, planTaskId, onApplyPlan, slotRunning, onSpeak, timestamp, timestampTitle, showFooter = true, revealActions = false, onRegenerate, variants, variantIdx, onSwitchVariant, isRegenerating, onFork, forkIndex, forkMessageId, onLoadEarlier, loadingOlder, earlierRemaining, onQuote, onAsk, messageTs, slotKey, slotTitle, mode, fileChanges, fileChangesOmittedFiles, onOpenDiff, fileChipStyle, artifactPaths, turnStats, decisionsStrip, linkPreviews, pinned, onTogglePin, suppressSteerAck, prevUserText, shareEnabled = false, bubbleClassName, onReplyInThread, blockedLinks, redactions, showRedactionCoach = false, onQuoteMessage }: { content: string; isStreaming: boolean; onFileOpen?: (path: string, opts?: { line?: number; endLine?: number }) => void; onFolderOpen?: (path: string) => void; onArtifactOpen?: (slug: string) => void; onSessionOpen?: (key: string) => void; sessions?: ReadonlyMap<string, string>; activeSession?: string; planTaskId?: string; onApplyPlan?: (steps: PlanStepInput[]) => Promise<boolean>; slotRunning?: boolean; onSpeak?: (content: string) => void; timestamp?: string; timestampTitle?: string; showFooter?: boolean; revealActions?: boolean; onRegenerate?: () => void; variants?: { content: string; ts?: string; blocked_links?: unknown; redactions?: unknown }[]; variantIdx?: number; onSwitchVariant?: (index: number) => void; isRegenerating?: boolean; onFork?: (index: number, messageId?: string) => void | Promise<void>; forkIndex?: number; forkMessageId?: string; onLoadEarlier?: () => void; loadingOlder?: boolean; earlierRemaining?: number; onQuote?: (text: string, rect: DOMRect) => void; onAsk?: (text: string, rect: DOMRect) => void; messageTs?: string; slotKey?: string; slotTitle?: string; mode?: string; fileChanges?: FileChangeEntry[]; /** Raw `meta.file_changes_omitted_files`: files the turn's snapshot limits left out of `fileChanges`. Rendered only beside a non-empty `fileChanges`, which is the only way the gateway sends it. */ fileChangesOmittedFiles?: unknown; onOpenDiff?: (path: string, modified: string, original: string) => void; fileChipStyle?: FileChipStyle; artifactPaths?: Set<string>; turnStats?: TurnStats; /** Raw `decisions_strip` record off the message, validated here. Absent renders nothing. */ decisionsStrip?: unknown; linkPreviews?: boolean; pinned?: boolean; onTogglePin?: () => void; /** Drop the steer chip: this turn's steer was a system policy notice, not the user's. */ suppressSteerAck?: boolean; /** The user question this reply answered — enables the share card's Q&A pairing. */ prevUserText?: string; /** Governance answer from `/api/dashboard/config` (`social_share_enabled`). The host passes it explicitly; an absent prop hides Share, so a forgotten wire fails closed. */ shareEnabled?: boolean; /** Extra classes on the `.message-bubble` element — a host that draws the reply as a bordered bubble (a crewmate's chat) passes its surface and corners here; the stable theming hook itself is untouched. */ bubbleClassName?: string; /** Open (or start) the reply thread on this message. Only a crewmate's chat offers it. */ onReplyInThread?: () => void; /** Raw `meta.blocked_links` off this message — the step-3 suspicious-URL records the blocked-link chip renders from. Handed straight to `MarkdownRenderer`, which validates the shape. */ blockedLinks?: unknown; /** Raw `meta.redactions`: one record per credential placeholder, validated by `MarkdownRenderer`. */ redactions?: unknown; /** This is the first reply in the session with a removed credential: show the one-time coach after it. */ showRedactionCoach?: boolean; /** Stage this whole reply as the quote of the next send. Offered: the row reads seat + Copy + More, where the seat is Quote unless Reply in thread, Regenerate or Fork holds it (the raw toggle, Copy link and Pin move into More); it also arms the bubble's right-click / long-press menu (Quote first). Absent: row and bubble unchanged. Receives the text this bubble is SHOWING (the locally browsed variant when there is one), so the quote is what the reader sees. */ onQuoteMessage?: (shownContent: string) => void }) {
+const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, onFileOpen, onFolderOpen, onArtifactOpen, onSessionOpen, sessions, activeSession, planTaskId, onApplyPlan, slotRunning, onSpeak, timestamp, timestampTitle, showFooter = true, revealActions = false, onRegenerate, variants, variantIdx, onSwitchVariant, isRegenerating, onFork, forkIndex, forkMessageId, onLoadEarlier, loadingOlder, earlierRemaining, onQuote, onAsk, messageTs, slotKey, slotTitle, mode, fileChanges, fileChangesOmittedFiles, onOpenDiff, fileChipStyle, artifactPaths, turnStats, decisionsStrip, linkPreviews, pinned, onTogglePin, suppressSteerAck, prevUserText, shareEnabled = false, bubbleClassName, onReplyInThread, replyInThreadLabelKey, blockedLinks, redactions, showRedactionCoach = false, onQuoteMessage }: { content: string; isStreaming: boolean; onFileOpen?: (path: string, opts?: { line?: number; endLine?: number }) => void; onFolderOpen?: (path: string) => void; onArtifactOpen?: (slug: string) => void; onSessionOpen?: (key: string) => void; sessions?: ReadonlyMap<string, string>; activeSession?: string; planTaskId?: string; onApplyPlan?: (steps: PlanStepInput[]) => Promise<boolean>; slotRunning?: boolean; onSpeak?: (content: string) => void; timestamp?: string; timestampTitle?: string; showFooter?: boolean; revealActions?: boolean; onRegenerate?: () => void; variants?: { content: string; ts?: string; blocked_links?: unknown; redactions?: unknown }[]; variantIdx?: number; onSwitchVariant?: (index: number) => void; isRegenerating?: boolean; onFork?: (index: number, messageId?: string) => void | Promise<void>; forkIndex?: number; forkMessageId?: string; onLoadEarlier?: () => void; loadingOlder?: boolean; earlierRemaining?: number; onQuote?: (text: string, rect: DOMRect) => void; onAsk?: (text: string, rect: DOMRect) => void; messageTs?: string; slotKey?: string; slotTitle?: string; mode?: string; fileChanges?: FileChangeEntry[]; /** Raw `meta.file_changes_omitted_files`: files the turn's snapshot limits left out of `fileChanges`. Rendered only beside a non-empty `fileChanges`, which is the only way the gateway sends it. */ fileChangesOmittedFiles?: unknown; onOpenDiff?: (path: string, modified: string, original: string) => void; fileChipStyle?: FileChipStyle; artifactPaths?: Set<string>; turnStats?: TurnStats; /** Raw `decisions_strip` record off the message, validated here. Absent renders nothing. */ decisionsStrip?: unknown; linkPreviews?: boolean; pinned?: boolean; onTogglePin?: () => void; /** Drop the steer chip: this turn's steer was a system policy notice, not the user's. */ suppressSteerAck?: boolean; /** The user question this reply answered — enables the share card's Q&A pairing. */ prevUserText?: string; /** Governance answer from `/api/dashboard/config` (`social_share_enabled`). The host passes it explicitly; an absent prop hides Share, so a forgotten wire fails closed. */ shareEnabled?: boolean; /** Extra classes on the `.message-bubble` element — a host that draws the reply as a bordered bubble (a crewmate's chat) passes its surface and corners here; the stable theming hook itself is untouched. */ bubbleClassName?: string; /** Open (or start) the reply thread on this message. Only a crewmate's chat offers it. */ onReplyInThread?: () => void; /** Catalog key naming what that control DOES here -- an ended anchor mints a new thread while the close card reopens the old one, so the two must not share a label. Absent uses the plain 'Reply in thread'. */ replyInThreadLabelKey?: string; /** Raw `meta.blocked_links` off this message — the step-3 suspicious-URL records the blocked-link chip renders from. Handed straight to `MarkdownRenderer`, which validates the shape. */ blockedLinks?: unknown; /** Raw `meta.redactions`: one record per credential placeholder, validated by `MarkdownRenderer`. */ redactions?: unknown; /** This is the first reply in the session with a removed credential: show the one-time coach after it. */ showRedactionCoach?: boolean; /** Stage this whole reply as the quote of the next send. Offered: the row reads seat + Copy + More, where the seat is Quote unless Reply in thread, Regenerate or Fork holds it (the raw toggle, Copy link and Pin move into More); it also arms the bubble's right-click / long-press menu (Quote first). Absent: row and bubble unchanged. Receives the text this bubble is SHOWING (the locally browsed variant when there is one), so the quote is what the reader sees. */ onQuoteMessage?: (shownContent: string) => void }) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   const [applied, setApplied] = useState(false)
   // Successful Copy / Copy-link presses flash on the icon for 1.5s. Text-copy
@@ -385,7 +385,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, 
   useEffect(() => {
     if (!menuAvailable || isStreaming || !showFooter) setOverflowOpen(false)
   }, [isStreaming, menuAvailable, showFooter])
-  // A reply that previously had no overflow swaps Copy for More. That keeps the
+  // A reply that had no overflow on base swaps Copy for More. That keeps the
   // footer's peer-control count unchanged while making Speak available for short
   // replies too. Existing overflow footers retain their familiar inline Copy.
   // With Quote offered, Copy always keeps its row button, right after the seat.
@@ -542,6 +542,43 @@ const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, 
   const regenButton = regenRow ? <button className="text-muted hover:text-text p-0.5 rounded transition-colors" title={i18nT('pages.chat.assistantMessage.regenerate')} aria-label={i18nT('pages.chat.assistantMessage.regenerate_response')} onClick={onRegenerate}><RefreshCw size={14} /></button> : null
 
   return <div data-role="assistant" className="group/msg">
+    {/* The thread opener sits in a header row at the TOP of the reply, in the same
+        place whether the reply is streaming or finished.
+
+        Why not in the body's own action row: while a reply streams, the body grows
+        under the pointer, so a control that rides it walks away from the cursor
+        between the decision to click and the click -- the worst moment to offer
+        "branch off this answer" is exactly when a long answer is going the wrong
+        way. The top of the reply does not move as text is appended below it.
+        Rejected alternatives are recorded in NOTES.md.
+        Sticky, so a reply taller than the viewport keeps the control on screen at a
+        predictable spot. It has to live OUTSIDE `.message-bubble`: that element is
+        `overflow-hidden`, and a clipping ancestor between a sticky element and the
+        scroll container turns sticky back into static.
+        The strip itself takes no pointer events so it cannot swallow a click on the
+        prose scrolling beneath it; the button takes its own. */}
+    {onReplyInThread && (
+      <div
+        className="sticky top-0 z-10 flex items-center justify-end min-h-5 -mb-1 pointer-events-none"
+        data-testid="thread-opener-header"
+      >
+        {/* Labelled, not icon-only. A speech bubble is not a universal glyph for
+            "open a thread here", and a blind read of this control found it only
+            after a labelled pill elsewhere taught what the icon meant. The label
+            is what makes it legible on first sight. */}
+        <button
+          type="button"
+          className="pointer-events-auto inline-flex items-center gap-1 text-muted hover:text-text px-1 py-0.5 rounded bg-bg transition-colors"
+          data-testid="reply-in-thread-streaming"
+          title={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')}
+          aria-label={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')}
+          onClick={onReplyInThread}
+        >
+          <MessageSquare size={14} />
+          <span className="text-sm">{i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')}</span>
+        </button>
+      </div>
+    )}
     {/* 'message-bubble' is a stable theming hook — see website/docs/theming-contract.md */}
     <MessageContextMenu items={contextItems}>
     <div ref={contentRef} className={`message-bubble mc-message-font-scope msg-content group/bubble relative leading-relaxed text-text overflow-hidden${bubbleClassName ? ` ${bubbleClassName}` : ''}`} data-testid="message-bubble" data-bordered={bubbleClassName ? '' : undefined} style={rawMode && rawBoxHeight !== null && !isStreaming
@@ -655,7 +692,15 @@ const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, 
             alignment the mono was actually there for — and it holds the action
             row below at the same x across messages. */}
         {timestamp && <span className="text-muted text-[12px] leading-5 tabular-nums mr-2" title={timestampTitle}>{timestamp}</span>}
-        {onReplyInThread && <button className="text-muted hover:text-text p-0.5 rounded transition-colors" data-testid="reply-in-thread" title={i18nT('pages.chat.thread.reply_in_thread')} aria-label={i18nT('pages.chat.thread.reply_in_thread')} onClick={onReplyInThread}><MessageSquare size={14} /></button>}
+        {/* The thread action rides the sticky opener above (always present when
+            onReplyInThread is set) AND, as a convenience, the row seat -- but ONLY
+            when it actually holds the seat. On the newest reply Regenerate (or
+            Fork) takes the seat, and an inline thread button beside it would make
+            the row Reply-in-thread + Regenerate + Copy + More -- four controls,
+            over the two-button-per-row cap (AUTOSDE max-two-buttons-per-row). So
+            the inline button draws only when no seat button does; the sticky
+            opener carries the action in every other case. */}
+        {onReplyInThread && !regenRow && !forkRow && <button className="text-muted hover:text-text p-0.5 rounded transition-colors" data-testid="reply-in-thread" title={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')} aria-label={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')} onClick={onReplyInThread}><MessageSquare size={14} /></button>}
         {/* With Quote offered the seat comes first, then Copy (see quoteRow).
             Regenerate holds the seat over Fork; on the newest reply of a loaded
             window, where both draw, Fork follows Copy so Copy stays second. */}

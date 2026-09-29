@@ -295,10 +295,17 @@ class WriteJob:
         run: Callable[[], None],
         what: str,
         *,
+        after: Callable[[], None] | None = None,
         on_drop: Callable[[], None] | None = None,
     ) -> "WriteJob":
-        """The record that creates a unit's log. Never refused at the memory ceiling."""
-        return cls(run, what, JobKind.OPENING, 0, None, on_drop)
+        """The record that creates a unit's log. Never refused at the memory ceiling.
+
+        ``after`` runs once the opening job lands or the writer definitively drops it,
+        exactly as on :meth:`append`; an opening entry carries it so a reader that must
+        not act before the log's first line commits (a thread's parent edge) has a
+        signal to wait on.
+        """
+        return cls(run, what, JobKind.OPENING, 0, after, on_drop)
 
     @classmethod
     def follow_on(cls, run: Callable[[], None], what: str) -> "WriteJob":

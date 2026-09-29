@@ -53,6 +53,10 @@ interface UserMessageProps {
   onTogglePin?: () => void
   /** Open (or start) the reply thread on this message. Only a crewmate's chat offers it. */
   onReplyInThread?: () => void
+  /** Catalog key naming what the thread control DOES here -- an ended anchor mints
+   *  a new thread while the close card reopens the old one, so the two must not
+   *  share a label. Absent uses the plain 'Reply in thread'. */
+  replyInThreadLabelKey?: string
   /** Whether the slot currently has a running turn. Gates the pending-steer
    *  indicator: the backend settle is best-effort, so a row can be stranded in
    *  `written` forever, and a perpetual "Steering…" pulse on an idle slot
@@ -92,7 +96,7 @@ interface UserMessageProps {
   onJumpToQuote?: (quote: MessageQuote) => void
 }
 
-const UserMessage = memo(function UserMessage({ content, meta, timestamp, timestampTitle, renderContent, canEdit, messageIndex, messageTs, onEditResend, doubleClickToEdit = false, slotKey, slotTitle, mode, pinned, onTogglePin, onReplyInThread, slotRunning, hideSteerBadge, editRequest, onEditConsumed, onQuoteMessage, onJumpToQuote }: UserMessageProps) {
+const UserMessage = memo(function UserMessage({ content, meta, timestamp, timestampTitle, renderContent, canEdit, messageIndex, messageTs, onEditResend, doubleClickToEdit = false, slotKey, slotTitle, mode, pinned, onTogglePin, onReplyInThread, replyInThreadLabelKey, slotRunning, hideSteerBadge, editRequest, onEditConsumed, onQuoteMessage, onJumpToQuote }: UserMessageProps) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   const [editing, setEditing] = useState(false)
   const ime = useImeGuard()
@@ -613,8 +617,8 @@ const UserMessage = memo(function UserMessage({ content, meta, timestamp, timest
             onClick={onReplyInThread}
             className="text-muted hover:text-text p-0.5 rounded transition-colors"
             data-testid="reply-in-thread"
-            title={i18nT('pages.chat.thread.reply_in_thread')}
-            aria-label={i18nT('pages.chat.thread.reply_in_thread')}
+            title={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')}
+            aria-label={i18nT(replyInThreadLabelKey || 'pages.chat.thread.reply_in_thread')}
           >
             <MessageSquare size={14} />
           </button>

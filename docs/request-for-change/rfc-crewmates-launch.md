@@ -290,6 +290,31 @@ Decided:
 - P1: the launch may ship without threads; when they ship, this is their
   shape.
 
+Amendment (2026-09-29, revised on rebase 2026-10-07): this PR makes a thread a
+full session openable from a message on any chat surface — ordinary chat, a
+member or crewmate DM, `td-*` resident sessions, and Slack — by ungating the
+backend thread routes and the `thread_open` MCP tool, which no longer check a
+feature flag. The developer flag `dashboard.crewmate_threads` is **kept, not
+removed**: it still gates the Crewmates page's own thread panel
+(`config/sections.py`, `config/loader.py`, `dashboard/handlers/core.py`,
+`useCrewmateThreadsFlag.ts`, `CrewmatesSection.tsx`), so a stored `true`/`false`
+in an existing `config.json` keeps its meaning for that surface. The reasoning
+for a thread needing no switch of its own stands: a thread is a full session, so
+`session_control` already governs it (close it, stop its turn, switch it off); a
+separate thread switch would be a second spelling of that control, and Slack
+carries threads natively so a Kiro Crew switch there would gate a surface the
+product does not own.
+
+GOVERNANCE — OPEN: making threads reachable on **every** chat surface by default
+(not only flag-gated Crewmates) is a product-shape change. The accepted base
+§07 scopes threads to Crewmates. This amendment records the implemented scope but
+does **not** itself constitute acceptance of that expansion: whether the
+always-on default ships needs a maintainer's call / RFC acceptance on main, or a
+`/ai-review override` on First Principles. Until then the code is honest about
+what it does — ungated API, flag-gated Crewmates UI — and the docs no longer
+claim a removal that did not happen. Sections 01-06 and 08-09 are unchanged; this
+amends only the scope and default of §07.
+
 ### 08 Meet CrewMates onboarding
 
 Decided: a four-step flow in the product's existing split-screen first-run

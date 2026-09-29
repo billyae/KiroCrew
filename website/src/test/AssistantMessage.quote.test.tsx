@@ -83,6 +83,19 @@ describe('AssistantMessage row with Quote offered', () => {
     expect(onQuote).toHaveBeenCalledTimes(1)
   })
 
+  it('on the newest reply beside Reply in thread, Regenerate keeps the seat and the inline thread button is dropped (max-two-buttons-per-row)', () => {
+    // GPT 6.1 F1 / AUTOSDE max-two-buttons-per-row: Regenerate holds the seat on
+    // the newest reply, so an inline Reply-in-thread button would make the row
+    // Reply-in-thread + Regenerate + Copy + More -- four controls, over the cap.
+    // The inline button is dropped; the sticky thread opener carries the action.
+    render(<AssistantMessage content={LONG} isStreaming={false} slotRunning={false} onRegenerate={() => {}} onReplyInThread={() => {}} onQuoteMessage={() => {}} />)
+    expect(rowLabels()).toEqual(['Regenerate response', 'Copy', 'More actions'])
+    // No inline row thread button; the sticky opener is still present.
+    expect(screen.queryByTestId('reply-in-thread')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thread-opener-header')).toBeInTheDocument()
+    expect(screen.getByTestId('reply-in-thread-streaming')).toBeInTheDocument()
+  })
+
   it('without Quote the shipped row is unchanged: inline Copy, no More menu', () => {
     render(<AssistantMessage content={LONG} isStreaming={false} slotRunning={false} />)
     expect(screen.getByLabelText('Copy')).toBeInTheDocument()
