@@ -867,6 +867,11 @@ class LaunchRequest:
     pod_home_remap: bool = False
     #: The runtime allocates scratch through its guarded hop; the client never has.
     guard_scratch_hops: bool = False
+    #: A frozen SSH_AUTH_SOCK-forward verdict the caller resolved earlier (the
+    #: chat-sharing placement reads consent before it keys on it, so the joining
+    #: spawn must match that key verbatim). ``None`` means resolve it here via
+    #: ``tools.forward_ssh_auth_sock`` like every other launch.
+    forward_ssh_auth_sock_override: bool | None = None
     env_after_scrub: Callable[[dict[str, str]], None] = field(default=_no_env_step)
     env_after_marker: Callable[[dict[str, str]], None] = field(default=_no_env_step)
     env_after_scratch: Callable[[dict[str, str]], None] = field(default=_no_env_step)
@@ -953,7 +958,13 @@ async def launch(host: LaunchHost, request: LaunchRequest, tools: LaunchTools) -
     # the sandbox wrap below and the parent-side scrub further down, so neither
     # reads config synchronously on the loop. Scoped to this agent spawn:
     # generic launchers default the flag off and keep scrubbing the socket.
-    forward_ssh_auth_sock = await asyncio.to_thread(tools.forward_ssh_auth_sock)
+    # A frozen override (the chat-sharing placement, which read consent before it
+    # keyed on it) is used verbatim so the joining process matches its key; every
+    # other caller resolves it here.
+    if request.forward_ssh_auth_sock_override is not None:
+        forward_ssh_auth_sock = request.forward_ssh_auth_sock_override
+    else:
+        forward_ssh_auth_sock = await asyncio.to_thread(tools.forward_ssh_auth_sock)
     argv, host._sandbox_cleanup = await tools.wrap_argv_async(
         argv,
         mode=request.sandbox_mode,
