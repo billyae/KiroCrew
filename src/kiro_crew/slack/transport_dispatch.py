@@ -88,6 +88,7 @@ from kiro_crew.slack.thread_replies import (
     note_turn,
     replies_since_last_turn,
 )
+from kiro_crew.slack.threads import record_anchor as record_thread_anchor
 from kiro_crew.start_priority import StartPriority
 from kiro_crew.stats import Stats
 
@@ -618,6 +619,34 @@ async def handle_message_transport(
         )
         if is_new:
             await sessions.set_channel(session_key, channel)
+        # Record the session Slack keys for this thread as an ANCHORED thread, on
+        # EVERY dispatch. Slack already keys one session per thread, so this adds
+        # the anchor and nothing else -- no re-keying, no second session. Not
+        # gated on ``is_new``, for the reason the handler path gives: the metadata
+        # write can fail transiently and ``record_thread_anchor`` swallows that by
+        # contract, and ``is_new`` is false for every later message in the thread,
+        # so a gated call would lose the anchor for the life of the process. The
+        # recorder is IDEMPOTENT -- an anchored session is returned untouched and
+        # writes no second ``thread/opened`` -- so a repeat costs one metadata
+        # read. ``set_channel`` stays gated above; it is not idempotent.
+        #
+        # Off the loop because it reads and rewrites a metadata line; never raises,
+        # and answers None for a folded DM or a dashboard-linked route because
+        # `session_key` is then not this thread's key. See slack/threads.py.
+        #
+        # Gated on restricted mode: an !incognito / !temporary session must not
+        # have thread-anchor metadata (``_thread_anchor``, ``agent``) persisted
+        # to its conversation log, same as every other write-side gate here.
+        if not _is_slack_restricted(session_key):
+            await asyncio.to_thread(
+                record_thread_anchor,
+                conversation_log=conversation_log,
+                session_key=session_key,
+                channel=channel,
+                reply_ts=reply_ts,
+                client=client,
+                agent=_agent,
+            )
         if (
             not _flat_key
             and not linked_session_key
