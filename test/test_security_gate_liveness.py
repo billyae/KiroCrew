@@ -194,7 +194,13 @@ def _url_payload_command(n: int) -> str:
 #: helper strips a local-drive namespace prefix and a default-stream suffix, and
 #: ``_candidate_forms`` resolves the folded spelling while keeping the raw one as a
 #: candidate. No target, no matching rule and no threshold moved.
-_PACKAGE_LINE_BUDGET = 28_572
+#:
+#: Raised for the AWS env-filter rules. grep reads the selector as text, while awk
+#: evaluates it as code and sed can delimit an address with any character, so they
+#: are two catalog rows the keystone both enforces (one row would need a top-level
+#: alternation, which leaves the linear fragment matcher); only grep's text
+#: selector lets ``aws-account-id=`` pass.
+_PACKAGE_LINE_BUDGET = 28_605
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
