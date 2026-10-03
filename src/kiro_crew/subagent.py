@@ -272,6 +272,7 @@ UNADVERTISED_AGENTS = frozenset(
         "kirocrew-conductor",
         "kirocrew-pipeline-conductor",
         "kirocrew-security-conductor",
+        "kirocrew-captain",
     }
 )
 

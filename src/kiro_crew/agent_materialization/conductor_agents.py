@@ -18,6 +18,8 @@ from typing import Any
 
 from kiro_crew import agent as agent_mod
 from kiro_crew import agent_discovery
+from kiro_crew.agent_files import CAPTAIN_AGENT_FILENAME as _CAPTAIN_AGENT_FILENAME
+from kiro_crew.agent_files import CAPTAIN_AGENT_NAME as _CAPTAIN_AGENT_NAME
 from kiro_crew.agent_files import CONDUCTOR_AGENT_FILENAME as _CONDUCTOR_AGENT_FILENAME
 from kiro_crew.agent_files import (
     LEDGER_CONDUCTOR_AGENT_FILENAME as _LEDGER_CONDUCTOR_AGENT_FILENAME,
@@ -149,6 +151,20 @@ _HISTORY_WORK_VERBS: frozenset[str] = frozenset(
 #: entry can join it only as a grant some release is shown to have shipped.
 _SHIPPED_GRANT_HISTORY: dict[str, frozenset[str]] = {
     "kirocrew-conductor": (
+        frozenset({"session", "report", "tool_search", "@kirocrew-core"})
+        | _HISTORY_CORE_VERBS
+        | {"@kirocrew-core/select_crew"}
+        | _HISTORY_DASHBOARD_VERBS
+        | {"@kirocrew-dashboard/chat_folder_file_self"}
+        | _HISTORY_WORK_VERBS
+        | {"@kirocrew-work/work_ledger_rebuild"}
+    ),
+    # The captain IS the goal conductor's spec under a third name (see
+    # ``_install_captain_agent``), so the grants any release has shipped on it
+    # are the conductor's own -- a captain can never hold a grant the conductor
+    # does not. Keyed separately because ``_governed_grants`` reads this by the
+    # emitted ``name``, and the captain's file is its own.
+    _CAPTAIN_AGENT_NAME: (
         frozenset({"session", "report", "tool_search", "@kirocrew-core"})
         | _HISTORY_CORE_VERBS
         | {"@kirocrew-core/select_crew"}
@@ -598,6 +614,11 @@ def _conductor_spec(
     withheld-grant audit event. ``clean`` is the rebuild's own flag, passed
     through: a clean rebuild carries nothing forward (``_governed_grants``).
 
+    ``kirocrew-captain`` is the third caller and differs in one more field:
+    ``prompt``, which its installer overrides afterwards. Its tools and grants
+    come from this same body, so a captain can never hold a grant the conductor
+    does not.
+
     The charter, and why each property is a property of the SPEC rather than of
     the prompt. Derived from the kirocrew agent (resolved MCP invocations,
     security hooks) and narrowed to what conducting needs: session control,
@@ -754,6 +775,71 @@ def _install_conductor_agent(*, clean: bool = False) -> bool:
     path = agent_mod.kiro_agents_dir_path() / _CONDUCTOR_AGENT_FILENAME
     agent_mod._atomic_json_write(path, config)
     agent_mod.logger.info("Installed conductor agent config: %s", path)
+    return True
+
+
+#: Prepended to the goal conductor's prompt for ``kirocrew-captain``. The charter
+#: below it is unchanged; this only says what is different about the captain.
+_CAPTAIN_PROMPT_PREFIX = """# Kiro Crew Captain
+
+You are `kirocrew-captain`. You run the crew: you can reach every session in
+your workspace, including conductors that other sessions created, which no
+other agent can. The goal-conductor charter below is yours; where it says
+`kirocrew-conductor`, read `kirocrew-captain`.
+
+How to use that reach:
+
+- Steer conductors, not their workers. Send a conductor its decision, its
+  re-plan or its stop with `session_send`, and let it pass the change down.
+  Do not message or stop a worker another conductor owns; ask its conductor.
+- Read before you act. `session_status` lists only what YOU created; for a
+  conductor someone else opened, read it with `session_summary` or
+  `session_read_message` first.
+- Your reach is not inherited. A session you create is fenced like any other
+  agent-made session: it controls only what it creates itself.
+
+"""
+
+
+def _install_captain_agent(*, clean: bool = False) -> bool:
+    """Generate and install the kirocrew-captain agent config.
+
+    The goal conductor's spec under a third name, with a prompt prefix and no
+    other difference: the same no-file-write tool list, the same verb-by-verb
+    grants (``session_send`` and ``session_stop`` still prompt), the same KAS
+    derivation. What makes it a captain is not in the spec at all: the session
+    control fence reads the slot's agent NAME (``CAPTAIN_AGENT_NAME``) and
+    exempts a person-opened captain slot from the creator fence. See
+    ``dashboard/session_control.py``'s ``captain_caller``.
+
+    ``clean`` is threaded like every sibling installer: a clean rebuild carries
+    nothing forward (``_governed_grants``). Returns whether the spec was written;
+    ``False`` is the one non-raising path that leaves the file untouched -- a
+    spec on disk the installer could not read -- so the rebuild folds it into
+    ``conductor_held`` exactly as it does the other conductor installers, and a
+    moved governance ceiling is not marked projected onto a list never rewritten.
+    """
+    config = _conductor_spec(
+        name=_CAPTAIN_AGENT_NAME,
+        description=(
+            "Crew captain: a goal conductor that can also reach and steer "
+            "conductors other sessions created, anywhere in its workspace. "
+            "Only a captain you opened yourself has that reach; a captain an "
+            "agent created is fenced like any other session."
+        ),
+        filename=_CAPTAIN_AGENT_FILENAME,
+        source="_install_captain_agent",
+        clean=clean,
+    )
+    if config is None:
+        return False
+    # The one field the captain adds. ``prompt`` reaches no grant or KAS rule,
+    # so overriding it after the shared body keeps the tool surface identical.
+    config["prompt"] = _CAPTAIN_PROMPT_PREFIX + agent_mod._CONDUCTOR_SYSTEM_PROMPT
+    agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
+    path = agent_mod.kiro_agents_dir_path() / _CAPTAIN_AGENT_FILENAME
+    agent_mod._atomic_json_write(path, config)
+    agent_mod.logger.info("Installed captain agent config: %s", path)
     return True
 
 

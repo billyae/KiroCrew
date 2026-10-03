@@ -3152,6 +3152,11 @@ def _build_agent_config(agent_data: dict) -> AgentConfig:
         # the `_validate_config_data` call. `_safe_bool` here is the
         # final guard for a real bool.
         member_dispatch=section.read("member_dispatch", _safe_bool),
+        # Same guard as the two switches above: a present-but-malformed value
+        # was already coerced to False upstream, BEFORE schema validation, so it
+        # cannot ride the missing-field default back to true. `_safe_bool` here
+        # is the final guard for a real bool.
+        crew_captain=section.read("crew_captain", _safe_bool),
         # Default true is the zero-configuration panel grant, and the guard is the
         # one above: a present-but-malformed value was already coerced to False
         # upstream, BEFORE schema validation, so it cannot ride the missing-field
@@ -5072,7 +5077,12 @@ def read_config_document() -> ConfigDocument:
     # find missing later.
     _agent_section = data.get("agent")
     if isinstance(_agent_section, dict):
-        for _fail_closed_key in ("session_control", "member_dispatch", "crew_panel"):
+        for _fail_closed_key in (
+            "session_control",
+            "member_dispatch",
+            "crew_captain",
+            "crew_panel",
+        ):
             if _fail_closed_key in _agent_section and not isinstance(
                 _agent_section[_fail_closed_key], bool
             ):
