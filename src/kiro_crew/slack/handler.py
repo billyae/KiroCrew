@@ -3524,11 +3524,18 @@ async def handle_message(
             channel, build_working_blocks(session_key), "Working…", reply_ts
         )
 
-    # Whether the user-visible "working" indicators have already been torn down.
-    # Guards _clear_working_indicators so it runs its side effects at most once,
-    # even though it is invoked both from the finally block (every exit path,
-    # including asyncio.CancelledError) and from the post-turn straight-line code.
-    _indicators_cleared = False
+    # Whether each user-visible "working" affordance has already been torn down.
+    # Tracked SEPARATELY — one flag per affordance — so a cancellation that lands
+    # between the two Slack calls inside _clear_working_indicators cannot strand
+    # the second one: a single shared flag set True before either call would mark
+    # BOTH done, so a CancelledError (a BaseException the inner try does not
+    # catch) raised by the first call would leave the second affordance stuck
+    # forever. The flags also let review mode skip the status clear while still
+    # removing the Stop block. Each guards its own call so it runs at most once,
+    # across the many invocations from the finally blocks and the straight-line
+    # delivery code.
+    _status_cleared = False  # the native assistant.threads.setStatus label
+    _stop_block_cleared = False  # the inline "⏳ Working… / ⏹ Stop" block
 
     async def _clear_working_indicators(keep_review_status: bool = False) -> None:
         """Tear down the two user-visible 'working' affordances, idempotently.
@@ -3556,21 +3563,57 @@ async def handle_message(
         "is working…" stays stuck. It therefore defaults to False, clearing the
         status unconditionally; the inline Stop block is always removed (review
         mode never relies on it).
+
+        The two affordances are tracked by SEPARATE flags (``_status_cleared``,
+        ``_stop_block_cleared``), each flipped only AFTER its own Slack call was
+        attempted. A single shared flag flipped before the calls would, on a
+        ``CancelledError`` raised by the first call (``set_thread_status`` — a
+        ``BaseException`` the inner ``try`` does not catch), leave the second
+        affordance marked done but never removed. With split flags a later
+        invocation from a ``finally`` resumes at the Stop block. The flags also
+        make ``keep_review_status=True`` leave ``_status_cleared`` False, so if a
+        cancellation lands after the review delivery path cleared the Stop block
+        but before it set "Awaiting review…", a subsequent default-argument call
+        still clears the stranded "is working…" status.
         """
-        nonlocal _indicators_cleared
-        if _indicators_cleared:
-            return
-        _indicators_cleared = True
-        if not (keep_review_status and channel_activation == ACTIVATION_REVIEW):
+        nonlocal _status_cleared, _stop_block_cleared
+        # A cancellation (``asyncio.CancelledError``, a ``BaseException``) can
+        # land on the FIRST Slack await below and, without care, skip the second
+        # affordance in this same invocation. The clears above each own only one
+        # affordance's flag, but on an error/cancel path this helper is called
+        # exactly once (from the ``finally`` that is already running), so there
+        # is no later invocation to resume at the Stop block. Attempt BOTH clears
+        # here even if the first raises a cancellation: catch it per call, hold
+        # it, finish the teardown, then re-raise so the turn still unwinds.
+        _pending_cancel: BaseException | None = None
+        # Clear the native status label — unless review mode is keeping it to set
+        # its own "Awaiting review…" next. Mark the flag True only after the call,
+        # so a cancellation here does not also mark the Stop block done.
+        if not _status_cleared and not (
+            keep_review_status and channel_activation == ACTIVATION_REVIEW
+        ):
             try:
                 await slack.set_thread_status(channel, reply_ts, "")
+                _status_cleared = True
+            except asyncio.CancelledError as _c:
+                _pending_cancel = _c
             except Exception:
                 logger.debug("Failed to clear thread status", exc_info=True)
-        if _working_ts:
+                _status_cleared = True
+        # Remove the inline Stop block. Guarded by its own flag so this still runs
+        # when a prior call cleared only the status, and reached even when the
+        # status clear above was cancelled.
+        if not _stop_block_cleared and _working_ts:
             try:
                 await slack.delete_message(channel, _working_ts)
+                _stop_block_cleared = True
+            except asyncio.CancelledError as _c:
+                _pending_cancel = _pending_cancel or _c
             except Exception:
                 logger.debug("Failed to remove inline stop button", exc_info=True)
+                _stop_block_cleared = True
+        if _pending_cancel is not None:
+            raise _pending_cancel
 
     use_slack_stream = False
     stream_ts: str | None = None
@@ -4838,7 +4881,6 @@ async def handle_message(
                 # the successor's belongs to the replay, whose own ``finally``
                 # releases it, so this frame must not release again.
                 _acquired = False
-                _replayed = True
                 # The reset popped the session, so the replay cold-starts a NEW
                 # one whose first prompt carries the full session-start context
                 # anyway; re-arming the one-shot flag for this abandoned prompt
@@ -4866,6 +4908,16 @@ async def handle_message(
                     await slack.post_message(channel, _COMPACTION_RETRY_NOTICE, reply_ts)
                 except Exception:
                     logger.debug("Failed to post the compaction retry notice", exc_info=True)
+                # Mark the replay as taken over ONLY now, immediately before the
+                # nested call. Set earlier, a cancellation in the awaits above
+                # (the Working/thinking deletes, the retry-notice post) would
+                # leave _replayed True while the nested call never ran, so the
+                # outer ``finally`` would skip _clear_working_indicators and the
+                # "…is working" status would stay stuck. Setting it here means
+                # the outer frame still owns — and still clears — its indicators
+                # for any cancellation that lands before the nested turn starts;
+                # once the nested call runs it owns and clears its own.
+                _replayed = True
                 try:
                     await handle_message(
                         slack,
@@ -5049,7 +5101,10 @@ async def handle_message(
             except Exception:
                 # A raising release() must not skip the indicator teardown below,
                 # or the "working" status/Stop button would leak on this path too.
-                logger.debug("Failed to release session %s", session_key, exc_info=True)
+                # Log at WARNING, not debug: a raise here can strand the session
+                # permit, which is operationally significant and must not be
+                # invisible.
+                logger.warning("Failed to release session %s", session_key, exc_info=True)
             _acquired = False
         # A replay gap this attempt opened must not outlive it: a cancellation
         # landing in the reset (``!stop`` cancels the handler task) skips every
@@ -5073,8 +5128,21 @@ async def handle_message(
         # structural finally clears them; skipping here avoids removing the
         # status/Stop button while that region is still running. Idempotent, so
         # the post-turn code below is a no-op after this.
-        if not _release_deferred:
-            await asyncio.sleep(0)  # let finalize fire
+        #
+        # A replayed attempt (``_replayed``) is also skipped: the nested
+        # ``handle_message`` has already delivered the reply, set its own status
+        # label (e.g. "Awaiting review…" in review mode) and torn down its own
+        # indicators. This abandoned outer frame owns none of them, so clearing
+        # here with the default ``keep_review_status=False`` would fire
+        # ``set_thread_status(channel, reply_ts, "")`` on the same thread and
+        # erase the label the nested turn just set, leaving a review draft
+        # waiting with no pending indicator. The ``if _replayed: return`` below
+        # ends this frame cleanly without touching the nested turn's state.
+        if not _release_deferred and not _replayed:
+            # No ``await asyncio.sleep(0)`` before the clear: ``status_ctrl.finalize``
+            # ran synchronously just above, so the yield bought nothing and only
+            # added a cancellation point at which a second pending cancel could
+            # land and skip the teardown. Clear directly.
             await _clear_working_indicators()
 
     # Release the retained permit once delivery and accounting have run. Called
@@ -5352,6 +5420,12 @@ async def handle_message(
                 except Exception:
                     logger.debug("Failed to delete stream msg in review mode", exc_info=True)
             await slack.set_thread_status(channel, reply_ts, "Awaiting review…")
+            # The working status has now been REPLACED by the review label, so
+            # mark it handled: a later _clear_working_indicators() from the
+            # structural finally must not fire set_thread_status("") and erase
+            # "Awaiting review…". _status_cleared means "the 'is working' status
+            # has been dealt with" — cleared on every other path, replaced here.
+            _status_cleared = True
             # Post ephemeral draft with approve/edit/cancel buttons. This is the
             # review path's answer-carrying delivery: its failure means the reader
             # got no draft, so it books a failure rather than leaving the breaker

@@ -514,6 +514,156 @@ class TestHandleMessage:
             if a[0] == "set_thread_status" and a[1]["status"] == "Awaiting review…"
         ]
         assert not awaiting, "early-cancel path must not leave an 'Awaiting review…' label"
+
+    @pytest.mark.asyncio
+    async def test_working_status_cleared_on_cancel_during_replay_setup(self):
+        """Regression (bolichen97 finding 1): a cancellation in the compaction-
+        replay SETUP window — after the abandoned attempt tore down its posted
+        blocks but BEFORE the nested ``handle_message`` runs — must still clear
+        the native "…is working" thread status.
+
+        ``_replayed`` is now set immediately before the nested call, not at the
+        top of the replay branch. Were it set earlier, a ``CancelledError`` in
+        the setup awaits (the retry-notice ``post_message`` here) would leave
+        ``_replayed`` True while the nested turn never ran, so the outer
+        ``finally`` would skip the teardown and the working status would stay
+        stuck. With the flag set late, the outer frame still owns and clears its
+        own indicators on this path.
+        """
+        from kiro_crew.slack.handler import _COMPACTION_RETRY_NOTICE
+
+        class _CancelOnRetryNotice(MockSlackClient):
+            async def post_message(self, channel, text, thread_ts=None):
+                if text == _COMPACTION_RETRY_NOTICE:
+                    # Cancel in the setup window, before the nested call starts.
+                    raise asyncio.CancelledError()
+                return await super().post_message(channel, text, thread_ts)
+
+        slack = _CancelOnRetryNotice()
+        provider = _SequencedProvider([_abandoned(), _answered()], transient=True)
+        sessions = FakeSessionManager(provider)
+
+        with pytest.raises(asyncio.CancelledError):
+            await handle_message(slack, sessions, "C1", "hello", "thread1", "msg1", "U1")
+
+        # The nested replay never ran (cancelled before it started).
+        assert provider.turns == 1, "replay must not have started"
+        # The outer frame cleared the stuck working status (set it to empty).
+        status_clears = [
+            a for a in slack.actions if a[0] == "set_thread_status" and a[1]["status"] == ""
+        ]
+        assert status_clears, "working status left stuck when replay setup was cancelled"
+
+    @pytest.mark.asyncio
+    async def test_stop_block_cleared_even_if_status_clear_is_cancelled(self):
+        """Regression (bolichen97 finding 2): a ``CancelledError`` raised by the
+        status-clear ``set_thread_status`` call must NOT strand the inline Stop
+        block.
+
+        The two affordances are tracked by separate flags, each flipped only
+        after its own call. A single shared flag flipped before the calls would
+        mark the Stop block done when the status call raised ``CancelledError``
+        (a ``BaseException`` the inner ``try`` does not catch), so the block
+        would never be removed. With split flags the next invocation from a
+        ``finally`` resumes at the Stop block and deletes it.
+        """
+
+        class _CancellingProvider(FakeProvider):
+            async def stream(self, message, timeout=120.0):
+                yield LLMEvent(kind="text_chunk", text="partial")
+                raise asyncio.CancelledError()
+
+        class _CancelFirstStatusClear(MockSlackClient):
+            def __init__(self):
+                super().__init__()
+                self._cleared_once = False
+
+            async def set_thread_status(self, channel, thread_ts, status):
+                # The FIRST attempt to clear the status (status == "") is
+                # cancelled; the Stop block delete that follows in the same
+                # helper call is thereby skipped and must be picked up later.
+                if status == "" and not self._cleared_once:
+                    self._cleared_once = True
+                    raise asyncio.CancelledError()
+                return await super().set_thread_status(channel, thread_ts, status)
+
+        slack = _CancelFirstStatusClear()
+        sessions = FakeSessionManager(_CancellingProvider())
+        with pytest.raises(asyncio.CancelledError):
+            await handle_message(slack, sessions, "C1", "hi", "thr1", "msg1", "U1")
+
+        # The inline Stop button was posted and ultimately removed, even though
+        # the first status-clear call raised mid-teardown.
+        block_ts = [a[1]["ts"] for a in slack.actions if a[0] == "blocks"]
+        assert block_ts, "inline Stop button was never posted"
+        deleted = [a[1]["ts"] for a in slack.actions if a[0] == "delete"]
+        assert block_ts[0] in deleted, "Stop block stranded when status clear was cancelled"
+
+    @pytest.mark.asyncio
+    async def test_review_status_cleared_on_cancel_before_awaiting_label(self):
+        """Regression (bolichen97 finding 3): in review mode a cancellation that
+        lands AFTER the delivery-path clear (which keeps the status so it can set
+        "Awaiting review…") but BEFORE "Awaiting review…" is actually set must
+        leave the "…is working" status cleared, not stuck.
+
+        The delivery clear runs with ``keep_review_status=True``, so it removes
+        the Stop block but leaves ``_status_cleared`` False. A cancellation
+        before the "Awaiting review…" label is set propagates to the structural
+        ``finally``, whose default-argument clear now finds ``_status_cleared``
+        still False and clears the stranded working status.
+        """
+        from kiro_crew.slack.handler import ACTIVATION_REVIEW
+
+        class _CancelOnStopBlockDelete(MockSlackClient):
+            def __init__(self):
+                super().__init__()
+                self._stop_ts: str | None = None
+
+            async def post_blocks(self, channel, blocks, text, thread_ts=None):
+                ts = await super().post_blocks(channel, blocks, text, thread_ts)
+                self._stop_ts = ts
+                return ts
+
+            async def delete_message(self, channel, ts):
+                # Cancel exactly when the review delivery path removes the Stop
+                # block — i.e. after the keep-review clear began but before the
+                # "Awaiting review…" label is set.
+                if ts == self._stop_ts:
+                    raise asyncio.CancelledError()
+                return await super().delete_message(channel, ts)
+
+        slack = _CancelOnStopBlockDelete()
+        provider = FakeProvider([LLMEvent(kind="text_chunk", text="draft")])
+        sessions = FakeSessionManager(provider)
+
+        with pytest.raises(asyncio.CancelledError):
+            await handle_message(
+                slack,
+                sessions,
+                "C1",
+                "hi",
+                "thr1",
+                "msg1",
+                "U1",
+                channel_activation=ACTIVATION_REVIEW,
+            )
+
+        statuses = [a[1]["status"] for a in slack.actions if a[0] == "set_thread_status"]
+        # The working status was cleared (empty) on the cancellation path.
+        assert "" in statuses, (
+            "review-mode working status left stuck when cancelled before the label",
+            statuses,
+        )
+        # It was never left showing "is working on your request" as the last word.
+        assert statuses[-1] == "", (
+            "last status must be the clear, not a stuck working label",
+            statuses,
+        )
+        # It never reached "Awaiting review…" (cancelled before that line).
+        assert "Awaiting review…" not in statuses, statuses
+
+    @pytest.mark.asyncio
+    async def test_thinking_posted_then_updated(self):
         slack = MockSlackClient()
         provider = FakeProvider([LLMEvent(kind="text_chunk", text="hello")])
         sessions = FakeSessionManager(provider)
@@ -3795,6 +3945,50 @@ class TestTransientCompactionRetry:
         assert call["from_trusted_bot"] is True
         assert call["had_voice_input"] is True
         assert call["_compaction_replay"].attempt == 1
+
+    @pytest.mark.asyncio
+    async def test_a_replayed_review_turn_keeps_the_awaiting_review_label(self):
+        """A transient-compaction replay in review mode must END on the
+        "Awaiting review…" label the nested turn set, not erase it.
+
+        The replay is a nested ``handle_message``: it delivers the ephemeral
+        draft and sets "Awaiting review…", then clears its OWN indicators.
+        Control returns to the abandoned outer frame, whose first ``finally``
+        computes ``_release_deferred`` as False (``_acquired`` was handed to the
+        replay) and reaches ``if _replayed: return`` only afterwards. If the
+        teardown there runs ``_clear_working_indicators()`` with the default
+        ``keep_review_status=False``, it fires ``set_thread_status(channel,
+        reply_ts, "")`` on the very thread the nested call just labelled,
+        wiping the pending-review indicator while the draft still waits. The
+        outer frame owns none of the replay's indicators, so it must not clear
+        them: the thread's final status must be "Awaiting review…", with no
+        trailing clear."""
+        from kiro_crew.slack.handler import ACTIVATION_REVIEW
+
+        slack = MockSlackClient()
+        provider = _SequencedProvider([_abandoned(), _answered()], transient=True)
+        sessions = FakeSessionManager(provider)
+
+        await handle_message(
+            slack,
+            sessions,
+            "C1",
+            "hello",
+            "thread1",
+            "msg1",
+            "U1",
+            channel_activation=ACTIVATION_REVIEW,
+        )
+
+        assert provider.turns == 2, "the replay ran"
+        # Every status this thread saw, in order. The nested replay sets
+        # "Awaiting review…"; the outer frame must not append a trailing clear.
+        statuses = [a[1]["status"] for a in slack.actions if a[0] == "set_thread_status"]
+        assert "Awaiting review…" in statuses, statuses
+        assert statuses[-1] == "Awaiting review…", (
+            "the abandoned outer frame erased the nested replay's review label",
+            statuses,
+        )
 
 
 class TestBuildTimingFooter:
