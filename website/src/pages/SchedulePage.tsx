@@ -49,6 +49,8 @@ import {
 import ScheduleTemplateGallery from '../components/ScheduleTemplateGallery'
 
 import { i18nT } from '../i18n/t'
+import { uiLocation } from '../uiLocations/uiLocation'
+import { useGuidePredicate, useGuideSelection } from '../guide/guidePredicates'
 import { defaultAgentQuery } from '../api/defaultAgentQuery'
 import { agentOrDefaultLabel } from '../utils/agentLabel'
 import { compareText, fmtDateTimeNumeric } from '../i18n/format'
@@ -520,6 +522,11 @@ export default function SchedulePage() {
   }, [visibleScheduleJobs])
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
   const selectedJobs = useMemo(() => jobs.filter(j => selectedIds.has(j.id)), [jobs, selectedIds])
+  // Guide facts: the job table is drawn in the List view only, and a guide's
+  // "choose the job" step completes once a job's panel is open (whether one
+  // is, and whether any exists; never which).
+  useGuidePredicate('schedule_list_view', jobsView === 'list')
+  useGuideSelection('job_open', { selected: detailOpen && !!selected, available: jobs.length > 0 })
   const openBatchConfirm = useCallback(() => { setBatchError(null); setConfirmText(''); setBatchConfirm(true) }, [])
   const runBatchDelete = useCallback(async () => {
     const ids = Array.from(selectedIds)
@@ -601,7 +608,7 @@ export default function SchedulePage() {
               segments={[
                 { key: 'list' as const, label: i18nT('pages.schedulePage.view_list'), icon: <List size={14} /> },
                 { key: 'calendar' as const, label: i18nT('pages.schedulePage.view_calendar'), icon: <CalendarDays size={14} /> },
-                { key: 'executions' as const, label: i18nT('pages.schedulePage.view_executions'), icon: <History size={14} /> },
+                { key: 'executions' as const, label: i18nT('pages.schedulePage.view_executions'), icon: <History size={14} />, ...uiLocation('schedule.view-executions') },
               ]}
               value={jobsView}
               onChange={setJobsView}
@@ -660,7 +667,7 @@ export default function SchedulePage() {
                 <CalendarClock className="w-16 h-16 text-muted/20 mb-4" strokeWidth={1} aria-hidden="true" />
                 <div className="text-muted text-sm font-medium">{i18nT('pages.schedulePage.no_scheduled_jobs_yet')}</div>
                 <p className="text-sm text-muted max-w-[360px] mb-5 mt-2">{i18nT('pages.schedulePage.schedule_recurring_tasks_to_run_automatically_ch')}</p>
-                <SendBtn onClick={openBlankCreate}>
+                <SendBtn onClick={openBlankCreate} {...uiLocation('schedule.create-first')}>
                   <span className="flex items-center gap-1.5">
                     <Plus size={14} aria-hidden="true" />
                     {i18nT('pages.schedulePage.create_your_first_job')}
@@ -676,7 +683,7 @@ export default function SchedulePage() {
               <div className="w-full shrink-0 pt-4 sm:pt-6">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div className="text-left text-[12px] font-medium uppercase tracking-[.04em] text-muted">{i18nT('pages.schedulePage.start_from_a_pre_made_schedule')}</div>
-                  <Btn onClick={() => setGalleryOpen(true)}>
+                  <Btn onClick={() => setGalleryOpen(true)} {...uiLocation('schedule.templates')}>
                     <span className="flex items-center gap-1.5"><LayoutGrid size={14} aria-hidden="true" /> {i18nT('pages.schedulePage.browse_all_templates')}</span>
                   </Btn>
                 </div>
@@ -747,7 +754,7 @@ export default function SchedulePage() {
                   </Btn>
                 </div>
               )}
-              <Btn onClick={() => handleNewFolder()}>
+              <Btn onClick={() => handleNewFolder()} {...uiLocation('schedule.new-folder')}>
                 <span className="flex items-center gap-1.5">
                   <FolderPlus size={14} aria-hidden="true" />
                   {i18nT('pages.schedulePage.cronFolders.new_folder')}
@@ -822,7 +829,7 @@ export default function SchedulePage() {
                 column, and restates the rule above mechanically: the px
                 columns moved by `extra`, so min-width moves by the same
                 amount and Message keeps its floor. */}
-            <Table className="table-fixed min-w-[1176px]" ref={attachJobsTable} style={jobCols.extra ? { minWidth: JOBS_TABLE_MIN_WIDTH + jobCols.extra } : undefined}>
+            <Table className="table-fixed min-w-[1176px]" ref={attachJobsTable} style={jobCols.extra ? { minWidth: JOBS_TABLE_MIN_WIDTH + jobCols.extra } : undefined} aria-label={i18nT('pages.schedulePage.jobs_table')} {...uiLocation('schedule.job-list')}>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-[36px] px-2 text-center">
@@ -834,6 +841,7 @@ export default function SchedulePage() {
                       checked={allVisibleSelected}
                       ref={el => { if (el) el.indeterminate = !allVisibleSelected && someVisibleSelected }}
                       onChange={toggleAllVisible}
+                      {...uiLocation('schedule.select-all')}
                     />
                   </TableHead>
                   <ResizableTableHead label={i18nT('pages.schedulePage.id')} className="w-[68px] relative" style={jobCols.style('id')} resizer={jobCols.resizer('id')} />
@@ -1397,6 +1405,7 @@ export function JobSecretsPanel({ job, onSaved }: { job: CronJob; onSaved: () =>
           <div className="flex gap-2">
             <SendBtn
               disabled={busy || !reviewed}
+              {...uiLocation('schedule.secret-approve')}
               onClick={() =>
                 reviewed &&
                 act({
@@ -1576,10 +1585,10 @@ function JobDetailDialog({ job, prefill, prefillWrites, agents, defaultAgent, ro
               layoutId="panel-tab"
             />
             <div className="flex gap-2">
-              <Btn onClick={async () => { try { await api.toggleCron(job.id, !job.enabled); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{job.enabled ? i18nT('pages.schedulePage.pause') : i18nT('pages.schedulePage.resume')}</Btn>
+              <Btn {...uiLocation('schedule.pause')} onClick={async () => { try { await api.toggleCron(job.id, !job.enabled); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{job.enabled ? i18nT('pages.schedulePage.pause') : i18nT('pages.schedulePage.resume')}</Btn>
               {job.is_running
-                ? <Btn danger onClick={async () => { try { await api.cancelCron(job.id); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{i18nT('pages.schedulePage.cancel_run')}</Btn>
-                : <SendBtn onClick={async () => { try { await api.runCron(job.id); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{i18nT('pages.schedulePage.run_now')}</SendBtn>}
+                ? <Btn danger {...uiLocation('schedule.cancel-run')} onClick={async () => { try { await api.cancelCron(job.id); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{i18nT('pages.schedulePage.cancel_run')}</Btn>
+                : <SendBtn {...uiLocation('schedule.run-now')} onClick={async () => { try { await api.runCron(job.id); onSaved() } catch (e: unknown) { setPanelError(e instanceof Error ? e.message : i18nT('pages.schedulePage.failed')) } }}>{i18nT('pages.schedulePage.run_now')}</SendBtn>}
             </div>
           </div>
         )}
@@ -1664,7 +1673,7 @@ function JobDetailDialog({ job, prefill, prefillWrites, agents, defaultAgent, ro
       </DialogBody>
       <DialogFooter className="justify-between">
         {job ? (
-          <Btn danger onClick={() => setConfirmDelete(true)}>
+          <Btn danger onClick={() => setConfirmDelete(true)} {...uiLocation('schedule.delete')}>
             <span className="flex items-center gap-1.5">
               <Trash2 size={14} aria-hidden="true" />
               {i18nT('pages.schedulePage.delete')}

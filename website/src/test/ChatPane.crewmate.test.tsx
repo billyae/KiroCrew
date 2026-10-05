@@ -79,14 +79,14 @@ function makeStore() {
   })
 }
 
-function renderPane(opts: { onOpenCrewWorkLog?: () => void; crewmate?: boolean } = { crewmate: true }) {
+function renderPane(opts: { onOpenCrewWorkLog?: () => void; crewmate?: boolean; identity?: { name: string; captain?: boolean } } = { crewmate: true }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <Provider store={makeStore()}>
       <QueryClientProvider client={qc}>
         <ThemeProvider>
           <MemoryRouter>
-            <ChatPane slotKey={SLOT} crewmate={opts.crewmate === false ? undefined : radar} onOpenCrewWorkLog={opts.onOpenCrewWorkLog} />
+            <ChatPane slotKey={SLOT} crewmate={opts.crewmate === false ? undefined : (opts.identity ?? radar)} onOpenCrewWorkLog={opts.onOpenCrewWorkLog} />
           </MemoryRouter>
         </ThemeProvider>
       </QueryClientProvider>
@@ -173,5 +173,29 @@ describe("a crewmate's chat", () => {
   it('an ordinary chat keeps the product placeholder', async () => {
     const view = renderPane({ crewmate: false })
     await waitFor(() => expect(view.getByPlaceholderText(/Message Kiro Crew/)).toBeInTheDocument())
+  })
+})
+
+describe("Captain's narration before a tool call", () => {
+  const TURN = [
+    { role: 'user', content: 'Where is chat history?', cls: 'msg msg-u', ts: '2026-10-06T09:00:00Z' },
+    { role: 'assistant', content: "I'll look up where chat history lives in the dashboard.", cls: '', ts: '2026-10-06T09:00:02Z' },
+    { role: 'tool', content: '🔧 find_ui', cls: '', ts: '2026-10-06T09:00:03Z' },
+    { role: 'assistant', content: 'Your older sessions are under Older Sessions.', cls: '', ts: '2026-10-06T09:00:09Z' },
+  ]
+  beforeEach(() => {
+    ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: TURN, running: false, has_more: false, total: TURN.length })
+  })
+
+  it('is not drawn in Captain\'s chat once the answer follows it', async () => {
+    const view = renderPane({ crewmate: true, identity: { name: 'kirocrew-captain', captain: true } })
+    await view.findByText('Your older sessions are under Older Sessions.')
+    expect(view.queryByText(/I'll look up where chat history lives/)).toBeNull()
+  })
+
+  it("stays a bubble in any other crewmate's chat", async () => {
+    const view = renderPane({ crewmate: true })
+    await view.findByText('Your older sessions are under Older Sessions.')
+    expect(view.getByText(/I'll look up where chat history lives/)).toBeInTheDocument()
   })
 })

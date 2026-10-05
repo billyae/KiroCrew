@@ -77,8 +77,6 @@ import {
   type ContributedCommand,
 } from './contributedCommands'
 import { useImeGuard } from '../../hooks/useImeGuard'
-import { usePreviewFlag } from '../../hooks/usePreviewFlag'
-import { PREVIEW_CREW } from '../../utils/previewFlags'
 
 /**
  * Command Bar — the ⌘K launcher.
@@ -574,20 +572,6 @@ export default function CommandBarOverlay({
   onClose: () => void
 }) {
   const ime = useImeGuard()
-  /**
-   * Whether the Crewmates preview is on for this reader.
-   *
-   * This bar is an INGRESS to `/members`, and that page is registered with
-   * `previewFlag: PREVIEW_CREW` — so every other door to it applies this gate, and a
-   * surface that did not would advertise a page the operator has not opted into. The
-   * app ships `defaultEnabled: true`, so without this a default install shows
-   * `Search Crewmates` in the root, carries a typed query into it, and lets Enter
-   * reach `/members` while the page itself is supposed to be invisible.
-   *
-   * It gates all THREE rows this feature adds — the view row, the fallback row and the
-   * empty-state row — because each one is independently reachable.
-   */
-  const crewPreview = usePreviewFlag(PREVIEW_CREW)
   const vv = useVisualViewport()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
@@ -1180,31 +1164,23 @@ export default function CommandBarOverlay({
     // tempting, and `matesProvider` records why it is not — the catalog behind it is a
     // FETCH, so a root group would either issue a request on every open of this bar or
     // show an empty Crewmates group on a cold install.
-    //
-    // Behind the PREVIEW GATE, because this row is an INGRESS to `/members` and that
-    // page is registered with `previewFlag: PREVIEW_CREW`. Every other door to it
-    // applies the same gate; a launcher row that did not would advertise a page the
-    // operator has not opted into, and this app ships `defaultEnabled: true`, so it
-    // would do so on a default install.
-    if (crewPreview) {
-      rows.push({
-        id: 'command:search-mates',
-        title: i18nT('apps.commandBar.cmd_search_mates'),
-        // "Crewmate" is this product's word, the way "artifact" is: a reader who has
-        // not opened the Crewmates page has no reason to know that the agents they
-        // talk to have their own durable threads. The subtitle names what the view
-        // gets them instead of restating the category.
-        subtitle: i18nT('apps.commandBar.cmd_search_mates_sub'),
-        group: 'commands',
-        kind: 'view',
-        view: 'mates',
-        icon: matesIcon(),
-        // The words a reader who has not learned "crewmate" would reach for. `agent`
-        // earns its place above all of them: it is what the rest of the product calls
-        // the thing answering them.
-        keywords: ['crew', 'agent', 'member', 'mate', 'teammate', 'roster'],
-      })
-    }
+    rows.push({
+      id: 'command:search-mates',
+      title: i18nT('apps.commandBar.cmd_search_mates'),
+      // "Crewmate" is this product's word, the way "artifact" is: a reader who has
+      // not opened the Crewmates page has no reason to know that the agents they
+      // talk to have their own durable threads. The subtitle names what the view
+      // gets them instead of restating the category.
+      subtitle: i18nT('apps.commandBar.cmd_search_mates_sub'),
+      group: 'commands',
+      kind: 'view',
+      view: 'mates',
+      icon: matesIcon(),
+      // The words a reader who has not learned "crewmate" would reach for. `agent`
+      // earns its place above all of them: it is what the rest of the product calls
+      // the thing answering them.
+      keywords: ['crew', 'agent', 'member', 'mate', 'teammate', 'roster'],
+    })
     // Commands contributed by installed apps. This is the seam that lets a row live
     // outside this repository: the app declares the row and what it does, and the
     // host renders and runs it. Nothing app-authored executes here.
@@ -1271,7 +1247,7 @@ export default function CommandBarOverlay({
     // the tree without remounting it, which does not recompute a memo. Omitting it
     // would freeze these rows in whichever language the surface first resolved.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apps, commandById, crewPreview, cycleTheme, dispatch, liveSlots, navigate, resolved, settingsGovernance, simplifiedToolNames, slotStatusDetail, store, unreadSlots])
+  }, [apps, commandById, cycleTheme, dispatch, liveSlots, navigate, resolved, settingsGovernance, simplifiedToolNames, slotStatusDetail, store, unreadSlots])
 
   // The root ranks from the LIVE query, not the debounced one. Ranking is pure and
   // local, so there is nothing to throttle, and debouncing it would let a fast Enter
@@ -1785,7 +1761,7 @@ export default function CommandBarOverlay({
         out.push({ key: 'slot:retry', tag: 'retry-mates' })
       } else if (!matesFetching && out.length === 0 && mateQuery) {
         out.push({ key: 'slot:clear-query', tag: 'clear-query-mates' })
-      } else if (crewPreview && !matesFetching && out.length === 0 && mateRows !== undefined) {
+      } else if (!matesFetching && out.length === 0 && mateRows !== undefined) {
         // NO CREW AT ALL, and the reader is one keystroke from fixing that. A centred
         // sentence naming the Crewmates page was the dead end here: a reader reported
         // that "nothing looks like a link", so the one thing they came to do had no
@@ -1826,9 +1802,8 @@ export default function CommandBarOverlay({
       // a session title or an artifact name far more often than it is a crew's name —
       // and a crew name that IS typed is often distinctive enough to have already
       // matched the view row's own keywords above.
-      // Behind the same preview gate as the view row: this row is a second, independent
-      // way for a typed query to reach `/members`.
-      if (crewPreview) out.push({ key: 'slot:fallback-mates', tag: 'fallback-mates' })
+      // A second, independent way for a typed query to reach `/members`.
+      out.push({ key: 'slot:fallback-mates', tag: 'fallback-mates' })
       // The recovery row exists for the dead end — a typed query that matched
       // nothing — not for every keystroke. Riding the fallback's own condition put a
       // row about switching the feature off under every successful search, and
@@ -1836,7 +1811,7 @@ export default function CommandBarOverlay({
       if (ranked.length === 0) out.push({ key: 'slot:recovery', tag: 'recovery' })
     }
     return out
-  }, [argCommand, crewPreview, isError, isFetching, query, ranked, recentRows, scope, scopedResults, searchArmed, artifactSlotRows, artifactsError, artifactsFetching, artifactsQuery, folderQuery, folderRows, foldersError, foldersFetching, mateQuery, mateRows, matesError, matesFetching])
+  }, [argCommand, isError, isFetching, query, ranked, recentRows, scope, scopedResults, searchArmed, artifactSlotRows, artifactsError, artifactsFetching, artifactsQuery, folderQuery, folderRows, foldersError, foldersFetching, mateQuery, mateRows, matesError, matesFetching])
 
   const rowCount = slots.length
   /**

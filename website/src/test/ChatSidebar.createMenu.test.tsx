@@ -18,8 +18,6 @@ import { Provider } from 'react-redux'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { createTestStore } from './helpers'
 import { ThemeProvider } from '../hooks/useTheme'
-import { SETTINGS_CREW_MEMBERS_PREVIEW_ID } from '../hooks/useSettingHighlight'
-import { SETTINGS_REGISTRY } from '../components/commandPalette/settingsRegistry.gen'
 import type { RootState } from '../store'
 
 // Render framer-motion elements as plain DOM because jsdom cannot run projection.
@@ -87,9 +85,9 @@ import {
   __resetErrorJournalForTests,
   __resetNavSeamForTests,
 } from '../utils/errorReport'
-// Not mocked: the gate reads real localStorage, so the fixture that turns crew
-// on is the same write the Settings > Developer > Feature Previews toggle performs.
-import { PREVIEW_CREW, PREVIEW_REMOTE_CREW_CHAT } from '../utils/previewFlags'
+// Not mocked: the gate reads real localStorage, so a fixture write is the same
+// write the Settings > Developer > Feature Previews toggle performs.
+import { PREVIEW_REMOTE_CREW_CHAT } from '../utils/previewFlags'
 import enManual from '../i18n/locales/en.manual.json'
 import { openCrewWindow, closeCrewWindow } from '../pages/chat/crew-window/crewWindowStore'
 
@@ -190,8 +188,6 @@ describe('create-button caret menu', () => {
   })
 
   it('explains the Crew Members entry at the point of choice', async () => {
-    // The Members page is on, so the crew gloss describes the page itself.
-    localStorage.setItem(PREVIEW_CREW, '1')
     renderSidebar()
     openCreateMenu()
     await findCreateMenuItem('New chat')
@@ -244,37 +240,13 @@ describe('create-button caret menu', () => {
     expect(mocks.createChatSlot).not.toHaveBeenCalled()
   })
 
-  it('opens the Members page when the preview flag is on', async () => {
-    localStorage.setItem(PREVIEW_CREW, '1')
-    renderSidebar()
-    openCreateMenu()
-    fireEvent.click(await screen.findByTestId('open-crew-members'))
-    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/members'))
-  })
-
-  it('opens the Feature Previews card that turns the page on when the flag is off', async () => {
-    // Not a toast telling the user to go and find the switch: the click lands
-    // ON the switch, ringed, via the same `?highlight=` deep link Settings
-    // search uses.
+  it('opens the Members page on every install, with no preview to turn on', async () => {
     renderSidebar()
     openCreateMenu()
     const item = await screen.findByTestId('open-crew-members')
-    // The gloss discloses the detour BEFORE the click, instead of promising the
-    // page and then landing somewhere else (UX review on #9519).
-    expect(item.textContent).toMatch(/Opens Settings first/)
-    expect(item.textContent).not.toMatch(/Opens the Crewmates page/)
+    expect(item.textContent).toMatch(/Opens the Crewmates page/)
     fireEvent.click(item)
-    await waitFor(() => expect(screen.getByTestId('location').textContent)
-      .toBe(`/settings/developer?highlight=${SETTINGS_CREW_MEMBERS_PREVIEW_ID}`))
-  })
-
-  it('deep-links to an id the settings registry still knows', () => {
-    // Registry ids derive from the card's LABEL, so a relabel silently breaks
-    // an inlined string — this pins the constant to a live entry on the
-    // developer tab, the same guard `SETTINGS_DEFAULT_MODEL_ID` carries.
-    const entry = SETTINGS_REGISTRY.find(e => e.id === SETTINGS_CREW_MEMBERS_PREVIEW_ID)
-    expect(entry, `no registry entry for ${SETTINGS_CREW_MEMBERS_PREVIEW_ID}`).toBeDefined()
-    expect(entry?.tab).toBe('developer')
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/members'))
   })
 
   // "New chat on crew" — creating a session that runs on a connected peer. The

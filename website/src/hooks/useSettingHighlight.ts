@@ -3,21 +3,7 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import { SETTINGS_REGISTRY } from '../components/commandPalette/settingsRegistry.gen'
 import { setSettingsDeepLinkTarget } from '../components/settings'
 import { i18nT } from '../i18n/t'
-
-/**
- * Deep-link target for the "Crewmates" card in Settings → Developer →
- * Feature Previews — the switch that reveals the `/members` page.
- *
- * The sidebar's create-menu "Crewmates" entry navigates here while the
- * page is still preview-gated, so the user lands on the switch that holds the
- * page rather than on a toast about it. Same shape and same reason as
- * {@link SETTINGS_DEFAULT_MODEL_ID} below: registry ids derive from the
- * LABEL, so a rename would silently break an inlined string, and
- * `ChatSidebar.createMenu.test.tsx` asserts this one resolves in
- * SETTINGS_REGISTRY. Declared above `LEGACY_ID_EXACT` because that table
- * maps the card's previous id onto it.
- */
-export const SETTINGS_CREW_MEMBERS_PREVIEW_ID = 'developer.crewmates'
+import type { SettingEntry } from '../components/commandPalette/settingsTypes'
 
 /**
  * Legacy highlight-id migrations. Registry ids are `<tab>.<kebab-label>`, so
@@ -46,13 +32,6 @@ const LEGACY_ID_EXACT: Record<string, string> = {
   // The pin toggle's label moved from "prompt" to "turn" vocabulary, shifting
   // the derived id with it.
   'chat.pin-the-latest-prompt': 'chat.pin-the-latest-turn',
-  // The Feature Previews crew card was relabeled from "Crew Members and Crew
-  // Mode" to "Crew Members" when Crew Mode retired, then to "Crewmates" to match
-  // the page title (`pages.membersPage.title`); the flag and the card are the
-  // same ones throughout, only the label (and so the derived id) narrowed. Both
-  // prior ids land on the current one.
-  'developer.crew-members-and-crew-mode': SETTINGS_CREW_MEMBERS_PREVIEW_ID,
-  'developer.crew-members': SETTINGS_CREW_MEMBERS_PREVIEW_ID,
   // The peer-session card was relabeled from "Remote instance sessions" back to
   // "Remote crew sessions" when the remote-crew vocabulary was restored. Same
   // flag, same card — only the label, and so the derived id, moved.
@@ -72,7 +51,10 @@ const REGISTRY_IDS = new Set(SETTINGS_REGISTRY.map(e => e.id))
 
 /** Rewrite a legacy highlight id to its current form (identity for current ids). */
 export function resolveLegacyHighlightId(id: string): string {
-  if (LEGACY_ID_EXACT[id]) return LEGACY_ID_EXACT[id]
+  // A current id is never rewritten: a retired label can be reused by a new
+  // row ("Fallback Model" now names the throttle fallback), and that row
+  // must keep its own highlight.
+  if (LEGACY_ID_EXACT[id] && !REGISTRY_IDS.has(id)) return LEGACY_ID_EXACT[id]
   if (id.startsWith('slack.')) id = `channels.${id.slice('slack.'.length)}`
   // Per-channel rows gained a "(<Channel>)" label suffix so their ids are
   // channel-qualified and order-stable. Every pre-suffix `channels.*` id in a
@@ -83,6 +65,35 @@ export function resolveLegacyHighlightId(id: string): string {
     return `${id}-slack`
   }
   return id
+}
+
+/**
+ * The ONE rendered control a registry entry names, or `null`.
+ *
+ * The same attribute contract the highlight probe below uses
+ * (`data-setting-id` > `data-setting-key` > `data-setting-label`), minus both of
+ * its forgiving fallbacks: a duplicate label resolves only at its exact
+ * `occurrence` (never "the first match instead"), and a label match that carries
+ * ANOTHER control's key or id never stands in. A caller that points at the
+ * control it returns (the registered-action guide's arrow) must be able to say
+ * "not here" rather than point at a neighbour.
+ */
+export function resolveSettingElementStrict(entry: SettingEntry): HTMLElement | null {
+  if (entry.settingId) {
+    return document.querySelector<HTMLElement>(`[data-setting-id="${CSS.escape(entry.settingId)}"]`)
+  }
+  if (entry.configKey) {
+    const byKey = document.querySelector<HTMLElement>(`[data-setting-key="${CSS.escape(entry.configKey)}"]`)
+    if (byKey) return byKey
+  }
+  const label = entry.labelKey ? i18nT(entry.labelKey) : entry.label
+  const matches = document.querySelectorAll<HTMLElement>(`[data-setting-label="${CSS.escape(label)}"]`)
+  const candidate = matches[entry.occurrence - 1]
+  if (!candidate) return null
+  const foreignKey = candidate.getAttribute('data-setting-key')
+  if (candidate.hasAttribute('data-setting-id')) return null
+  if (foreignKey !== null && foreignKey !== entry.configKey) return null
+  return candidate
 }
 
 /**

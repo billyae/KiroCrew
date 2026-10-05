@@ -4,8 +4,18 @@ import { cn } from '../../lib/utils'
 import { useCloseOnFileDrag } from '../../hooks/useCloseOnFileDrag'
 import { useIsTouchDevice } from '../../hooks/useIsTouchDevice'
 import { PhoneSubContentDiv, PhoneSubTriggerDiv, usePhoneSubState } from './phoneSubmenu'
+import { MaybeGuideRevealScope } from '../../guide/GuideRevealScope'
+import type { GuideRevealScopeId } from '../../uiLocations/guidePlans.gen'
 
-type DropdownMenuProps = React.ComponentProps<typeof DropdownMenuPrimitive.Root>
+type DropdownMenuProps = React.ComponentProps<typeof DropdownMenuPrimitive.Root> & {
+  /**
+   * The compiled reveal scope this menu is (`menu:<trigger location id>`), for
+   * a menu whose trigger or items are registered UI locations. The menu then
+   * reports open/closed to a running guide, which points at the trigger until
+   * it reads open. Reporting only: nothing here ever opens the menu.
+   */
+  guideScope?: GuideRevealScopeId
+}
 
 /**
  * Radix `DropdownMenu.Root`, plus two rules.
@@ -25,11 +35,13 @@ type DropdownMenuProps = React.ComponentProps<typeof DropdownMenuPrimitive.Root>
  * The mechanism is documented on `useCloseOnFileDrag`; `ContextMenu` applies
  * the same rule.
  *
+ * `guideScope` makes the menu a guide reveal scope (see the prop).
+ *
  * Controlled (`open`) and uncontrolled (`defaultOpen`) usage both work: the
  * close goes through the same path as a click-outside, so `onOpenChange(false)`
  * fires for callers that track the state themselves.
  */
-function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, modal: modalProp, ...rest }: DropdownMenuProps) {
+function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, modal: modalProp, guideScope, ...rest }: DropdownMenuProps) {
   const isTouch = useIsTouchDevice()
   const modal = modalProp ?? !isTouch
   const isControlled = openProp !== undefined
@@ -44,7 +56,13 @@ function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, modal: modalP
 
   useCloseOnFileDrag(open && modal, close)
 
-  return <DropdownMenuPrimitive.Root open={open} onOpenChange={handleOpenChange} modal={modal} {...rest} />
+  // The scope owner sits outside the Root, so it reports "closed" while the
+  // portalled content is unmounted; the content still reads it through context.
+  return (
+    <MaybeGuideRevealScope id={guideScope} open={open}>
+      <DropdownMenuPrimitive.Root open={open} onOpenChange={handleOpenChange} modal={modal} {...rest} />
+    </MaybeGuideRevealScope>
+  )
 }
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 const DropdownMenuGroup = DropdownMenuPrimitive.Group

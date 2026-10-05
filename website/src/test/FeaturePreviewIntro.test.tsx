@@ -104,7 +104,7 @@ describe('FeaturePreviewIntroButton', () => {
 
 describe('FeaturePreviewsSection — See-what-it-looks-like per card', () => {
   beforeEach(() => {
-    for (const k of ['mc-preview-webhooks', 'mc-preview-crew', 'mc-preview-remote-crew-chat']) localStorage.removeItem(k)
+    for (const k of ['mc-preview-webhooks', 'mc-preview-remote-crew-chat']) localStorage.removeItem(k)
     // The Decisions card reads `config.json`; stubbed so these capture-button
     // cases do not wait on a fetch that cannot succeed under vitest.
     vi.spyOn(api, 'kirocrewConfig').mockResolvedValue({} as never)
@@ -124,7 +124,8 @@ describe('FeaturePreviewsSection — See-what-it-looks-like per card', () => {
   it('offers the button for the previews that have real captures, and not for the one that does not', () => {
     renderSection()
     expect(screen.getByRole('button', { name: 'See what Webhooks looks like' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'See what Crewmates looks like' })).toBeInTheDocument()
+    // Crewmates is released, so it is no longer listed among the previews.
+    expect(screen.queryByRole('switch', { name: 'Crewmates' })).not.toBeInTheDocument()
     // "Chat on a crew" only appears with a live tunnel to a second machine, which
     // has no honest single-instance capture — so no button rather than an empty dialog.
     expect(screen.queryByRole('button', { name: 'See what Chat on a crew looks like' })).not.toBeInTheDocument()

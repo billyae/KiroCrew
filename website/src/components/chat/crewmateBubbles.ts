@@ -112,6 +112,73 @@ export function filterCrewmateChat(messages: ChatMessage[]): ChatMessage[] {
   return kept.length === messages.length ? messages : kept
 }
 
+/** How Captain's own narration draws: `hidden` (not drawn at all) or `status`
+ *  (a muted one-line status, not a bubble). Rows absent from the map draw as
+ *  ordinary bubbles. */
+export type CaptainNarration = 'hidden' | 'status'
+
+/** A row that does the turn's work rather than say something: a tool row in
+ *  any of its spellings, or a change card / guide offer the tool wrote. */
+function isWorkRow(m: ChatMessage): boolean {
+  return m.role === 'tool' || m.role === 'tool_call' || m.role === 'tool_result' || m.role === CARD_ROW_ROLE
+}
+
+/** True when `m` opens a new turn: anything that is not the turn's own speech,
+ *  work or machinery (a user message, a patrol wake, an injected envelope), or
+ *  a completion envelope whatever role carries it. Same boundary rule `chained`
+ *  reads. */
+function opensTurn(m: ChatMessage): boolean {
+  if (isTurnEnvelope(m)) return true
+  return !(m.role === 'assistant' || m.role === CARD_ROW_ROLE || WITHIN_TURN_ROLES.has(m.role))
+}
+
+/**
+ * Captain's pre-tool narration ("I'll look up where chat history lives…").
+ *
+ * The model announces what it is about to do before its first tool call, then
+ * proposes a card, then answers. Prompt rules never reliably stopped that, so
+ * the transcript renderer settles it for Captain's chat alone (other
+ * crewmates keep every bubble). Within ONE turn of the UNFILTERED transcript:
+ *
+ * - a speech row followed by work (a tool row or a card) and, after that work,
+ *   by more speech is narration the answer superseded: `hidden`;
+ * - while the turn is still live, a speech row with no work before it is held
+ *   as `status`: it may be narration (a tool call starts next) or the whole
+ *   answer (the turn ends without one), and a muted line that becomes a
+ *   bubble or disappears does not flash a bubble the user then loses;
+ * - everything else is a bubble: the final text after the last tool call, and
+ *   a settled turn's only text, even when a card followed it.
+ *
+ * `running` is the pane's live-turn flag; only the transcript's last turn can
+ * be live. Pure and keyed by row identity, so the renderer and the filter
+ * read one verdict.
+ */
+export function captainNarration(transcript: ChatMessage[], running: boolean): Map<ChatMessage, CaptainNarration> {
+  const out = new Map<ChatMessage, CaptainNarration>()
+  let start = 0
+  for (let i = 0; i <= transcript.length; i += 1) {
+    if (i < transcript.length && (i === start || !opensTurn(transcript[i]))) continue
+    // transcript[start, i) is one turn; transcript[start] may be its opener.
+    const live = running && i === transcript.length
+    let workBefore = false
+    for (let k = start; k < i; k += 1) {
+      const m = transcript[k]
+      if (isWorkRow(m)) { workBefore = true; continue }
+      if (!isCrewmateSpeech(m)) continue
+      let workAfter = false
+      let speechAfterWork = false
+      for (let j = k + 1; j < i; j += 1) {
+        if (isWorkRow(transcript[j])) workAfter = true
+        else if (workAfter && isCrewmateSpeech(transcript[j])) { speechAfterWork = true; break }
+      }
+      if (speechAfterWork) out.set(m, 'hidden')
+      else if (live && !workBefore) out.set(m, 'status')
+    }
+    start = i
+  }
+  return out
+}
+
 /** Nearest row in `dir` that is not run-transparent, or undefined at an end. */
 function neighbour(messages: ChatMessage[], index: number, dir: -1 | 1): ChatMessage | undefined {
   for (let j = index + dir; j >= 0 && j < messages.length; j += dir) {
@@ -125,13 +192,16 @@ function neighbour(messages: ChatMessage[], index: number, dir: -1 | 1): ChatMes
  *  wake or an envelope between two replies is filtered out — so the boundary
  *  is read from the UNFILTERED transcript when the caller passes it: any row
  *  between the two that is not the turn's own machinery ends the turn. Without
- *  a transcript (a host that has none) adjacency in the drawn list is the rule. */
+ *  a transcript (a host that has none) adjacency in the drawn list is the rule.
+ *  A change card or guide offer (`card` rows) is the crewmate's own proposal,
+ *  so it joins the run like a message, grouped with the reply that explains it
+ *  instead of floating between two speakers. */
 function chained(
   a: ChatMessage | undefined,
   b: ChatMessage | undefined,
   transcript: ChatMessage[] | undefined,
 ): boolean {
-  if (!a || !b || !isCrewmateSpeech(a) || !isCrewmateSpeech(b)) return false
+  if (!a || !b || !isRunMember(a) || !isRunMember(b)) return false
   if (!transcript) return true
   const ia = transcript.indexOf(a)
   const ib = transcript.indexOf(b)
@@ -144,6 +214,16 @@ function chained(
     return false
   }
   return true
+}
+
+/** The `card` role a change card or guide offer is written under
+ *  (cards/ConversationCard's CARD_ROLE, restated to keep this module free of
+ *  the card store's imports). */
+const CARD_ROW_ROLE = 'card'
+
+/** A row that belongs to the crewmate's run: its speech, or its own proposal. */
+function isRunMember(m: ChatMessage): boolean {
+  return isCrewmateSpeech(m) || m.role === CARD_ROW_ROLE
 }
 
 /** A completion envelope is a turn boundary WHATEVER role carries it: a
@@ -204,6 +284,12 @@ const BUBBLE_BASE =
 /** Classes for the crewmate's message bubble at `pos`. */
 export function crewmateBubbleClass(pos: CrewmateRunPosition): string {
   return `${BUBBLE_BASE} ${CORNERS[pos]}`
+}
+
+/** The run's corner rule alone, for a surface in the run that draws its own
+ *  box (a change card or guide offer). */
+export function crewmateCornerClass(pos: CrewmateRunPosition): string {
+  return CORNERS[pos]
 }
 
 /** Vertical rhythm of a row. Bubbles inside a run sit close but never touch:

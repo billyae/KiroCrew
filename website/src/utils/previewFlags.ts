@@ -72,31 +72,10 @@ export const PREVIEW_WEBHOOKS = `${PREVIEW_FLAG_PREFIX}webhooks`
 export const PREVIEW_ARTIFACT_DEPLOY = `${PREVIEW_FLAG_PREFIX}artifact-deploy`
 
 /**
- * Crew Members: the Crew Members page (`/members`) and its rail item.
- *
- * This flag used to hold a second door too — the "New Crew Mode chat" entry in
- * the sidebar's create menu. Crew Mode retired in favour of the Members page,
- * and that menu entry is now "Crewmates": rendered whatever this flag says,
- * it opens `/members` when the flag is on and, when off, the Settings card that
- * turns it on (`ChatSidebar.openCrewMembers`). The flag therefore gates only the
- * page and where the entry lands, never whether the entry exists — a user who
- * has not opted in still finds the door and is walked to the switch.
- *
- * Gating the INGRESS only. Turning the flag off hides the rail item and reroutes
- * the menu entry; it does not orphan existing work — it stops advertising the
- * page to someone who has not opted in.
- */
-export const PREVIEW_CREW = `${PREVIEW_FLAG_PREFIX}crew`
-
-/**
  * Creating a chat that RUNS ON a connected remote crew — the "New chat on crew"
- * entry in the sidebar's create menu.
- *
- * Its own flag, deliberately NOT {@link PREVIEW_CREW}. The word "crew" carries
- * two unrelated meanings here: `PREVIEW_CREW` holds the Crew Members page, while
- * this holds sessions dispatched to another MACHINE over the instances tunnel.
- * Sharing one key would release or hold both at once, which is the same
- * half-ship failure a per-feature flag exists to prevent.
+ * entry in the sidebar's create menu. It holds sessions dispatched to another
+ * MACHINE over the instances tunnel; the Crewmates page is a different feature
+ * and is released.
  *
  * Held because the LANDING is unfinished, not the dispatch: the session really is
  * created on the peer, but there is no native remote chat view yet, so it opens
@@ -107,8 +86,7 @@ export const PREVIEW_CREW = `${PREVIEW_FLAG_PREFIX}crew`
  * unreleased surface, and NOT on Settings > Remote Crew where it started: a
  * held feature is found by looking at the one page that lists held features, so
  * scattering an opt-in onto the page it happens to act on hides it from the only
- * reader who wants it. It keeps its own card there rather than sharing
- * {@link PREVIEW_CREW}'s, for the two-meanings reason above.
+ * reader who wants it.
  *
  * Gating the INGRESS only. A session already created on a peer keeps running
  * there and stays reachable through that crew's own dashboard; turning the flag

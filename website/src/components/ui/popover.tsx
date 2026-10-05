@@ -2,8 +2,34 @@ import * as React from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 
 import { cn } from '../../lib/utils'
+import { GuideRevealScope } from '../../guide/GuideRevealScope'
+import type { GuideRevealScopeId } from '../../uiLocations/guidePlans.gen'
 
-const Popover = PopoverPrimitive.Root
+type PopoverProps = React.ComponentProps<typeof PopoverPrimitive.Root> & {
+  /**
+   * The compiled reveal scope this popover is (`menu:<trigger location id>`),
+   * for one whose trigger or contents are registered UI locations: it reports
+   * open/closed to a running guide. Reporting only; nothing here opens it.
+   */
+  guideScope?: GuideRevealScopeId
+}
+
+/** Radix `Popover.Root`; with `guideScope`, also a guide reveal scope owner. */
+function Popover({ guideScope, open: openProp, defaultOpen, onOpenChange, ...rest }: PopoverProps) {
+  const [inner, setInner] = React.useState(defaultOpen ?? false)
+  const handleOpenChange = React.useCallback((next: boolean) => {
+    if (openProp === undefined) setInner(next)
+    onOpenChange?.(next)
+  }, [openProp, onOpenChange])
+  if (!guideScope) return <PopoverPrimitive.Root open={openProp} defaultOpen={defaultOpen} onOpenChange={onOpenChange} {...rest} />
+  const open = openProp ?? inner
+  // Outside the Root, so "closed" is said while the portalled content is unmounted.
+  return (
+    <GuideRevealScope id={guideScope} open={open}>
+      <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange} {...rest} />
+    </GuideRevealScope>
+  )
+}
 const PopoverTrigger = PopoverPrimitive.Trigger
 const PopoverAnchor = PopoverPrimitive.Anchor
 

@@ -105,6 +105,18 @@ describe('side panel + menu (shadcn dropdown)', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
+  it('puts the Browser row\'s find_ui marker on that menu item alone', () => {
+    // AddMenuItem forwards the marker to the menu item a person picks, and only
+    // the Browser row carries one.
+    renderPanel()
+    openMenu()
+    const marked = document.body.querySelectorAll('[data-ui-location="chat.side-panel.browser"]')
+    expect(marked).toHaveLength(1)
+    expect(marked[0].getAttribute('role')).toBe('menuitem')
+    expect(marked[0].textContent).toBe('Browser')
+    expect(screen.getByRole('menuitem', { name: 'Workflows' }).hasAttribute('data-ui-location')).toBe(false)
+  })
+
   it('renders one separator between the groups and none at the edges', () => {
     renderPanel()
     openMenu()

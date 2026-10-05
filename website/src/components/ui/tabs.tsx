@@ -3,6 +3,8 @@ import * as TabsPrimitive from '@radix-ui/react-tabs'
 import { motion, useReducedMotion } from 'framer-motion'
 
 import { cn } from '../../lib/utils'
+import { MaybeGuideRevealScope } from '../../guide/GuideRevealScope'
+import type { GuideRevealScopeId } from '../../uiLocations/guidePlans.gen'
 import {
   TABS_COUNT_BASE_CLASS,
   TABS_INDICATOR_CLASS,
@@ -148,17 +150,27 @@ TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
 
 const TabsContent = React.forwardRef<
   React.ComponentRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(function TabsContent({ className, ...props }, ref) {
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content> & {
+    /**
+     * The compiled reveal scope this panel is (`tab:<trigger location id>`):
+     * it reports selected/not to a running guide. The owner wraps the Radix
+     * panel, so it reports "closed" while an inactive panel is unmounted.
+     */
+    guideScope?: GuideRevealScopeId
+  }
+>(function TabsContent({ className, guideScope, ...props }, ref) {
+  const ctx = React.useContext(TabsValueContext)
   return (
-    <TabsPrimitive.Content
-      ref={ref}
-      // Radix puts `tabindex=0` on the panel so the rail's one tab stop leads
-      // into it; that makes the panel itself focusable, and the global outline
-      // would then ring the entire page body.
-      className={cn('focus-visible:outline-hidden', className)}
-      {...props}
-    />
+    <MaybeGuideRevealScope id={guideScope} open={ctx?.current === props.value}>
+      <TabsPrimitive.Content
+        ref={ref}
+        // Radix puts `tabindex=0` on the panel so the rail's one tab stop leads
+        // into it; that makes the panel itself focusable, and the global outline
+        // would then ring the entire page body.
+        className={cn('focus-visible:outline-hidden', className)}
+        {...props}
+      />
+    </MaybeGuideRevealScope>
   )
 })
 TabsContent.displayName = TabsPrimitive.Content.displayName

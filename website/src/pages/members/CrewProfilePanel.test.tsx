@@ -149,6 +149,15 @@ describe('CrewProfilePanel Profile tab', () => {
     expect(h.onEdit).toHaveBeenCalledTimes(3)
   })
 
+  it('puts the Permissions row\'s guide marker on the button a person presses, and only there', () => {
+    setup()
+    const marked = document.querySelectorAll('[data-ui-location]')
+    expect(marked).toHaveLength(1)
+    expect(marked[0]).toBe(screen.getByTestId('crew-profile-permissions'))
+    expect(marked[0].tagName).toBe('BUTTON')
+    expect(marked[0].getAttribute('data-ui-location')).toBe('members.permissions')
+  })
+
   it('says there is no description instead of rendering an empty card', () => {
     setup({ description: '' })
     expect(screen.getByTestId('crew-profile-about')).toHaveTextContent(/No description yet/)

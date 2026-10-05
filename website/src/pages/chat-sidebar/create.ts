@@ -15,9 +15,7 @@ import type { FolderMutations } from './folders'
 import type { BoardColumnMutations } from './board'
 import { errMessage } from '../../utils/thunkError'
 import { usePreviewFlag } from '../../hooks/usePreviewFlag'
-import { PREVIEW_CREW, PREVIEW_REMOTE_CREW_CHAT } from '../../utils/previewFlags'
-import { settingsPath } from '../../components/settingsPath'
-import { SETTINGS_CREW_MEMBERS_PREVIEW_ID } from '../../hooks/useSettingHighlight'
+import { PREVIEW_REMOTE_CREW_CHAT } from '../../utils/previewFlags'
 import { api } from '../../api/client'
 import { resolveDefaultMemoryMode } from '../../api/queryClient'
 import { fetchDashboardConfig } from '../../api/dashboardConfigQuery'
@@ -178,18 +176,9 @@ export function useSessionCreate({ setNewChatError, dispatch, defaultAgent, mode
   // standing agent with its own DM thread — so the entry is a DOOR to that
   // page, kept in this menu because this is where people learned to look
   // for "crew".
-  //
-  // Always rendered, even while the page is still preview-gated: the flag
-  // only decides WHERE the click lands. On, it opens `/members`. Off, it
-  // opens Settings > Developer > Feature Previews with the crew card scrolled
-  // into view and ringed (`useSettingHighlight`), so the user turns the page
-  // on from the very switch that holds it instead of reading a toast about
-  // one. `usePreviewFlag` rather than a bare read because the sidebar does
-  // not remount when that toggle flips.
-  const crewPreview = usePreviewFlag(PREVIEW_CREW)
   const navigate = useNavigate()
   const openCrewMembers = () => {
-    navigate(crewPreview ? '/members' : settingsPath({ tab: 'developer', highlight: SETTINGS_CREW_MEMBERS_PREVIEW_ID }))
+    navigate('/members')
   }
   // Separate flag, separate feature: this one holds "New chat on crew", which
   // dispatches a session to another MACHINE. Its toggle is in Settings > Remote
@@ -283,7 +272,7 @@ export function useSessionCreate({ setNewChatError, dispatch, defaultAgent, mode
     onError: onNewChatError,
   })
   return {
-    crewPreview, openCrewMembers, remoteCrewChatPreview,
+    openCrewMembers, remoteCrewChatPreview,
     createChatMutation, createRemoteChatMutation, createEphemeralChatMutation,
   }
 }

@@ -4,7 +4,7 @@ import { ArrowRight } from 'lucide-react'
 import { SettingsSection, SettingsCard, SettingsToggle } from '../../components/settings'
 import { FeaturePreviewIntroButton, type FeaturePreviewIntro } from '../../components/FeaturePreviewIntroDialog'
 import { usePreviewFlag } from '../../hooks/usePreviewFlag'
-import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_CREW, PREVIEW_DASHBOARD, PREVIEW_INSTANCE_SESSIONS, PREVIEW_LAYOUT_HARNESS, PREVIEW_REMOTE_CREW_CHAT, PREVIEW_WEBHOOKS, setPreviewFlag } from '../../utils/previewFlags'
+import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_DASHBOARD, PREVIEW_INSTANCE_SESSIONS, PREVIEW_LAYOUT_HARNESS, PREVIEW_REMOTE_CREW_CHAT, PREVIEW_WEBHOOKS, setPreviewFlag } from '../../utils/previewFlags'
 import { DecisionsCard } from './DecisionsCard'
 import AutomaticCardSetting from '../chat/command-center/AutomaticCardSetting'
 import { i18nT } from '../../i18n/t'
@@ -100,22 +100,6 @@ function webhooksIntro(): FeaturePreviewIntro {
   }
 }
 
-/** Crew Members: the `/members` page, the flag's only door. */
-function crewIntro(): FeaturePreviewIntro {
-  return {
-    summary: i18nT('pages.developer.featurePreviewsTab.intro.crew_summary'),
-    whereToFind: i18nT('pages.developer.featurePreviewsTab.intro.crew_where'),
-    media: [
-      {
-        kind: 'image',
-        light: `${MEDIA_BASE}/crew-members-light.png`,
-        dark: `${MEDIA_BASE}/crew-members-dark.png`,
-        caption: i18nT('pages.developer.featurePreviewsTab.intro.crew_media_members'),
-      },
-    ],
-  }
-}
-
 /**
  * `data-setting-key` anchor on the section wrapper, for
  * `?highlight=key:<this>` — the redirect target of the old Developer-page tab
@@ -131,7 +115,6 @@ export function FeaturePreviewsSection() {
   const navigate = useNavigate()
   const artifactDeploy = usePreviewFlag(PREVIEW_ARTIFACT_DEPLOY)
   const webhooks = usePreviewFlag(PREVIEW_WEBHOOKS)
-  const crew = usePreviewFlag(PREVIEW_CREW)
   const remoteCrewChat = usePreviewFlag(PREVIEW_REMOTE_CREW_CHAT)
   const instanceSessions = usePreviewFlag(PREVIEW_INSTANCE_SESSIONS)
   const layoutHarness = usePreviewFlag(PREVIEW_LAYOUT_HARNESS)
@@ -213,43 +196,9 @@ export function FeaturePreviewsSection() {
           )}
         </div>
       </SettingsCard>
-      {/* One card, one flag, one door: the Crew Members page (`/members`) and its
-          rail item. Crew Mode — the second door this card used to name — retired
-          in favour of that page; the sidebar create menu keeps a "Crewmates"
-          entry that opens the page, or lands HERE with this card ringed while the
-          flag is still off (`ChatSidebar.openCrewMembers`).
+      {/* Holds a chat dispatched to another MACHINE over the instances tunnel.
 
-          NO ingress button here, deliberately, unlike the webhooks card above. That
-          one needs its link because `/webhooks` is `hiddenFromNav` and the card is
-          its ONLY door. Crew Members is not: flipping this switch puts the row back
-          on the rail in the same tick (`usePreviewFlagRevision`), so a link here
-          would be a second spelling of a door the user can already see — and one
-          that costs a catalog key in twelve languages permanently. */}
-      <SettingsCard>
-        <SettingsToggle
-          label={i18nT('pages.developer.featurePreviewsTab.crew_members')}
-          hint={i18nT('pages.developer.featurePreviewsTab.crew_members_desc')}
-          checked={crew}
-          onChange={v => setPreviewFlag(PREVIEW_CREW, v)}
-        />
-        {/* "See what it looks like" is not an ingress: it shows the page instead of
-            opening it, which is what a reader deciding whether to flip the switch
-            needs BEFORE flipping it. */}
-        <div className="pt-1">
-          <FeaturePreviewIntroButton
-            title={i18nT('pages.developer.featurePreviewsTab.crew_members')}
-            intro={crewIntro()}
-            checked={crew}
-            onChange={v => setPreviewFlag(PREVIEW_CREW, v)}
-          />
-        </div>
-      </SettingsCard>
-      {/* A SEPARATE card from Crew Members above, because the word names two
-          unrelated things: that flag holds the Crew Members page, this one holds
-          a chat dispatched to another MACHINE over the instances tunnel. One card
-          each keeps a reader from flipping the wrong switch.
-
-          NO ingress button, for the same reason as the crew card: turning it on
+          NO ingress button: turning it on
           puts the create-menu entry back in the same tick, and that menu is
           already in front of the user.
 
