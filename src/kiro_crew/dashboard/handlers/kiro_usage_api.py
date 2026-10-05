@@ -942,7 +942,35 @@ class UsageResult(NamedTuple):
     auth_state: str
 
 
-def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
+class VaultCredential(NamedTuple):
+    """A Kiro OIDC credential Kiro Crew itself owns, handed in by the caller.
+
+    Every other source this module reads belongs to SOMEONE ELSE -- kiro-cli's
+    auth store, the IDE's SSO cache, amazon-q's store -- and is read as a
+    bystander: unrefreshable here, and valid only as long as its owner keeps
+    driving it. On an install whose sign-in Kiro Crew owns (KAS mode, where there
+    may be no kiro-cli at all), that made the balance permanently unreadable:
+    the module's own docstring calls it out -- "the stored token passes its
+    expiry with nothing to renew it ... and this module fails closed forever".
+
+    This is the credential WITH an owner present. It is resolved by the async
+    caller from ``KasAuthProvider`` -- which refreshes it before handing it over,
+    so it cannot be the expired-store case -- and passed in, keeping this module
+    synchronous and keeping the vault/refresh machinery out of it.
+
+    ``profile_arn`` comes from the SAME atomic snapshot as the token
+    (``resolve_request_credential``), which is what makes it usable as the
+    ``expected_arn`` anchor: the two cannot describe different accounts.
+    """
+
+    token: str
+    expiry: datetime
+    profile_arn: str | None
+
+
+def fetch_usage_limits(
+    expected_arn: str | None, *, vault: VaultCredential | None = None
+) -> UsageResult:
     """Fetch real credit usage via the direct RTS API. Synchronous (uses urllib).
 
     A candidate credential is used only when its ownership by the signed-in
@@ -967,6 +995,14 @@ def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
     SSO caches or another product's store, which is what let one Builder ID
     account's leftover token be served as a different Builder ID account's balance.
 
+    ``vault`` is an ADDITIONAL candidate, not a replacement: Kiro Crew's own
+    signed-in identity (:class:`VaultCredential`), tried first and then every
+    enumerated store exactly as before, so an install whose sign-in kiro-cli owns
+    reads precisely what it read before this parameter existed. It satisfies the
+    source-anchored proof for the same reason kiro-cli's own store does -- it is
+    the credential of the account THIS process signed in, by construction -- and
+    when it carries a profile ARN it satisfies the stronger ARN proof too.
+
     Returns the canonical usage dict on success, or None on ANY failure (no
     token, no candidate proven, unparseable body, no CREDIT breakdown). The caller
     treats None as "fall back to the text scrape". This function never raises and
@@ -985,6 +1021,22 @@ def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
     """
     try:
         candidates = _candidate_tokens()
+        if vault is not None:
+            # First, ahead of every bystander store. ``from_cli_store=True`` is a
+            # trust CLAIM, and this credential has the strongest version of it:
+            # kiro-cli's store earns the flag by being the store its own process
+            # authenticates from, and Crew's vault earns it by being the store
+            # THIS process authenticates from -- plus it is encrypted, owner-only,
+            # and fenced against the agent's own file tools (TokenStore refuses a
+            # linked directory), where the enumerated stores are merely readable.
+            #
+            # Deduped against the enumerated ones by token value, so a host where
+            # Crew and kiro-cli hold the same bearer tries it once, with the
+            # trusted provenance.
+            candidates = [
+                _Candidate(vault.token, vault.expiry, from_cli_store=True),
+                *(c for c in candidates if c.token != vault.token),
+            ]
     except Exception:
         # Token acquisition must fail closed to the text scrape, never raise —
         # an escaping error would make the caller cache {"available": False}
