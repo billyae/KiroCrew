@@ -1027,10 +1027,15 @@ async def _fetch_usage_bg(*, allow_kiro_spawn: bool = True) -> str | None:
         account could change underneath the read, and a whoami could add nothing
         -- there is no kiro-cli here to ask.
 
-        What it therefore does not do is attach identity FIELDS (email, account
-        type) to the published reading: those come from whoami. It publishes the
-        numbers alone, exactly as the kiro-cli path already does for an account
-        whose ownership it proved by provenance rather than by ARN.
+        The reading is therefore NOT anonymous. It carries what Crew actually
+        knows about the account, from two places that cost nothing extra:
+        ``account`` -- the profile display name, which ``fetch_usage_limits``
+        attaches from the same ListAvailableProfiles probe that proved the ARN --
+        and ``account_type``, the stored kind of the sign-in Crew itself
+        performed. What it omits is ``email`` and ``start_url``: the vault holds
+        neither, and no API reachable from here returns them, so the panel shows
+        the account's name and kind without an issuer host. Omitting a field the
+        user can live without beats synthesising one they would then trust.
 
         The scrape backoff is left untouched on every outcome -- no scrape was
         attempted, and an API-path result says nothing about whether the scrape
@@ -1043,6 +1048,11 @@ async def _fetch_usage_bg(*, allow_kiro_spawn: bool = True) -> str | None:
             # strip the private coupling metadata before it can reach the cache.
             api_usage = {k: _redact_strings(v) for k, v in api_usage.items()}
             api_usage.pop("_profile_arn", None)
+            # Set, never overwritten: should the API ever start returning its own
+            # account-type field, that answer describes the credential that was
+            # actually spent and outranks our label for it.
+            if vault.account_type and not api_usage.get("account_type"):
+                api_usage["account_type"] = _redact_strings(vault.account_type)
             _publish_usage(api_usage)
             logger.info(
                 "Kiro usage refreshed (api, Crew sign-in): %s / %s credits",

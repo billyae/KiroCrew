@@ -958,14 +958,24 @@ class VaultCredential(NamedTuple):
     so it cannot be the expired-store case -- and passed in, keeping this module
     synchronous and keeping the vault/refresh machinery out of it.
 
-    ``profile_arn`` comes from the SAME atomic snapshot as the token
+    ``profile_arn`` comes from the SAME atomic snapshot as the bearer
     (``resolve_request_credential``), which is what makes it usable as the
     ``expected_arn`` anchor: the two cannot describe different accounts.
+
+    ``account_type`` is identity metadata rather than credential material, and
+    rides along for one reason: this module is where a usage dict is assembled,
+    and the caller must not have to re-open the vault to label the reading it
+    just took. It is the signed-in account's KIND, spelled the way kiro-cli's
+    ``whoami`` spells it (``BuilderId``, ``IamIdentityCenter``,
+    ``SocialGoogle``, ...) so the dashboard reads one vocabulary whichever
+    credential answered. Not a guess: Crew performed this sign-in, so the kind
+    is a record, not an inference.
     """
 
     token: str
     expiry: datetime
     profile_arn: str | None
+    account_type: str | None = None
 
 
 def fetch_usage_limits(

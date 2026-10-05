@@ -48,6 +48,41 @@ from kiro_crew.executors import subprocess_executor
 
 logger = logging.getLogger(__name__)
 
+# Crew's stored identity KIND -> the spelling kiro-cli's ``whoami`` uses for the
+# same account, which is the vocabulary the dashboard's account panel already
+# branches on (``accountProviderLabel`` in ``KiroAccountModal.tsx``).
+#
+# Translating instead of inventing a second vocabulary is the whole point: the
+# panel must not have to know which credential answered in order to label the
+# account. A kind absent from this table yields no label rather than a guessed
+# one -- the panel renders the name alone, which is what it did before.
+_ACCOUNT_TYPE_BY_IDENTITY = {
+    "builder_id": "BuilderId",
+    "identity_center": "IamIdentityCenter",
+    "external_idp": "ExternalIdp",
+}
+
+# Social sign-ins are one stored kind with several issuers, and whoami spells
+# them ``Social<Provider>``. ``KasToken.provider`` already carries the issuer in
+# exactly the casing the KAS contract fixed (``Google`` / ``Github``), so the
+# label is a concatenation rather than another mapping to drift.
+_SOCIAL_IDENTITY = "social"
+_SOCIAL_PROVIDERS = ("Google", "Github")
+
+
+def _account_type(identity: str | None, provider: str | None) -> str | None:
+    """Label Crew's stored identity the way ``whoami`` would label it.
+
+    ``None`` when the kind is unrecognised, which is deliberately not an error:
+    an unlabelled reading is the state the panel already handles, while a wrong
+    label is a claim about WHICH account the user is signed in to.
+    """
+    kind = (identity or "").strip()
+    if kind == _SOCIAL_IDENTITY:
+        issuer = (provider or "").strip()
+        return f"Social{issuer}" if issuer in _SOCIAL_PROVIDERS else None
+    return _ACCOUNT_TYPE_BY_IDENTITY.get(kind)
+
 
 async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
     """Crew's own Kiro identity, refreshed, or ``None`` when it holds none.
@@ -70,6 +105,17 @@ async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
     ``profile_arn`` rides the same atomic snapshot as the access token, which is
     what makes it sound to use as the ownership anchor: the two cannot name
     different accounts.
+
+    The snapshot also carries WHO this is, which is why the reading this path
+    publishes is not anonymous. Crew performed the sign-in, so the account's kind
+    is a stored record rather than something to be re-derived from a subprocess
+    (see :func:`_account_type`). What the vault does NOT hold is the account's
+    email or its IdC ``start_url``: the login flows take ``start_url`` as an
+    argument and never persist it, and no Kiro API this module may call returns
+    either (``ListAvailableProfiles`` answers with an ARN and a display name,
+    which is the ``account`` label ``kiro_usage_api`` already attaches). So the
+    panel shows the profile name and the account kind, and omits the issuer host
+    -- omitting a field is honest; synthesising one is not.
 
     Vault ONLY (``allow_env_api_key=False``), matching the KAS auth callback's
     choice, and for a second reason specific to this caller: ``KIRO_API_KEY`` is
@@ -117,6 +163,7 @@ async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
         token=snapshot.access_token,
         expiry=snapshot.expires_at,
         profile_arn=snapshot.profile_arn or None,
+        account_type=_account_type(snapshot.identity, snapshot.provider),
     )
 
 

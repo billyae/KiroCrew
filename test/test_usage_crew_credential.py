@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -146,6 +147,59 @@ class TestVaultJoinsTheCandidateList:
 # Resolving the credential: an optional source that can never break a refresh.
 # --------------------------------------------------------------------------
 
+class TestLabellingTheStoredIdentity:
+    """Crew's stored kind, translated into the vocabulary the panel branches on.
+
+    One vocabulary is the requirement: the account panel must not have to know
+    which credential answered in order to label the account, so the translation
+    happens here rather than a second set of branches happening there.
+    """
+
+    @pytest.mark.parametrize(
+        ("identity", "provider", "expected"),
+        [
+            ("builder_id", "BuilderId", "BuilderId"),
+            ("identity_center", "Enterprise", "IamIdentityCenter"),
+            ("external_idp", "ExternalIdp", "ExternalIdp"),
+            ("social", "Google", "SocialGoogle"),
+            ("social", "Github", "SocialGithub"),
+        ],
+    )
+    def test_every_stored_kind_gets_whoamis_spelling(self, identity, provider, expected):
+        assert crew_cred._account_type(identity, provider) == expected
+
+    @pytest.mark.parametrize(
+        ("identity", "provider"),
+        [
+            # A social issuer outside the KAS contract's fixed set. Concatenating
+            # it would invent a label the panel then humanizes and shows.
+            ("social", "Facebook"),
+            ("social", ""),
+            # A kind added to the store later, before this table learns it.
+            ("something_new", "Whatever"),
+            (None, None),
+            ("", ""),
+        ],
+    )
+    def test_an_unrecognised_kind_yields_no_label(self, identity, provider):
+        assert crew_cred._account_type(identity, provider) is None
+
+    def test_the_labels_are_the_ones_the_panel_branches_on(self):
+        """Pin the contract to its consumer, not to this table.
+
+        `accountProviderLabel` in `website/src/components/KiroAccountModal.tsx`
+        special-cases exactly these spellings; anything else falls through to a
+        humanized raw string. A rename on either side has to break a test, or the
+        account line silently degrades to "Builder Id" and nobody notices.
+        """
+        panel = (
+            Path(__file__).resolve().parents[1]
+            / "website/src/components/KiroAccountModal.tsx"
+        ).read_text(encoding="utf-8")
+        assert "'IamIdentityCenter'" in panel
+        assert "'BuilderId'" in panel
+        assert "'Social'" in panel
+
 
 class TestResolvingCrewsCredential:
     @pytest.mark.asyncio
@@ -248,22 +302,29 @@ class TestRefreshWithoutKiroCli:
         resolve.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_the_reading_carries_no_identity_fields(self, monkeypatch):
-        """Identity fields come from whoami, and this path has none to trust.
+    async def test_the_reading_carries_the_identity_crew_actually_holds(self, monkeypatch):
+        """Crew performed this sign-in, so the account is a record, not a guess.
 
-        Publishing numbers alone is the same posture the kiro-cli path takes for
-        an account it proved by provenance rather than by ARN. Inventing an email
-        here would attribute a balance on no evidence.
+        `account` is the profile display name `fetch_usage_limits` attaches from
+        the same ListAvailableProfiles probe that proved the ARN; `account_type`
+        is the stored kind of the sign-in. Both reach the panel, so a balance
+        read with Crew's own credential is not an anonymous number.
+
+        `email` is absent because the vault genuinely does not hold one and no
+        API reachable from here returns it -- omitted, never synthesised. The
+        private coupling field must not reach the cache at all.
         """
         monkeypatch.setattr(
-            crew_cred, "crew_vault_credential", AsyncMock(return_value=_vault())
+            crew_cred,
+            "crew_vault_credential",
+            AsyncMock(return_value=_vault()._replace(account_type="IamIdentityCenter")),
         )
         monkeypatch.setattr(
             crew_cred,
             "read_usage_with_crew_credential",
             AsyncMock(
                 return_value=_api_result(
-                    {"credits_plan": 10000.0, "_profile_arn": _ARN}
+                    {"credits_plan": 10000.0, "account": "KIRO POWER", "_profile_arn": _ARN}
                 )
             ),
         )
@@ -271,10 +332,58 @@ class TestRefreshWithoutKiroCli:
 
         await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
 
+        assert sessions_mod._usage_cache["account"] == "KIRO POWER"
+        assert sessions_mod._usage_cache["account_type"] == "IamIdentityCenter"
         assert "email" not in sessions_mod._usage_cache
         assert "_profile_arn" not in sessions_mod._usage_cache, (
             "the private coupling field must never reach the cache"
         )
+
+    @pytest.mark.asyncio
+    async def test_the_api_outranks_our_label_for_the_credential(self, monkeypatch):
+        """If the API ever names the account type, that answer wins.
+
+        It describes the credential that was actually spent; ours describes the
+        one we handed over. They agree today, and if they ever stop, the spender
+        is the authority.
+        """
+        monkeypatch.setattr(
+            crew_cred,
+            "crew_vault_credential",
+            AsyncMock(return_value=_vault()._replace(account_type="BuilderId")),
+        )
+        monkeypatch.setattr(
+            crew_cred,
+            "read_usage_with_crew_credential",
+            AsyncMock(
+                return_value=_api_result(
+                    {"credits_plan": 10000.0, "account_type": "IamIdentityCenter"}
+                )
+            ),
+        )
+        monkeypatch.setattr(sessions_mod, "_resolve_kiro_bin_for_spawn", AsyncMock(return_value=None))
+
+        await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
+
+        assert sessions_mod._usage_cache["account_type"] == "IamIdentityCenter"
+
+    @pytest.mark.asyncio
+    async def test_an_unlabelled_identity_publishes_no_account_type(self, monkeypatch):
+        """No label is a state the panel handles; a wrong one is a false claim."""
+        monkeypatch.setattr(
+            crew_cred, "crew_vault_credential", AsyncMock(return_value=_vault())
+        )
+        monkeypatch.setattr(
+            crew_cred,
+            "read_usage_with_crew_credential",
+            AsyncMock(return_value=_api_result({"credits_plan": 10000.0})),
+        )
+        monkeypatch.setattr(sessions_mod, "_resolve_kiro_bin_for_spawn", AsyncMock(return_value=None))
+
+        await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
+
+        assert sessions_mod._usage_cache["credits_plan"] == 10000.0
+        assert "account_type" not in sessions_mod._usage_cache
 
     @pytest.mark.asyncio
     async def test_an_empty_reading_names_the_remedy(self, monkeypatch):

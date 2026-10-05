@@ -3,11 +3,11 @@
  * after reading the balance with Crew's own Kiro credential.
  *
  * This PR changes no client code (`git diff origin/main..HEAD -- website/` is
- * empty), so the two frames are driven by the same built SPA and differ ONLY in
- * what `/api/sessions/usage` answers. That is the whole delta the change
- * produces, which is why a stub is the right instrument here: it isolates the
- * payload, and the backend that now produces it is covered by
- * `test/test_usage_crew_credential.py`.
+ * empty apart from this script and the usage-footnote copy), so the two frames
+ * are driven by the same built SPA and differ in what `/api/sessions/usage`
+ * answers. That is the delta the change produces, which is why a stub is the
+ * right instrument here: it isolates the payload, and the backend that now
+ * produces it is covered by `test/test_usage_crew_credential.py`.
  *
  *   node scripts/capture-usage-crew-oidc.mjs <distDir> <outDir>
  *
@@ -24,10 +24,20 @@
  *           query errors with nothing cached, so the segment renders its
  *           terminal dash and the modal behind it says the balance could not be
  *           read -- about a balance it never asked anyone for.
- *   after   the endpoint serves the reading Crew's own credential produces:
- *           the canonical usage dict, numbers only. No `email` and no
- *           `account_type`, because that path has no whoami to take them from
- *           and must not invent them.
+ *   after   the endpoint serves the reading Crew's own credential produces.
+ *
+ * The `after` payload is the REAL field set, which matters because an earlier
+ * revision of this harness omitted the identity fields and the resulting frame
+ * was misread as the code publishing an anonymous number:
+ *   - `account` — the profile display name. `fetch_usage_limits` attaches it
+ *     from the same ListAvailableProfiles probe that proves the ARN, on this
+ *     path exactly as on the kiro-cli one.
+ *   - `account_type` — the stored kind of the sign-in Crew itself performed,
+ *     spelled the way `whoami` spells it so the panel reads one vocabulary.
+ *   - no `email`, and no `start_url`. The vault holds neither and no API
+ *     reachable from that path returns them, so the account line shows the
+ *     profile name and "IAM Identity Center" with no issuer host. The frame is
+ *     meant to show that gap rather than paper over it.
  */
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
@@ -44,7 +54,7 @@ const DIST = resolvePath(process.argv[2] || 'dist')
 const OUT = resolvePath(process.argv[3] || '/tmp/usage-crew-oidc-shots')
 mkdirSync(OUT, { recursive: true })
 
-/** What the vault-anchored read publishes: the numbers, and nothing about who. */
+/** What the vault-anchored read publishes: the numbers, plus what Crew knows. */
 const USAGE_FROM_CREW_CREDENTIAL = {
   usage: {
     credits_used: 3044,
@@ -54,6 +64,8 @@ const USAGE_FROM_CREW_CREDENTIAL = {
     plan: 'KIRO POWER',
     cost_usd: 0,
     overage_rate: 0.04,
+    account: 'Engineering',
+    account_type: 'IamIdentityCenter',
   },
 }
 
