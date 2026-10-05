@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 _HEADERS = {"Content-Type": "application/x-amz-json-1.1", "User-Agent": USER_AGENT}
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+# Added to the flow's own interval when SSO-OIDC answers ``slow_down``. The
+# issuer is asking to be polled less often, so honouring the unchanged interval
+# would be ignoring it; the flow's expiry bounds how long the caller waits
+# either way. Named rather than inlined so the back-off a test asserts and the
+# back-off the loop performs cannot drift apart.
+_SLOW_DOWN_EXTRA_SECS = 5
 
 
 class BuilderIdAuthError(Exception):
@@ -213,7 +219,8 @@ async def poll_token(
             # SSO-OIDC signals pending/slow-down via an error code with non-200.
             err = (data or {}).get("error", "")
         if err in ("authorization_pending", "slow_down"):
-            await asyncio.sleep(auth.interval_secs + (5 if err == "slow_down" else 0))
+            extra = _SLOW_DOWN_EXTRA_SECS if err == "slow_down" else 0
+            await asyncio.sleep(auth.interval_secs + extra)
             continue
         if err == "expired_token":
             raise BuilderIdAuthError("device code expired before approval")
