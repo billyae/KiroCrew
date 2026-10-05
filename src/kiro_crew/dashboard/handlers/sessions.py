@@ -1053,6 +1053,12 @@ async def _fetch_usage_bg(*, allow_kiro_spawn: bool = True) -> str | None:
             # actually spent and outranks our label for it.
             if vault.account_type and not api_usage.get("account_type"):
                 api_usage["account_type"] = _redact_strings(vault.account_type)
+            # The directory this credential was obtained against. The panel pairs
+            # it with the kind above -- "IAM Identity Center · <host>" -- and
+            # without it a user signed in to one organization cannot tell from
+            # the UI which one. Same precedence rule as the kind.
+            if vault.start_url and not api_usage.get("start_url"):
+                api_usage["start_url"] = _redact_strings(vault.start_url)
             _publish_usage(api_usage)
             logger.info(
                 "Kiro usage refreshed (api, Crew sign-in): %s / %s credits",

@@ -977,10 +977,11 @@ class VaultCredential(NamedTuple):
     (``resolve_request_credential``), which is what makes it usable as the
     ``expected_arn`` anchor: the two cannot describe different accounts.
 
-    ``account_type`` is identity metadata rather than credential material, and
-    rides along for one reason: this module is where a usage dict is assembled,
-    and the caller must not have to re-open the vault to label the reading it
-    just took. It is the signed-in account's KIND, spelled the way kiro-cli's
+    ``account_type`` and ``start_url`` are identity metadata rather than
+    credential material, and ride along for one reason: this module is where a
+    usage dict is assembled, and the caller must not have to re-open the vault to
+    label the reading it just took. ``start_url`` names the directory the sign-in
+    went to, which the account panel renders as the issuer host. It is the signed-in account's KIND, spelled the way kiro-cli's
     ``whoami`` spells it (``BuilderId``, ``IamIdentityCenter``,
     ``SocialGoogle``, ...) so the dashboard reads one vocabulary whichever
     credential answered. Not a guess: Crew performed this sign-in, so the kind
@@ -991,6 +992,7 @@ class VaultCredential(NamedTuple):
     expiry: datetime
     profile_arn: str | None
     account_type: str | None = None
+    start_url: str | None = None
 
 
 def fetch_usage_limits(

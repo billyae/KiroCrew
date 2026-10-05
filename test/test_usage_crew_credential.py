@@ -422,6 +422,61 @@ class TestRefreshWithoutKiroCli:
         )
 
     @pytest.mark.asyncio
+    async def test_the_reading_names_the_directory_not_just_the_kind(self, monkeypatch):
+        """"IAM Identity Center" alone does not say WHICH organization.
+
+        The panel pairs `account_type` with `start_url`'s host, and a user signed
+        in to one directory could not tell from the UI which one it was. Same
+        information loss commit 8c4c079cb fixed when the host was being
+        truncated; this is the same field going missing entirely.
+        """
+        monkeypatch.setattr(
+            crew_cred,
+            "crew_vault_credential",
+            AsyncMock(
+                return_value=_vault()._replace(
+                    account_type="IamIdentityCenter",
+                    start_url="https://d-906679cc0e.awsapps.com/start",
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            crew_cred,
+            "read_usage_with_crew_credential",
+            AsyncMock(return_value=_api_result({"credits_plan": 10000.0})),
+        )
+        monkeypatch.setattr(sessions_mod, "_resolve_kiro_bin_for_spawn", AsyncMock(return_value=None))
+
+        await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
+
+        assert sessions_mod._usage_cache["start_url"] == "https://d-906679cc0e.awsapps.com/start"
+        assert sessions_mod._usage_cache["account_type"] == "IamIdentityCenter"
+
+    @pytest.mark.asyncio
+    async def test_a_sign_in_stored_before_the_field_shows_the_kind_alone(self, monkeypatch):
+        """No API can backfill it, so an older credential has no host to show.
+
+        The reading must still publish -- a missing issuer host is a cosmetic
+        gap, and withholding the balance over it would be the worse trade.
+        """
+        monkeypatch.setattr(
+            crew_cred,
+            "crew_vault_credential",
+            AsyncMock(return_value=_vault()._replace(account_type="IamIdentityCenter")),
+        )
+        monkeypatch.setattr(
+            crew_cred,
+            "read_usage_with_crew_credential",
+            AsyncMock(return_value=_api_result({"credits_plan": 10000.0})),
+        )
+        monkeypatch.setattr(sessions_mod, "_resolve_kiro_bin_for_spawn", AsyncMock(return_value=None))
+
+        await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
+
+        assert sessions_mod._usage_cache["credits_plan"] == 10000.0
+        assert "start_url" not in sessions_mod._usage_cache
+
+    @pytest.mark.asyncio
     async def test_the_api_outranks_our_label_for_the_credential(self, monkeypatch):
         """If the API ever names the account type, that answer wins.
 

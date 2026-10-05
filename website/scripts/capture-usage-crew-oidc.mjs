@@ -36,10 +36,11 @@
  *     spelled the way `whoami` spells it so the panel reads one vocabulary.
  *   - `email` — a member of the GetUsageLimits response, which the request now
  *     asks for (`isEmailRequired`). Same place kiro-cli's own whoami gets it.
- *   - no `start_url`. kiro-cli keeps that on its stored credential; Crew's login
- *     flows take it as an argument and drop it, so the account line shows
- *     "IAM Identity Center" with no issuer host. The frame is meant to show
- *     that gap rather than paper over it.
+ *   - `start_url` — the directory the sign-in went to, now kept on Crew's own
+ *     credential the way kiro-cli keeps it on its own. The panel pairs its host
+ *     with the kind, so the account line names WHICH organization. A sign-in
+ *     stored before that field existed has none and shows the kind alone; no
+ *     API can backfill it.
  */
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
@@ -69,6 +70,7 @@ const USAGE_FROM_CREW_CREDENTIAL = {
     account: 'Engineering',
     account_type: 'IamIdentityCenter',
     email: 'dev@example.com',
+    start_url: 'https://d-906679cc0e.awsapps.com/start',
   },
 }
 

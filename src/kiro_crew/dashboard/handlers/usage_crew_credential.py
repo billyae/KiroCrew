@@ -123,12 +123,13 @@ async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
     ``kiro_usage_api.fetch_usage_limits`` now asks for -- the same place
     kiro-cli's own ``whoami`` gets the email it prints.
 
-    The one field still missing is the IdC ``start_url``, and that gap is ours,
-    not the API's: kiro-cli keeps it ON its stored credential and prints it from
-    there, while Crew's login flows take it as an ARGUMENT and never persist it,
-    so ``KasToken`` has nowhere to read it back from. Until it is persisted the
-    account line shows the profile name and the account kind without an issuer
-    host -- omitting a field is honest; synthesising one is not.
+    The IdC ``start_url`` is stored too, so the account line can name the
+    DIRECTORY and not merely the kind. It has to be captured at login, the way
+    kiro-cli captures it: no API returns it (``SsoIdentityDetails`` carries an SSO
+    instance ARN, not the portal), so a credential that did not record it cannot
+    be repaired later. A sign-in stored before the field existed therefore keeps
+    ``None`` and shows the kind alone until the user signs in again -- omitting a
+    field is honest; synthesising one is not.
 
     Vault ONLY (``allow_env_api_key=False``), matching the KAS auth callback's
     choice, and for a second reason specific to this caller: ``KIRO_API_KEY`` is
@@ -177,6 +178,7 @@ async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
         expiry=snapshot.expires_at,
         profile_arn=snapshot.profile_arn or None,
         account_type=_account_type(snapshot.identity, snapshot.provider),
+        start_url=snapshot.start_url or None,
     )
 
 
