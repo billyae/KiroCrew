@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from kiro_crew import vector_memory as vm
 from kiro_crew.cli_bench import bench_cmd
 from kiro_crew.eval.bench.lesson_recall import (
     KEYWORD_ONLY_EMBEDDER_ID,
@@ -146,7 +147,21 @@ class TestRun:
         reversed_report = run_lesson_recall(packaged, use_embeddings=False)
         assert reversed_report.headline(1)["mrr"] < keyword_report.headline(1)["mrr"]
 
-    def test_toy_vector_run_is_deterministic(self, packaged: LessonGoldenSet) -> None:
+    def test_toy_vector_run_is_deterministic(
+        self, packaged: LessonGoldenSet, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two runs rank the rules identically.
+
+        ``get_lessons`` orders rows by ``updated_at`` then key, so the ranker's
+        newest-first fallback for a tie needs a stable write clock. A system
+        clock whose tick is wider than the write loop -- Windows' ~15 ms -- gives
+        a different run a different split of shared stamps, so the rows arrive in
+        a different order and tied rows flip. Pin the clock, as the rest of the
+        memory suite does, so each write takes a distinct deterministic stamp and
+        both runs see the same order.
+        """
+        ticks = iter(f"2026-01-01T00:00:00.{tick:06d}+00:00" for tick in range(1, 10_000))
+        monkeypatch.setattr(vm, "_now_iso", lambda: next(ticks))
         first = run_lesson_recall(packaged)
         second = run_lesson_recall(packaged)
         assert first.embedder_id == TOY_EMBEDDER_ID
