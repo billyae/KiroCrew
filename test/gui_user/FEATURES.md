@@ -165,7 +165,7 @@ Priorities: P0 10 · P1 37 · P2 162 · P3 61. Deduped from 387 raw records.
 | P0 | `members-crew-members` | As a crew operator, I want a durable DM thread per member with a docked side panel (Crew summary, activity by day, worker sessions, auto-patrol status) and a filterable roster, so that I can supervise each crew in one place. | `/members` | rich | nightly | 6 |
 | P1 | `crewmate-reply-thread` | As a user talking to a crewmate, I want to ask about one thing it said in a reply thread on that message, so that the follow-up stays beside the message it is about instead of pushing the crewmate's findings up the main chat. | `/settings` | rich | nightly | 8 |
 | P1 | `members-private-memory-keeps-thread` | As a crew operator, I want a member's direct-message thread to survive leaving and returning to the member, so that our earlier conversation and the member's ability to answer are not lost. | `/settings` | rich | nightly | 8 |
-| P2 | `sidebar-crew-members-create-menu-entry` | As a user, I want the Crew Members menu entry to open the page or the setting that enables it, so that I can find the feature either way. | `/chat` | minimal | nightly | 3 |
+| P2 | `sidebar-crew-members-create-menu-entry` | As a user, I want the Crew Members menu entry to open the Crew Members page. | `/chat` | minimal | nightly | 3 |
 
 ## Agent capabilities (crews, templates, skills, prompts, steering, hooks, workflows) (`capabilities`)
 

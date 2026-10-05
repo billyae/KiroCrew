@@ -4107,7 +4107,7 @@ App calls each owner hook at the position of the inline block it replaced, becau
 
 **Nav sidebar** — Collapsible: full mode (236px with labels) or icon-only mode (74px). The sidebar toggle lives in the rail's own top "menu row" (hamburger, plus a `panel-left-close` collapse control on the right while expanded) — not in the topbar, which shows only the brand. State persisted in `localStorage('mc-nav')`. Three vertically-stacked regions: (1) **top-fixed** — menu row, then Sessions (the chat surface, formerly labeled "Chat"), Schedule, Artifacts, Knowledge, then an **Apps** section header whose right side is an accent-colored **Explore** link (lucide `layout-grid`) to the App Store at `/apps` (the store's surface is `hiddenFromNav`; the link carries the `data-onboarding-nav="apps"` anchor); (2) **Apps frame** — the enabled-apps list scrolls in its own frame (`flex-1 min-h-0 overflow-y-auto`) so many apps never push the pinned sections; drag-reorderable via dnd-kit sortable (`SortableAppNavRow` + `DndContext`/`SortableContext`/`DragOverlay`, `MouseSensor` 8px distance + `TouchSensor` press-and-hold so a plain click still navigates): rows reflow to open a gap as one is dragged, the source dims, and a `DragOverlay` ghost follows the cursor; order persists to `localStorage('mc-app-nav-order')` (`arrayMove`); reorder is scoped to the currently visible Apps rows (the "N more" overflow collapse hides the rest); (3) **bottom-fixed** — Customize, Developer (dev mode only), Settings, and a **Contact Us** row with icon links to kiro.dev, the GitHub repo, and the Discord community (folds away — `max-h-0` + `inert` — while collapsed). Collapsed mode renders icon-only rows with portaled hover labels; the Explore row fades in and slides up into place. The former Shortcuts nav row moved to **Settings → Shortcuts** (`ShortcutsPanel`, sharing the same content the Alt+K shortcuts modal shows; tab sits above Developer).
 
-**Preview-gated surfaces** — a registry entry may carry `previewFlag`, the localStorage key of a per-device opt-in (`utils/previewFlags.ts`, all keys prefixed `mc-preview-`). While the flag is off the surface is not advertised **anywhere**. The safe list has a name: consumers read **`getAdvertisedSurfaces()`** (= `getBuiltinSurfaces()` minus gated entries) rather than filtering per call site, because a call site that reaches for the unfiltered list and forgets the filter leaks an unreleased surface silently. `useAppRailOrder` (`shell/nav/appRail.tsx`) derives `advertisedNavItems` once and feeds BOTH rail list paths (Main and the Apps group) from it; the Search Everywhere Pages provider reads the same accessor. The bottom-fixed rows are looked up by id (`settings`, `capabilities`) and are core surfaces that are never gated. Gated surfaces deliberately REMAIN in `getBuiltinSurfaces()` so registry-wide invariants (every surface carries a translatable `labelKey`) still cover them. Their route stays registered, which is what makes the surface reachable once the flag is on. The flags are listed as one card per feature on **Settings → Developer → Feature Previews** (the section is `pages/settings/FeaturePreviewsSection.tsx`, mounted by `DeveloperPanel` on the always-visible Settings tab — NOT behind Developer Mode: it is a consent gate like Developer Mode itself, not an internals view, so it sits beside that gate rather than behind it. It keeps the registry's "surface" vocabulary in code while its copy says "features" and "pages". It used to be a `?tab=feature-previews` tab on the standalone Developer page; `DeveloperPage` replace-redirects that legacy link to `/settings/developer?highlight=key:feature-previews-section`, whose `key:` form rings the element carrying that `data-setting-key` — the section's wrapper, so the whole moved section is ringed rather than one card; the Developer page's rail footer carries a signpost link to the same target for users who navigate there by memory rather than by the old URL. Because the file lives under `pages/settings/`, its three toggles ARE indexed into Settings search via `PANEL_TAB_MAP` — the search hit reaches the labelled opt-in switch, not the page it holds, which stays un-advertised until the flag is on), which fires `mc-preview-flag-changed`; `usePreviewFlagRevision()` turns that into a revision number the rail uses both to re-render and as a memo dep, so the row appears without a reload. A cross-tab `storage` event on any `mc-preview-` key does the same. Two occupants today: `/webhooks` (the endpoint is supported, the page is not finished) and **Crew Members** — `PREVIEW_CREW` gates the `/members` rail item from one card. (It used to gate a second door too, the sidebar create-menu's "New Crew Mode chat" entry; Crew Mode retired in favour of the Members page, and that entry is now a "Crew Members" door rendered whatever the flag says — `ChatSidebar` reads the flag through `usePreviewFlag` only to decide whether the click lands on `/members` or on the Settings card that turns it on, via `settingsPath({ tab: 'developer', highlight: SETTINGS_CREW_MEMBERS_PREVIEW_ID })`.) Crew Members is the case a `previewFlag` alone does not cover: the **browser-tab attention count** reads the registry directly rather than `getAdvertisedSurfaces()`, so `selectAllSurfacesAttention` applies the predicate itself — the tab title is an advertisement too, and a gated surface that still contributed would show a `(1)` with no rail row to trace it to. `hiddenFromNav` is the deliberate opposite there: it keeps contributing, because it IS advertised, just on the topbar bell rather than the rail. The gate is on the INGRESS only: `/members` stays routable, so turning the flag off never orphans existing work. Unlike Webhooks, the Crew Members surface is NOT also `hiddenFromNav`, because the rail is where it belongs once released — so dropping its `previewFlag` (plus the `ChatSidebar` read and the card) IS the release. Retiring a gate is deleting the `previewFlag` and the feature's card. This is distinct from `hiddenFromNav`, which is permanent and means "rendered elsewhere" (the App Store's Explore link, the topbar notifications bell).
+**Preview-gated surfaces** — a registry entry may carry `previewFlag`, the localStorage key of a per-device opt-in (`utils/previewFlags.ts`, all keys prefixed `mc-preview-`). While the flag is off the surface is not advertised **anywhere**. The safe list has a name: consumers read **`getAdvertisedSurfaces()`** (= `getBuiltinSurfaces()` minus gated entries) rather than filtering per call site, because a call site that reaches for the unfiltered list and forgets the filter leaks an unreleased surface silently. `useAppRailOrder` (`shell/nav/appRail.tsx`) derives `advertisedNavItems` once and feeds BOTH rail list paths (Main and the Apps group) from it; the Search Everywhere Pages provider reads the same accessor. The bottom-fixed rows are looked up by id (`settings`, `capabilities`) and are core surfaces that are never gated. Gated surfaces deliberately REMAIN in `getBuiltinSurfaces()` so registry-wide invariants (every surface carries a translatable `labelKey`) still cover them. Their route stays registered, which is what makes the surface reachable once the flag is on. The flags are listed as one card per feature on **Settings → Developer → Feature Previews** (the section is `pages/settings/FeaturePreviewsSection.tsx`, mounted by `DeveloperPanel` on the always-visible Settings tab — NOT behind Developer Mode: it is a consent gate like Developer Mode itself, not an internals view, so it sits beside that gate rather than behind it. It keeps the registry's "surface" vocabulary in code while its copy says "features" and "pages". It used to be a `?tab=feature-previews` tab on the standalone Developer page; `DeveloperPage` replace-redirects that legacy link to `/settings/developer?highlight=key:feature-previews-section`, whose `key:` form rings the element carrying that `data-setting-key` — the section's wrapper, so the whole moved section is ringed rather than one card; the Developer page's rail footer carries a signpost link to the same target for users who navigate there by memory rather than by the old URL. Because the file lives under `pages/settings/`, its three toggles ARE indexed into Settings search via `PANEL_TAB_MAP` — the search hit reaches the labelled opt-in switch, not the page it holds, which stays un-advertised until the flag is on), which fires `mc-preview-flag-changed`; `usePreviewFlagRevision()` turns that into a revision number the rail uses both to re-render and as a memo dep, so the row appears without a reload. A cross-tab `storage` event on any `mc-preview-` key does the same. `/webhooks` is one occupant (the endpoint is supported, the page is not finished). Crew Members (`/members`) was gated the same way and is now released with no `previewFlag`: its rail row, the command bar's crewmate rows and the sidebar create-menu's "Crew Members" door are offered on every install, and the door opens `/members` directly. The **browser-tab attention count** reads the registry directly rather than `getAdvertisedSurfaces()`, so `selectAllSurfacesAttention` applies the predicate itself — the tab title is an advertisement too, and a gated surface that still contributed would show a `(1)` with no rail row to trace it to. `hiddenFromNav` is the deliberate opposite there: it keeps contributing, because it IS advertised, just on the topbar bell rather than the rail. A gate is on the INGRESS only: the route stays routable, so turning a flag off never orphans existing work. Retiring a gate is deleting the `previewFlag` and the feature's card. This is distinct from `hiddenFromNav`, which is permanent and means "rendered elsewhere" (the App Store's Explore link, the topbar notifications bell).
 
 **Agent monitor — `Ctrl+G`** (`useKeyboardShortcuts.ts`, predicate `isAgentMonitorChord`): opens the **Subagents** activity tab (`openActivityToTab('subagents')`) and routes to `/chat`, since the activity panel is owned by the chat page. This is the one chord that is **literal Ctrl on every platform** rather than ⌘-on-Mac: the kiro-cli backend emits `Press ctrl+g to monitor progress.` into its crew-pipeline tool result, that string lives inside the backend binary and cannot be re-worded per OS, so the chord the user is told to press must be the chord that fires (on macOS find-next is ⌘G, leaving ⌃G free). It requires exactly one primary modifier and no Alt/Shift, and deliberately fires **inside text fields** — the hint is read while a crew is running and focus is normally in the composer, so an input bail-out would make it dead exactly when it is needed. It is skipped for `.xterm` targets, where Ctrl+G is BEL and belongs to the PTY. Because the branch requires `ctrlKey && !altKey`, `KeyG` is deliberately **not** added to `RESERVED_PANEL_CODES`: it cannot shadow a downstream Alt+G panel registration, so reserving it would over-claim the panel-navigation extension seam.
 
@@ -5312,3 +5312,196 @@ Installed skill discovery resolves the signed session's active agent mapping and
 project. Search/list/read share that scope, return stable full keys, and use offset
 pagination. Search responses include an incomplete flag while bounded body indexing
 is still progressing; the MCP renderer makes this visible rather than claiming absence.
+
+### Registered-action Assistant guides
+
+The optional `kirocrew-guide` server offers an ordered list of registered actions
+through strict-internal `/api/guide/agent/*` routes. The caller's existing slot is
+derived from its verified session identity; a tool payload cannot select another
+slot. App, unattended and unresolved callers are refused. The Assistant template
+mounts this server and grants automatic approval only to `guide_list_actions`,
+`guide_status` and `guide_start`, filtered through the governance ceiling.
+`guide_start` only offers a card in the slot's chat that the owner must press
+Start on. Cancelling a guide still requires approval; no grant permits
+navigation or a configuration write.
+
+The owner browser reads `/api/guide/pending` and explicitly claims a guide before
+navigation or prefill. Claim, progress, heartbeat, cancel, dismiss, replay, refuse and
+observe are owner-only routes;
+revision checks and a per-tab lease prevent another tab from silently advancing
+it. An explicit takeover is distinct from Start. Pending state is held by this
+gateway, survives a browser reload, and is lost on gateway restart. Guides have
+a finite lifetime and closed-slot guides are retired on the next state check.
+A new offer in the same chat supersedes the chat's unfinished guide (status
+`cancelled`, reason `superseded`), so the chat never holds two live guides and
+the older offer's row settles to its result line.
+Cancellation does not undo an already-submitted save. A guide's offer is a
+row of its chat's conversation at the point it was offered (a `card` transcript row,
+`history.md` "Card rows"), so an ended guide keeps its result line there across a
+reload the way a change card does: `pending` serves each slot's newest ended guide
+for 24 hours (unless a newer guide is in progress, the slot was closed, or the owner
+dismissed it), the row itself records the final status for after that, and ended
+guides are pruned after seven days, within the store's fixed cap. When a cancelled or
+expired guide leaves the creation flow it opened untouched, the Crewmates page
+closes that flow so the chat and its result line show; a flow the user edited
+stays open.
+
+**Captain's own words.** The dashboard stays the source of truth for where and
+which control; the offering agent may add plain text of its own. `guide_start`
+takes an optional guide-level `intro` and an optional `note` per action (one
+note per action, never a per-step array: it is shown under the action's final
+step, which every action has and which is the target in every `ui.show`
+placement, so a note cannot outnumber or misalign with the steps).
+`guide_catalog.clean_guide_text` collapses line breaks and tabs to one space and
+REFUSES, with a message naming the field and the limit, rather than truncating:
+over 200 characters (`intro`) or 160 (`note`), any other control character or a
+bidirectional override/isolate, a link (`http(s)://`, `www.`), markup (`<`,
+`>`, a backtick, `[text](target)`), and any text the output redactors would
+change (`guide_catalog.needs_redaction`: the exfiltration-URL scrubber, then the
+credential redactor through the platform context) -- the text is shown as
+written, so a credential is refused (`invalid_text`), never stored redacted; a
+change card's `reason` follows the same rule. The stored text rides on the guide record
+(`intro`, `actions[i].note`) and is not written to the guide's transcript row or
+the crew log, which keep only action ids. The browser draws it only in the guide
+offer card (the intro, under the title) and the guide panel (the intro on the
+first step of the first action; a note on its action's final step; a step that
+is both shows one block, the note when the action has one, else the intro),
+always below the template line, which stays, and attributed with "From
+{Captain's name}" (`GuideCaptainNote`, `useCaptainName`, muted theme tokens), as
+React text.
+
+**Guide panel details.** A select step whose pick was already made is held as a
+confirm step with Next; its line names the list only while the picker is drawn
+(`select_confirm_<entity>`), and while the picker is folded away (a crewmate
+chat hides the roster) the panel floats with `select_confirm_unseen_<entity>`,
+which says what Next does without sending the person to a list they cannot see.
+The finish chip ("Guide complete" plus the way back) shown away from the guide's
+chat leaves by itself `GUIDE_FINISHED_DISMISS_MS` (10 s) after the guide ended
+or on the second move to another page, whichever comes first. The 10 s count
+from the end as `GuideContext` first saw it (`finishedAt`), not from when the
+chip was last drawn, so a route change, the viewed chat settling (which hides
+and re-shows the chip) or a remount re-arms only what is left. Only keyboard
+focus inside the chip holds it (re-armed while a key, not a pointer press, was
+the last input); focus a click left there (Done, then focus following to the
+way back) does not, and when the chip leaves with focus in it focus goes back
+where it was before the panel took it, else to the main region; its X still closes it at once, and none of these
+writes a dismissal, so the chat's result line stays.
+
+The actions are `settings.show`, `crewmate.create`, `mcp.open_add` and `ui.show`.
+Routes and anchors come from product registries, never model-supplied selectors
+or scripts. Settings guidance excludes credential and access-control controls
+and reports no setting values. Crewmate drafts reuse the embedded creation flow.
+`mcp.open_add` carries no parameters and pre-fills nothing: it points at the
+existing MCP servers tab, then its Add Custom button, and completes once the
+existing add form is open. It never reports an installed server; the user fills
+in and saves that form through the unchanged owner-only MCP save handler.
+`ui.show {location_id}` points at one indexed dashboard location, such as Older
+Sessions in the Sessions sidebar. It is accepted only for a location whose
+generated plan ships with the find_ui index; the generator plans a registered
+location only when its prerequisites are a viewport, reveal steps or preview
+flags, it is not destructive (a fixed deny list plus a per-descriptor
+`guide: false`), and it has no guide action of its own. Settings stay with
+`settings.show`. A plan is version 2: one step list per placement (viewport),
+the lists may differ in length, and every step has an id. Starting the guide
+claims the current viewport's placement; the gateway records that placement's
+step ids, and the tab's reports may name only those, so a guide is never walked
+along another placement's list. A takeover from another viewport may switch
+placements only before the guide has moved past the first step of that action.
+The steps are the plan's: each reveal control or menu, then the location. Every
+step but the last names the reveal scope it opens, compiled with the plan from
+the descriptors' `shown_by`, their registered parents and the declared
+`UI_REVEAL_SCOPES`; the generator refuses a reveal cycle or a contradictory
+declaration. A reveal or menu step is done the moment its scope's owner reports
+it open (`<GuideRevealScope>`: the sessions sidebar and drawer in `ChatPage`,
+the shared dropdown menu, popover and tab panel through a `guideScope` prop, and
+the custom menus, sheet and tab of the planned locations at their call sites;
+the message box, the chat side panel, the navigation rail, the docked terminal
+panel, the phone menu and the crewmate roster report their own open state, and
+a disclosure such as Older Sessions reports through one shared disclosure hook),
+or as soon as a later step's control is on screen, so an open sidebar or menu is
+skipped. A reveal control's own runtime conditions (the sessions sidebar toggle
+is drawn only with an open session, in the full dashboard) travel with its step
+as live predicates from a closed vocabulary with one browser evaluator each;
+while the control is absent and a predicate is unmet the guide shows what is
+needed instead of pointing, and its reason reads `predicate_unmet`. A control
+needing a condition outside that vocabulary is not guided at all. A gate the
+path needs (developer mode, a preview flag) is a first step of its own: on, it
+passes at once; off, the guide pauses on a line naming the setting that turns
+it on, its reason reads `gate_off` with that setting's id, and it goes on by
+itself once the gate is on; the guide never changes the setting. A selection the
+path needs (a session, a crewmate or a job open) is a step pointing at that
+page's list with "Choose the <entity> you want…"; it is done only when the page
+reports that one is open, and with nothing to choose it says "There's no
+<entity> yet" (reason `needs_selection`) instead of pointing anywhere. Which
+entity was chosen never leaves the page. When the window crosses the phone
+width mid-guide, the tab asks the gateway to walk the new layout's steps from
+where it is; that is allowed only where both layouts have walked the same
+steps so far, otherwise the step shows its target missing as before. A reveal
+or menu step names where it leads, never the control it points at ("Press the
+highlighted button to show “Older Sessions”."), since an icon-only toggle's
+accessible name means nothing to someone looking at an icon. The last step
+is acknowledged and says what comes next ("“Older Sessions” is highlighted.
+Press it when you're ready, or Done to close the guide."). Pressing that
+highlighted control on a `ui.show` guide's last step ends the guide exactly as
+Done does (the same `observed` report, after the control's own handler), so the
+panel does not stay over whatever the press opened. A crewmate's tools are
+reached on the Crewmates page: choose the crewmate, open its profile card from
+the header, then its Permissions row (`members.permissions`), which opens the
+editor. A target is exactly one visible element
+carrying that location's marker, otherwise the step is missing; when several
+copies are visible at once the missing report says so and the guide's reason is
+`ambiguous_target`. The guide opens
+the plan's page for the current viewport, keeps the address when the person is
+already there, and never clicks or saves anything.
+
+A `ui.show` guide carries the build digest of the index the gateway accepted it
+against, the same digest the dashboard bundle was generated with. A tab whose
+bundle carries another refuses the guide with "prepared for a different version
+of the dashboard" and tells the gateway, so the guide's reason reads
+`build_mismatch` until a reloaded tab takes it.
+
+The live UI map (`guide/liveRegistry.ts`) answers, for a curated location, what
+this tab shows right now: `pointable` (one copy, displayed, enabled, in the
+viewport), `offscreen`, `hidden`, `unmounted`, `disabled`, `ambiguous` (several
+displayed copies) or `unknown` (not this build's). It reads the existing
+`data-ui-location` markers when asked, so no control registers twice. Captain's
+`find_ui` asks one tab for these states, and for the open/closed/unknown state
+of the reveal scopes and the met/unmet/unknown state of the predicates on those
+locations' plans, through an owner-only frame and reply (ids and enum states
+only, never text, answered within the request's wait or reported
+`not_observed`); from them it names a result's `blocker`: `gate_off` (with the
+setting id), `needs_selection`, `predicate_unmet`,
+`hidden_in_scope` (a closed sidebar, menu or panel on the path) or
+`not_observed`. A tab that owns a guide and does not answer in time marks it
+`stale_tab` until its next heartbeat. Observations stay in memory and are never
+stored.
+
+`ui.show` also points at an auto location, a control the find_ui auto tier found
+without a registration, but only one the generator judged pointable: drawn by a
+shared Btn, SendBtn or IconButton (the audited primitives), the only render site
+behind its search entry, not inside a menu, dialog, sheet or tab panel, on a page
+with no prerequisite of its own, not drawn as destructive, not on the Security,
+Secrets or Instances settings tabs, not deny-listed, and with a label the
+destructive-word check does not flag. Every other auto location is search-only:
+find_ui returns it without a guide. The build stamps each pointable control with
+a `data-ui-auto` marker carrying its render-site id (a curated control keeps its
+own marker and is never stamped), and the guide is one step: open its page, point
+at that one control. The gateway accepts it only from the auto tier the dashboard
+bundle ships, when that tier was built against the shipped index; the guide then
+carries the auto tier's own digest, and a tab from another build refuses it as
+`build_mismatch`. With no auto tier (a source checkout that was never built), an
+auto location is not guidable at all. The live map reports such a control like a
+curated one, under the same exactly-one rule.
+
+The frontend may acknowledge navigation and form steps, but cannot declare a
+save successful. A guide-scoped request header associates the actual owner save
+with the waiting action before the request runs; only the handler's successful
+response with the created identity advances its commit step. A refused, ambiguous
+or cancelled save never becomes a successful guide result. Completion reports the
+actual saved identity, including a name the user edited in the draft.
+
+Guide instructions occupy space above the page, rather than covering its title.
+Only the non-interactive
+arrow and outline overlay a target. Missing controls stop the guide instead of
+falling back to another element. Existing form drafts and navigation guards remain
+in force.

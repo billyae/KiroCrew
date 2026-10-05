@@ -128,7 +128,7 @@ def _register_config_watch(
             return
         nonlocal default_model_failure_notified
         try:
-            from kiro_crew.agent import rebuild_agent_config_reporting
+            from kiro_crew.agent import rebuild_agent_config_reporting, take_refresh_failure
 
             # ``rebuild_agent_config_reporting`` returns ``wrote=False`` — WITHOUT
             # writing — exactly when the shared-home guard refuses to rewrite this
@@ -138,7 +138,19 @@ def _register_config_watch(
             # "rebuilt" while new sessions still run the previous model. Route a
             # refusal into the failure branch below so it notifies once and defers
             # for the watcher's retry, the same as any other unwritten spec.
-            _spec_path, wrote = await asyncio.to_thread(rebuild_agent_config_reporting)
+            #
+            # The same rebuild re-installs Captain's managed spec, which follows
+            # this key too. Its outcome is recorded thread-locally, so it is read
+            # on the worker thread that ran the rebuild (cleared first, so a
+            # verdict a previous rebuild left on a reused pool thread is never
+            # mistaken for this one's). A preserved foreign template or a
+            # dashboard pin reports nothing; only a spec left stale does.
+            def _rebuild() -> tuple[bool, str | None]:
+                take_refresh_failure()
+                _spec_path, wrote_ = rebuild_agent_config_reporting()
+                return wrote_, take_refresh_failure()
+
+            wrote, captain_failure = await asyncio.to_thread(_rebuild)
             if not wrote:
                 raise RuntimeError(
                     "agent spec rebuild was refused (shared agent home); "
@@ -165,6 +177,14 @@ def _register_config_watch(
                         "default-model warm-pool reconcile after rebuild failed",
                         exc_info=True,
                     )
+            # Raised only now: kirocrew.json is already rebuilt, so the warm pool
+            # above is reconciled against it either way. What stays unapplied is
+            # Captain's spec, so the operator is told and the watcher retries.
+            if captain_failure:
+                raise RuntimeError(
+                    f"{captain_failure}; config saved but Captain's spec still "
+                    "pins the previous model"
+                )
             # The config value and generated agent spec now agree. Tell every
             # dashboard window to refetch both the config-backed picker and the
             # effective-model endpoints only after that rebuild has completed;

@@ -190,6 +190,23 @@ def _run(specs: dict, log, **kw):
 
 
 class TestThePass:
+    def test_never_removes_captain_in_the_sync_shape(self, old_style_config, bindings_dir, log):
+        # Captain is installed in the same never-chatted shape the pass removes;
+        # its spec is one of the runtime's own (``OWNED_KIRO_AGENT_FILES``), so the
+        # pass never removes the row.
+        from kiro_crew.agent_files import ASSISTANT_MEMBER_NAME, ASSISTANT_TEMPLATE_NAME
+
+        cfg = KiroCrewConfig.load()
+        cfg.agents[ASSISTANT_MEMBER_NAME] = _synced(ASSISTANT_TEMPLATE_NAME)
+        cfg.save()
+        specs = {**old_style_config, ASSISTANT_TEMPLATE_NAME: _spec(ASSISTANT_TEMPLATE_NAME)}
+
+        report = _run(specs, log)
+
+        assert ASSISTANT_MEMBER_NAME not in report.removed
+        assert ASSISTANT_MEMBER_NAME in KiroCrewConfig.load().agents
+        assert "scout" in report.removed
+
     def test_removes_never_chatted_keeps_chatted_leaves_hand_made(
         self, old_style_config, bindings_dir, log
     ):
