@@ -48,9 +48,15 @@ from kiro_crew.executors import subprocess_executor
 
 logger = logging.getLogger(__name__)
 
-# Crew's stored identity KIND -> the spelling kiro-cli's ``whoami`` uses for the
+# Crew's stored identity KIND -> the spelling kiro-cli's ``whoami`` emits for the
 # same account, which is the vocabulary the dashboard's account panel already
 # branches on (``accountProviderLabel`` in ``KiroAccountModal.tsx``).
+#
+# Taken from the CLI source rather than guessed: ``WhoamiArgs::execute`` in
+# ``crates/chat-cli/src/cli/user.rs`` (kiro-team/kiro-cli) emits exactly
+# ``BuilderId`` / ``IamIdentityCenter`` for the two BuilderIdToken kinds,
+# ``Social`` for a social sign-in -- with the issuer in a SEPARATE ``provider``
+# member, not folded into the type -- and ``ExternalIdP`` for external IdP.
 #
 # Translating instead of inventing a second vocabulary is the whole point: the
 # panel must not have to know which credential answered in order to label the
@@ -59,29 +65,32 @@ logger = logging.getLogger(__name__)
 _ACCOUNT_TYPE_BY_IDENTITY = {
     "builder_id": "BuilderId",
     "identity_center": "IamIdentityCenter",
-    "external_idp": "ExternalIdp",
+    # Capital P, matching the CLI. The panel humanizes an unknown type by
+    # splitting on case, so this spelling renders "External IdP" where
+    # ``ExternalIdp`` would render "External Idp".
+    "external_idp": "ExternalIdP",
+    # Bare, for the same reason: whoami reports the issuer alongside the type,
+    # never inside it. Appending it here would produce a label
+    # (``SocialGoogle``) that no kiro-cli install ever emits, so the panel's
+    # social branch would be reached with a value only this code can produce.
+    "social": "Social",
 }
-
-# Social sign-ins are one stored kind with several issuers, and whoami spells
-# them ``Social<Provider>``. ``KasToken.provider`` already carries the issuer in
-# exactly the casing the KAS contract fixed (``Google`` / ``Github``), so the
-# label is a concatenation rather than another mapping to drift.
-_SOCIAL_IDENTITY = "social"
-_SOCIAL_PROVIDERS = ("Google", "Github")
 
 
 def _account_type(identity: str | None, provider: str | None) -> str | None:
     """Label Crew's stored identity the way ``whoami`` would label it.
 
+    ``provider`` is accepted and deliberately unused for the type: the CLI keeps
+    the social issuer in its own output member, so folding it in would invent a
+    spelling. It stays in the signature because the caller holds both halves of
+    the identity and a future member for the issuer belongs here, not at a new
+    call site.
+
     ``None`` when the kind is unrecognised, which is deliberately not an error:
     an unlabelled reading is the state the panel already handles, while a wrong
     label is a claim about WHICH account the user is signed in to.
     """
-    kind = (identity or "").strip()
-    if kind == _SOCIAL_IDENTITY:
-        issuer = (provider or "").strip()
-        return f"Social{issuer}" if issuer in _SOCIAL_PROVIDERS else None
-    return _ACCOUNT_TYPE_BY_IDENTITY.get(kind)
+    return _ACCOUNT_TYPE_BY_IDENTITY.get((identity or "").strip())
 
 
 async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
@@ -109,13 +118,17 @@ async def crew_vault_credential() -> kiro_usage_api.VaultCredential | None:
     The snapshot also carries WHO this is, which is why the reading this path
     publishes is not anonymous. Crew performed the sign-in, so the account's kind
     is a stored record rather than something to be re-derived from a subprocess
-    (see :func:`_account_type`). What the vault does NOT hold is the account's
-    email or its IdC ``start_url``: the login flows take ``start_url`` as an
-    argument and never persist it, and no Kiro API this module may call returns
-    either (``ListAvailableProfiles`` answers with an ARN and a display name,
-    which is the ``account`` label ``kiro_usage_api`` already attaches). So the
-    panel shows the profile name and the account kind, and omits the issuer host
-    -- omitting a field is honest; synthesising one is not.
+    (see :func:`_account_type`). The account's EMAIL needs neither: it is a
+    member of the GetUsageLimits response itself, which
+    ``kiro_usage_api.fetch_usage_limits`` now asks for -- the same place
+    kiro-cli's own ``whoami`` gets the email it prints.
+
+    The one field still missing is the IdC ``start_url``, and that gap is ours,
+    not the API's: kiro-cli keeps it ON its stored credential and prints it from
+    there, while Crew's login flows take it as an ARGUMENT and never persist it,
+    so ``KasToken`` has nowhere to read it back from. Until it is persisted the
+    account line shows the profile name and the account kind without an issuer
+    host -- omitting a field is honest; synthesising one is not.
 
     Vault ONLY (``allow_env_api_key=False``), matching the KAS auth callback's
     choice, and for a second reason specific to this caller: ``KIRO_API_KEY`` is

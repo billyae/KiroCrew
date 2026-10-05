@@ -152,7 +152,10 @@ class TestLabellingTheStoredIdentity:
 
     One vocabulary is the requirement: the account panel must not have to know
     which credential answered in order to label the account, so the translation
-    happens here rather than a second set of branches happening there.
+    happens here rather than a second set of branches happening there. The
+    spellings are the CLI's own -- `WhoamiArgs::execute` in
+    `crates/chat-cli/src/cli/user.rs` (kiro-team/kiro-cli) -- not a convention
+    invented here.
     """
 
     @pytest.mark.parametrize(
@@ -160,9 +163,13 @@ class TestLabellingTheStoredIdentity:
         [
             ("builder_id", "BuilderId", "BuilderId"),
             ("identity_center", "Enterprise", "IamIdentityCenter"),
-            ("external_idp", "ExternalIdp", "ExternalIdp"),
-            ("social", "Google", "SocialGoogle"),
-            ("social", "Github", "SocialGithub"),
+            ("external_idp", "ExternalIdp", "ExternalIdP"),
+            # Bare `Social`, with the issuer deliberately NOT folded in: whoami
+            # reports it in a separate member, so `SocialGoogle` is a spelling no
+            # kiro-cli install emits.
+            ("social", "Google", "Social"),
+            ("social", "Github", "Social"),
+            ("social", "", "Social"),
         ],
     )
     def test_every_stored_kind_gets_whoamis_spelling(self, identity, provider, expected):
@@ -171,10 +178,6 @@ class TestLabellingTheStoredIdentity:
     @pytest.mark.parametrize(
         ("identity", "provider"),
         [
-            # A social issuer outside the KAS contract's fixed set. Concatenating
-            # it would invent a label the panel then humanizes and shows.
-            ("social", "Facebook"),
-            ("social", ""),
             # A kind added to the store later, before this table learns it.
             ("something_new", "Whatever"),
             (None, None),
@@ -199,6 +202,81 @@ class TestLabellingTheStoredIdentity:
         assert "'IamIdentityCenter'" in panel
         assert "'BuilderId'" in panel
         assert "'Social'" in panel
+
+
+class TestTheEmailComesWithTheNumbers:
+    """GetUsageLimits carries the account's email; the request has to ask.
+
+    Established from the CLI source: `cli/user.rs` fills whoami's `email` from
+    `api_client::get_usage_limits_with_email()`, which `api_client/mod.rs` shows
+    is this same call with `isEmailRequired: true`, and the response member is
+    `userInfo: { userId, email }`. So no new endpoint and no second round trip --
+    the field was withheld only because the request never asked for it.
+    """
+
+    def test_the_request_asks_for_the_email(self, monkeypatch):
+        monkeypatch.setattr(
+            usage_api,
+            "_candidate_tokens",
+            lambda: [usage_api._Candidate("t", _SOON, from_cli_store=True)],
+        )
+        monkeypatch.setattr(usage_api, "_list_profile_arn", lambda *a, **k: _ARN)
+        sent: list[dict] = []
+
+        def _post(token, target, payload, *, endpoint=None):
+            sent.append(payload)
+            raise usage_api._RequestError("stop here; the payload is the assertion")
+
+        monkeypatch.setattr(usage_api, "_post", _post)
+        usage_api.fetch_usage_limits(_ARN)
+
+        assert sent, "no request was made"
+        assert sent[0]["isEmailRequired"] is True, (
+            "without the flag the response omits userInfo and the panel has no email"
+        )
+
+    def test_the_email_is_read_off_the_response(self):
+        mapped = usage_api._map_response({
+            "usageBreakdownList": [
+                {"resourceType": "CREDIT", "currentUsage": 10, "usageLimit": 100},
+            ],
+            "userInfo": {"userId": "u-1", "email": "dev@example.com"},
+        })
+        assert mapped is not None
+        assert mapped["email"] == "dev@example.com"
+
+    @pytest.mark.parametrize(
+        "user_info",
+        [
+            None,
+            {},
+            {"userId": "u-1"},
+            {"email": ""},
+            {"email": 42},
+            {"email": "bad\u0000value"},
+            "not-an-object",
+        ],
+    )
+    def test_a_missing_or_malformed_email_is_simply_absent(self, user_info):
+        """Untrusted input: no email beats a broken one rendered as the account."""
+        mapped = usage_api._map_response({
+            "usageBreakdownList": [
+                {"resourceType": "CREDIT", "currentUsage": 10, "usageLimit": 100},
+            ],
+            "userInfo": user_info,
+        })
+        assert mapped is not None
+        assert "email" not in mapped
+
+    def test_an_overlong_email_is_bounded(self):
+        mapped = usage_api._map_response({
+            "usageBreakdownList": [
+                {"resourceType": "CREDIT", "currentUsage": 10, "usageLimit": 100},
+            ],
+            "userInfo": {"email": "a" * 900 + "@example.com"},
+        })
+        assert mapped is not None
+        assert len(mapped["email"]) == usage_api._MAX_EMAIL_CHARS
 
 
 class TestResolvingCrewsCredential:
@@ -305,14 +383,14 @@ class TestRefreshWithoutKiroCli:
     async def test_the_reading_carries_the_identity_crew_actually_holds(self, monkeypatch):
         """Crew performed this sign-in, so the account is a record, not a guess.
 
+        Three fields, three provenances, none of them invented:
         `account` is the profile display name `fetch_usage_limits` attaches from
-        the same ListAvailableProfiles probe that proved the ARN; `account_type`
-        is the stored kind of the sign-in. Both reach the panel, so a balance
-        read with Crew's own credential is not an anonymous number.
+        the same ListAvailableProfiles probe that proved the ARN; `email` rides
+        the GetUsageLimits response itself, so it is the billed account's by
+        construction; `account_type` is the stored kind of the sign-in.
 
-        `email` is absent because the vault genuinely does not hold one and no
-        API reachable from here returns it -- omitted, never synthesised. The
-        private coupling field must not reach the cache at all.
+        What is absent is `start_url` -- the vault does not persist it -- and the
+        private coupling field, which must not reach the cache at all.
         """
         monkeypatch.setattr(
             crew_cred,
@@ -323,18 +401,22 @@ class TestRefreshWithoutKiroCli:
             crew_cred,
             "read_usage_with_crew_credential",
             AsyncMock(
-                return_value=_api_result(
-                    {"credits_plan": 10000.0, "account": "KIRO POWER", "_profile_arn": _ARN}
-                )
+                return_value=_api_result({
+                    "credits_plan": 10000.0,
+                    "account": "Engineering",
+                    "email": "dev@example.com",
+                    "_profile_arn": _ARN,
+                })
             ),
         )
         monkeypatch.setattr(sessions_mod, "_resolve_kiro_bin_for_spawn", AsyncMock(return_value=None))
 
         await sessions_mod._fetch_usage_bg(allow_kiro_spawn=False)
 
-        assert sessions_mod._usage_cache["account"] == "KIRO POWER"
+        assert sessions_mod._usage_cache["account"] == "Engineering"
+        assert sessions_mod._usage_cache["email"] == "dev@example.com"
         assert sessions_mod._usage_cache["account_type"] == "IamIdentityCenter"
-        assert "email" not in sessions_mod._usage_cache
+        assert "start_url" not in sessions_mod._usage_cache
         assert "_profile_arn" not in sessions_mod._usage_cache, (
             "the private coupling field must never reach the cache"
         )

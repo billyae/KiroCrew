@@ -240,6 +240,9 @@ _SQLITE_AUDIT_READ_ID = "kiro_usage_api.sqlite_token"
 _MAX_CREDITS = 1_000_000.0
 _MAX_BONUS_GRANTS = 32
 _MAX_BONUS_NAME_CHARS = 100
+# RFC 5321's addr-spec ceiling, and the same cap the whoami parser applies in
+# ``cloud/login_target.py`` -- one bound for one field, whichever source read it.
+_MAX_EMAIL_CHARS = 254
 
 # Cap the RTS response body so an oversized or indefinitely-streamed response
 # cannot exhaust memory or tie up a shared subprocess worker. The usage JSON is
@@ -918,6 +921,18 @@ def _map_response(data: dict) -> dict | None:
         result["bonus_limit"] = first["total"]
         result["bonus_label"] = first["name"]
 
+    # The signed-in account's email, present when the request asked for it. The
+    # provenance argument is the numbers' own: it came back in THIS response for
+    # THIS credential, so it is the billed account's email by construction --
+    # there is no window in which it could belong to another profile. Still
+    # untrusted input, so it is type-checked, printability-checked and bounded
+    # like every other leaf here.
+    user_info = data.get("userInfo")
+    if isinstance(user_info, dict):
+        email = user_info.get("email")
+        if isinstance(email, str) and email and email.isprintable():
+            result["email"] = email[:_MAX_EMAIL_CHARS]
+
     return result
 
 
@@ -1113,7 +1128,16 @@ def fetch_usage_limits(
                     "does not match the signed-in account"
                 )
                 continue
-            payload: dict[str, object] = {"origin": "AI_EDITOR"}
+            # ``isEmailRequired`` is what makes the response carry ``userInfo``.
+            # This is where kiro-cli's own ``whoami`` gets the email it prints:
+            # ``api_client::get_usage_limits_with_email()`` is this same call
+            # with the flag set, and ``cli/user.rs`` reads ``user_info.email``
+            # off the result. Asking here means the email arrives IN THE SAME
+            # RESPONSE as the numbers, for the same credential -- so it cannot
+            # describe a different account than the balance beside it, which is
+            # exactly the failure mode a whoami-sourced email needs an ARN match
+            # to rule out.
+            payload: dict[str, object] = {"origin": "AI_EDITOR", "isEmailRequired": True}
             if arn:
                 payload["profileArn"] = arn
             try:

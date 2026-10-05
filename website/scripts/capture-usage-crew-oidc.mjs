@@ -34,10 +34,12 @@
  *     path exactly as on the kiro-cli one.
  *   - `account_type` — the stored kind of the sign-in Crew itself performed,
  *     spelled the way `whoami` spells it so the panel reads one vocabulary.
- *   - no `email`, and no `start_url`. The vault holds neither and no API
- *     reachable from that path returns them, so the account line shows the
- *     profile name and "IAM Identity Center" with no issuer host. The frame is
- *     meant to show that gap rather than paper over it.
+ *   - `email` — a member of the GetUsageLimits response, which the request now
+ *     asks for (`isEmailRequired`). Same place kiro-cli's own whoami gets it.
+ *   - no `start_url`. kiro-cli keeps that on its stored credential; Crew's login
+ *     flows take it as an argument and drop it, so the account line shows
+ *     "IAM Identity Center" with no issuer host. The frame is meant to show
+ *     that gap rather than paper over it.
  */
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
@@ -66,6 +68,7 @@ const USAGE_FROM_CREW_CREDENTIAL = {
     overage_rate: 0.04,
     account: 'Engineering',
     account_type: 'IamIdentityCenter',
+    email: 'dev@example.com',
   },
 }
 
