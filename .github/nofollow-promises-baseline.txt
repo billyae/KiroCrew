@@ -1,0 +1,108 @@
+# `getattr(os, "O_NOFOLLOW", 0)` sites, as `<count> <path>`. The getattr default
+# of 0 makes the flag a no-op on Windows, so a reader built on it follows a
+# reparse point there while documenting refusal (#9731).
+#
+# The gate requires every OTHER file to be clean and none of these counts to
+# grow, so this list can only shrink.
+#
+# Do NOT add or raise a line to make a red gate green: a new reader borrows
+# `platform_compat.open_file_no_reparse` (which fails closed on both platforms),
+# or carries the `# nofollow-raw: <why>` marker if the raw flag is deliberate
+# and the enclosing code handles the Windows no-op itself.
+# The refresh command below only lowers counts and deletes lines.
+#
+# Refresh (after converting something listed here):
+#   python3 scripts/check_nofollow_promises.py --update-baseline
+1 scripts/docs_lint.py
+1 scripts/fold_catalogue.py
+3 src/kiro_crew/acp/client.py
+6 src/kiro_crew/acp/skill_projection.py
+1 src/kiro_crew/agent_scratch.py
+2 src/kiro_crew/agent_state.py
+4 src/kiro_crew/apps/backend_runtime/provisioning.py
+2 src/kiro_crew/apps/builtins/auto_improvement/backend/clone_setup.py
+1 src/kiro_crew/apps/builtins/aws_control/backend/backup_parts/traversal.py
+1 src/kiro_crew/apps/builtins/aws_control/backend/storage.py
+1 src/kiro_crew/apps/builtins/aws_control/crew/packaging/pipeline/destination.py
+1 src/kiro_crew/apps/builtins/aws_control/crew/packaging/pipeline/layout.py
+4 src/kiro_crew/apps/builtins/aws_control/crew/packaging/pipeline/pinned.py
+3 src/kiro_crew/apps/builtins/aws_control/crew/packaging/pipeline/staging.py
+1 src/kiro_crew/apps/builtins/aws_control/crew/packaging/tests/test_prompt_swap_race.py
+1 src/kiro_crew/apps/builtins/aws_control/crew/runtime/container/front/transcript.py
+1 src/kiro_crew/apps/builtins/aws_control/crew/runtime/container/supervisor/backend.py
+3 src/kiro_crew/apps/builtins/aws_control/crew/runtime/container/supervisor/bundle.py
+1 src/kiro_crew/apps/builtins/code_review_sage/sage_lib/learning.py
+2 src/kiro_crew/apps/builtins/code_review_sage/sage_lib/store.py
+1 src/kiro_crew/apps/builtins/dev_fleet/skills/feature-demo-recording/references/_pathcheck.py
+1 src/kiro_crew/apps/builtins/dev_fleet/skills/feature-demo-recording/references/record_template.py
+1 src/kiro_crew/apps/builtins/meetings/backend/routes/audio_import.py
+10 src/kiro_crew/apps/builtins/spec_builder/backend/repository.py
+5 src/kiro_crew/apps/manager.py
+1 src/kiro_crew/apps/registry_pipeline/store_art.py
+2 src/kiro_crew/apps/routes.py
+1 src/kiro_crew/asset_downloader.py
+2 src/kiro_crew/atomic_write.py
+2 src/kiro_crew/builtin_skills/kirocrew-dev/dashboard-template/scripts/scaffold.py
+1 src/kiro_crew/cloud/launch_state.py
+1 src/kiro_crew/config/paths.py
+1 src/kiro_crew/config/superseded_defaults.py
+1 src/kiro_crew/crew_log/store.py
+1 src/kiro_crew/cron_inflight.py
+2 src/kiro_crew/dashboard/crash_dump_store.py
+1 src/kiro_crew/dashboard/file_api/path_complete.py
+1 src/kiro_crew/dashboard/file_api/pinned_io.py
+2 src/kiro_crew/dashboard/handlers/office_slides.py
+1 src/kiro_crew/dashboard/handlers/steering.py
+1 src/kiro_crew/dashboard/handlers/terminal.py
+1 src/kiro_crew/decisions/local_runtime.py
+1 src/kiro_crew/deploy/handlers.py
+1 src/kiro_crew/diagnostics.py
+1 src/kiro_crew/eval/bench/datasets.py
+5 src/kiro_crew/eval/bench/safepath.py
+1 src/kiro_crew/feature_videos_cache.py
+1 src/kiro_crew/gateway_lock.py
+1 src/kiro_crew/git_coord.py
+2 src/kiro_crew/history.py
+1 src/kiro_crew/history_projection.py
+1 src/kiro_crew/hook_runtime/descriptor_identity.py
+4 src/kiro_crew/hook_runtime/pinned_writes.py
+2 src/kiro_crew/kiro_prerequisite.py
+1 src/kiro_crew/mcp_cron.py
+1 src/kiro_crew/member_memory_backup.py
+2 src/kiro_crew/members.py
+2 src/kiro_crew/memory_files.py
+1 src/kiro_crew/memory_stores.py
+1 src/kiro_crew/messaging/inbound_spool.py
+5 src/kiro_crew/pinned_fs.py
+1 src/kiro_crew/platform/policy_distribution.py
+2 src/kiro_crew/platform/wheel_apply.py
+1 src/kiro_crew/platform/wheel_engine.py
+5 src/kiro_crew/platform_compat.py
+2 src/kiro_crew/pod/runtime_home.py
+1 src/kiro_crew/pod/runtime_ports.py
+1 src/kiro_crew/project_scan.py
+1 src/kiro_crew/pycache_gc.py
+1 src/kiro_crew/safety_override.py
+1 src/kiro_crew/sandbox.py
+4 src/kiro_crew/sel.py
+1 src/kiro_crew/session_pid_sig.py
+4 src/kiro_crew/session_storage.py
+4 src/kiro_crew/session_work_dir.py
+1 src/kiro_crew/skill_runtime/authoring.py
+3 src/kiro_crew/skills.py
+1 src/kiro_crew/snapshot.py
+1 src/kiro_crew/snapshot_archive.py
+3 src/kiro_crew/snapshot_merge.py
+1 src/kiro_crew/stt/preflight.py
+1 src/kiro_crew/testing/channel_fixtures.py
+3 src/kiro_crew/transcribe.py
+1 src/kiro_crew/ui_prefs.py
+1 src/kiro_crew/work_root.py
+2 src/kiro_crew/workflow_memory.py
+1 test/conftest.py
+1 test/test_atomic_write_acl_preservation.py
+2 test/test_atomic_write_pinned_parent.py
+1 test/test_cloud_launch_state.py
+1 test/test_dashboard_member_assignment.py
+1 test/test_issue_radar_crew_runtime.py
+1 test/test_steering_api.py
