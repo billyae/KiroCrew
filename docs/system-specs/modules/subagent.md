@@ -925,6 +925,45 @@ invariants:
 - **Lowering the cap cancels nothing.** In-flight runs keep going; the gate
   simply admits no new spawn until `_running_count` drains below the new cap on
   its own.
+- **The queued fan-out tail is failed only behind a wedged run, judged by
+  `_stall_verdict`.** A fan-out wider than the concurrency cap parks its tail in
+  the in-memory `_queue`, where no member is in `_agents`: the per-agent reaper
+  loop, the startup watchdog and the stuck-wave sweep (which skips any wave still
+  holding a queued member) all miss it, so if a run holding a slot is itself hung
+  the tail waits out that runner's multi-hour `subagent_timeout_secs` with no
+  bound of its own. `_sweep_stranded_queue_entries` gives it one, keyed to the
+  SAME liveness oracle the running members use: it consults `_stall_verdict` on
+  the runs holding slots and fails the queued tail only when one is positively
+  wedged (`DEAD`/`STUCK_INPUT`). A busy slot held by a healthy long run returns
+  `WORKING` (or `UNKNOWN` for a model-wait or an unattributable subtree), which
+  is not a wedge, so a wide fan-out whose members each run for hours is never
+  reaped for merely waiting its turn -- there is no time- or movement-based
+  deadline, and the signal is fail-safe (no positive wedge evidence, no reap).
+  The reap is scoped to the wedged run's OWN parent: only queued entries whose
+  `parent_session_key` matches a parent that has a wedged slot-holder are failed,
+  so a hung run in one parent's fan-out never fails another parent's (or another
+  messaging user's) healthy queued spawns waiting behind the same global
+  concurrency gate. A wedge on a `session_sharing` slot-holder is NOT trusted
+  (its `/proc` cmdline match can land on a sibling's or the parent's child, so a
+  terminal cancel must not rest on it), exactly as `_maybe_flag_stall` withholds
+  trust there. On a host without `/proc` (macOS, Windows) `_stall_verdict`
+  returns `UNKNOWN`, so the sweep is a safe no-op and the runner's wall clock
+  remains the only bound.
+  A reaped member is failed through the memory-wait expiry path -- its durable
+  row cancelled (`taskq_cancel_queued_async`), the window entry dropped
+  (`_unqueue`), and the failure published through `_report_queued_stop(error=...)`,
+  which settles the row and delivers the terminal result for a non-batch spawn as
+  well as a batch member. **Persist before publish:** when a PERSISTENT entry's
+  cancel does not land (an outage returns `None`), the entry is LEFT queued and
+  nothing is published, so a surviving durable row can never dispatch work
+  already reported failed; the next sweep retries. An incognito/temporary entry
+  has no durable row to survive, so a `None` cancel there is NOT an outage: it
+  drops and reports through its documented terminal-failure path. Resume,
+  approval-released and memory-deferred (`MEMORY_WAIT_UNTIL_KEY`, bounded by
+  `agent.subagent_queue_max_wait_secs`) entries are excluded. Scope: the sweep
+  reaps the QUEUED tail; terminating the wedged *running* member itself (to close
+  a wave still pending on it before its own timeout) stays the per-agent reaper's
+  job and is tracked as a separate follow-up ([#18143](https://github.com/kirodotdev/KiroCrew/issues/18143)).
 
 The advisory figure the `spawn_run` tool description advertises
 (`mcp_tools/spawn.py::schemas`) prefers the execution cap IN FORCE

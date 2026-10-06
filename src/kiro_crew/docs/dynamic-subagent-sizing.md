@@ -214,6 +214,34 @@ and a terminal, including the watchdog's reap of a wedged start (the
 slot-release drain), so a wedged population cannot hold the queue past the
 reap.
 
+A spawn that cleared admission but is still waiting its turn for a concurrency
+slot sits in the same `_queue` under neither a running record nor the startup
+watchdog. A healthy fan-out wider than the cap drains that tail as the runs
+ahead finish, but a tail parked behind a genuinely hung run would otherwise wait
+out its multi-hour `subagent_timeout_secs`. The reaper's
+`_sweep_stranded_queue_entries` bounds exactly that case, keyed to the SAME
+liveness oracle the running members use (`_stall_verdict`): the queued tail is
+failed only when a run holding a concurrency slot is positively wedged
+(`DEAD`/`STUCK_INPUT` -- its child exited with no result, or its subtree is flat
+and blocked on stdin). A busy slot held by a healthy long run reads `WORKING`
+(or `UNKNOWN` for a model-wait), which is not a wedge, so a fan-out whose
+members each run for hours is never reaped for merely waiting its turn -- there
+is no time- or movement-based deadline. The signal is fail-safe: no positive
+wedge evidence, no reap. The reap is scoped to the wedged run's OWN parent --
+only queued entries whose `parent_session_key` matches a parent with a wedged
+slot-holder are failed, so a hung run in one chat's fan-out never fails another
+chat's healthy queued spawns waiting behind the same global gate -- and a wedge
+on a `session_sharing` slot-holder is NOT trusted (its `/proc` cmdline match can
+land on a sibling's or the parent's child, so a terminal cancel must not rest on
+it), exactly as the running-member stall flag withholds trust there. On a host
+without `/proc` (macOS, Windows) `_stall_verdict` returns `UNKNOWN`, so the sweep
+is a safe no-op and the runner's wall clock remains the only bound there. This is
+distinct from a memory-deferred spawn, which
+waits under `agent.subagent_queue_max_wait_secs` and is left untouched by the
+strand sweep. Note the sweep reaps the QUEUED tail; it does not itself terminate
+the wedged running member (that stays the per-agent reaper's job, bounded by
+`subagent_timeout_secs`).
+
 The bound is tied to the session-start gate, not to the running cap:
 `2 × session_start_concurrency` (`_STARTUP_CAP_GATE_ROUNDS` rounds of the
 gate's width), clamped to `[1, cap]` (with the default `"auto"` width, the

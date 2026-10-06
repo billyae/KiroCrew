@@ -963,6 +963,18 @@ class OrphanStallMonitor(ManagerComponent):
                 await self._manager._sweep_stuck_waves_async(now)
             except Exception:
                 logger.debug("Reaper: stuck-wave sweep failed", exc_info=True)
+            # Pre-execution deadline for the fan-out tail: a fresh spawn held in
+            # the in-memory ``_queue`` lives in no collection the per-agent loop
+            # below walks, so a wave wider than the concurrency cap would park
+            # its queued members behind the runs ahead with no bound of their
+            # own. Fail the waiting tail only once a run holding a slot is
+            # positively wedged (the same ``_stall_verdict`` oracle the running
+            # members use) -- a busy slot held by a healthy long run is never
+            # read as a strand.
+            try:
+                await self._manager._sweep_stranded_queue_entries(now)
+            except Exception:
+                logger.debug("Reaper: stranded-queue sweep failed", exc_info=True)
             # Digest hold deadline: release completed wave results that a
             # straggler (or a hung member) has been withholding.
             try:
@@ -1106,6 +1118,170 @@ class OrphanStallMonitor(ManagerComponent):
                     logger.info("Reaper: pruned %d stale tombstone(s)", pruned)
             except Exception:
                 logger.debug("Reaper: tombstone pruning failed", exc_info=True)
+
+    async def _sweep_stranded_queue_entries_impl(self, now: float) -> None:
+        """Fail in-memory ``_queue`` entries parked behind a run that the stall
+        detector judges wedged (``DEAD``/``STUCK_INPUT``).
+
+        A fresh spawn held behind the stagger/concurrency gate lives only in
+        ``_queue`` and is never registered in ``_agents``; the reaper's per-agent
+        loop, the startup watchdog, and the stuck-wave sweep (which skips any
+        wave holding a queued member) therefore all miss it. Its only exit is a
+        slot freeing, so if a run holding one of those slots is itself hung the
+        whole tail parks with no deadline of its own, bounded only by the ~3 h
+        wall clock of that runner.
+
+        The reap keys off the SAME liveness oracle the running members already
+        use (:meth:`_stall_verdict`), never off queue age or queue movement. A
+        busy slot held by a healthy long run returns ``WORKING`` (or
+        ``UNKNOWN``), so a fan-out wider than the cap whose members each run for
+        hours is never reaped for merely waiting its turn -- the earlier
+        time/movement heuristic read exactly that busy slot as a strand. Only
+        when a run holding a slot is positively wedged -- its child exited with
+        no result, or its subtree is flat and blocked on stdin -- is the queued
+        tail behind it failed. That makes the signal fail-safe: no positive
+        wedge evidence, no reap.
+
+        Scoped to the wedged run's OWN parent: only queued entries whose
+        ``parent_session_key`` matches a parent that has a wedged slot-holder are
+        failed. A hung run in one parent's fan-out never fails another parent's
+        (or another messaging user's) healthy queued spawns waiting behind the
+        same global concurrency gate.
+
+        A ``session_sharing`` slot-holder is NOT trusted as a wedge, exactly as
+        :meth:`_maybe_flag_stall` withdraws trust there: on a shared runtime
+        ``_stall_verdict`` matches the child by cmdline and can land on a
+        sibling's or the parent's child, so a sibling's matched child exiting
+        would read ``DEAD`` on a healthy run. A terminal, unrecoverable cancel
+        must not rest on that fallible match.
+
+        Platform note: ``_stall_verdict`` reads ``/proc``; on a host without it
+        (macOS, Windows) it returns ``UNKNOWN``, so this sweep is a safe no-op
+        there -- it never fails a healthy entry, it simply adds no shorter bound
+        than the runner's wall clock on those platforms.
+
+        Scope note: this reaps the QUEUED tail once a run ahead is wedged; it
+        does not itself terminate that wedged running member (its own reaping is
+        the per-agent loop's job, bounded by ``subagent_timeout_secs``). See the
+        deferred-finding issue linked from the PR for closing the wave the
+        instant the wedge is detected rather than at the runner's own deadline.
+
+        Excluded (each has its own owner, so none is reaped here):
+
+        * a resident resume (``_resume_id`` without ``_startup_release``) -- its
+          run is already counted where running runs are;
+        * an approval-released start (``_startup_release``) -- metered by the
+          pump's own release phase;
+        * a memory-deferred row (``MEMORY_WAIT_UNTIL_KEY``) -- bounded by
+          ``agent.subagent_queue_max_wait_secs``.
+
+        A failed member is ended the way the memory-wait expiry is: its durable
+        queued row is cancelled through the async store seam, the window entry is
+        dropped via ``_unqueue``, and the terminal failure is published through
+        ``_report_queued_stop(error=...)``. **Persist before publish:** when a
+        PERSISTENT entry's cancel did not land (an outage returns ``None``), the
+        entry is LEFT queued and nothing is published, so a surviving durable row
+        can never dispatch work already reported failed -- the next sweep
+        retries. An incognito/temporary entry has no durable row to survive, so a
+        ``None`` cancel there is NOT an outage: it drops and reports through its
+        documented terminal-failure path. ``_report_queued_stop`` registers a
+        synthetic record that delivers the failure for a non-batch spawn too, not
+        only a batch member, and re-emits the parent's queue depth so the chip
+        stops counting it.
+        """
+        from kiro_crew.subagent_manager.admission.types import MEMORY_WAIT_UNTIL_KEY
+
+        queue = self._manager._queue
+        if not queue:
+            return
+        # Which PARENTS have a run HOLDING A SLOT that is positively wedged?
+        # Consult the same oracle the running-member stall flag uses. A WORKING
+        # or UNKNOWN verdict (a healthy long run, or no attributable evidence) is
+        # NOT a wedge, so the tail keeps waiting -- a busy slot is never read as a
+        # stalled run. ``VERDICT_*`` are module globals resolved in ``subagent``'s
+        # namespace by ``bind_component_globals``, exactly as ``_maybe_flag_stall``
+        # reads them.
+        #
+        # The wedge is attributed to the slot-holder's OWN parent, and only that
+        # parent's queued tail is reaped below. A wedged run in one parent's fan-
+        # out must not fail another parent's (or another messaging user's)
+        # healthy queued spawns waiting behind the SAME global concurrency gate.
+        #
+        # A ``session_sharing`` slot-holder is EXCLUDED, exactly as
+        # ``_maybe_flag_stall`` withdraws trust in a wedged verdict there: on a
+        # shared runtime ``_stall_verdict`` matches the child by cmdline and can
+        # land on a sibling's or the parent's child, so a sibling's matched child
+        # exiting would read DEAD on a healthy run. A terminal, unrecoverable
+        # cancel must not rest on that fallible match.
+        wedged_parents: set[str] = set()
+        for info in list(self._manager._agents.values()):
+            if info.done or info.reaped or info._slot_released:
+                continue
+            if info._session_sharing:
+                continue
+            try:
+                verdict, _evidence = await self._manager._stall_verdict(info)
+            except Exception:
+                logger.debug("Reaper: strand stall-consult failed", exc_info=True)
+                continue
+            if verdict in (VERDICT_DEAD, VERDICT_STUCK_INPUT):
+                wedged_parents.add(str(info.parent_session_key or ""))
+        if not wedged_parents:
+            return
+        stranded: list[dict[str, Any]] = []
+        for params in list(queue):
+            # Entries with their own owner are never reaped here.
+            if params.get("_startup_release"):
+                continue
+            if params.get("_resume_id"):
+                continue
+            if MEMORY_WAIT_UNTIL_KEY in params:
+                continue
+            # Only fail a queued entry whose OWN parent has a wedged slot-holder.
+            if str(params.get("parent_session_key") or "") not in wedged_parents:
+                continue
+            stranded.append(params)
+        if not stranded:
+            return
+        for params in stranded:
+            agent_id = str(params.get("_preassigned_id") or "")
+            # A persistent entry has a durable store row; incognito/temporary
+            # entries (and a run with the task queue off) intentionally have
+            # none, so a ``None`` cancel from them means "no row", not an outage.
+            persistent = str(params.get("_memory_mode") or "persistent") == "persistent"
+            logger.warning(
+                "Reaper: queued subagent %s never started: a run holding a "
+                "concurrency slot is wedged, failing the stranded waiting member",
+                agent_id or "<unknown>",
+            )
+            error = "spawn failed: a run holding a concurrency slot is not responding"
+            try:
+                # Cancel the durable row BEFORE dropping the window entry (the
+                # async seam -- this runs on the gateway loop).
+                stored = await self._manager._admission.taskq_cancel_queued_async(
+                    agent_id, allow_admitted=False
+                )
+                # Persist before publish: a PERSISTENT entry whose cancel did not
+                # land (an outage returns ``None``) stays queued and unreported,
+                # so a refill cannot restore and run work already reported failed;
+                # the next sweep retries once the wedge is still present. An
+                # incognito/temporary entry has no durable row to survive, so a
+                # ``None`` cancel there is NOT an outage -- it drops and reports
+                # through its documented terminal-failure path.
+                if persistent and stored is None:
+                    logger.warning(
+                        "Reaper: cancel of stranded queued subagent %s did not "
+                        "land; leaving it queued for the next sweep",
+                        agent_id or "<unknown>",
+                    )
+                    continue
+                entry = self._manager._unqueue(agent_id, stored=stored, store_cancelled=True)
+                if entry is not None:
+                    self._manager._report_queued_stop(
+                        entry, error=error, row_settled=stored is not None
+                    )
+            except Exception:
+                logger.exception("Reaper: failed to end stranded queued subagent %s", agent_id)
 
     def _is_startup_stalled_impl(self, info: SubagentInfo, now: float) -> bool:
         """True if a subagent is wedged in startup and should be reaped early.
