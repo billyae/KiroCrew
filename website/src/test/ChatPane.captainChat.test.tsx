@@ -12,7 +12,7 @@ import dashboardReducer from '../store/dashboardSlice'
 import notificationsReducer from '../store/notificationsSlice'
 
 /* Captain's chat has no static opening card any more: Captain greets the user
- * with a real first turn instead (see pages/members/useCaptainFirstGreeting).
+ * with a real first turn instead (see pages/members/useMemberFirstGreeting).
  * So an empty Captain thread renders exactly like any other empty pane, and a
  * host creation receipt still renders without sending anything. */
 
