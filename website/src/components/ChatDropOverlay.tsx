@@ -22,8 +22,25 @@ const BOB_CYCLE_SECONDS = 2.8
  * enter/leave pairs emitted while the pointer crosses nested chat controls,
  * while the file check leaves the session-grid's internal DnD untouched.
  */
+/** What the drop gesture asked for, read from the event at drop time.
+ *  `insertPath` is true when the user held the path-insert modifier (Alt /
+ *  Option) on drop (issue #2355): insert a path reference instead of
+ *  uploading. A plain drop leaves it false and uploads, unchanged. */
+export interface DropIntent {
+  insertPath: boolean
+}
+
+/** The modifier that switches a drop from "upload the file" to "insert its
+ *  path as an `@`-mention reference" (issue #2355). Alt (Option on macOS) is
+ *  unclaimed on the chat drop target and is the same cross-platform key the
+ *  OS file managers use to vary a drag's effect, so it reads as "do something
+ *  other than the default copy". */
+export function dropWantsPathInsert(event: ReactDragEvent): boolean {
+  return !!event.altKey
+}
+
 export function useChatFileDrop(
-  onDrop: (dataTransfer: DataTransfer) => void,
+  onDrop: (dataTransfer: DataTransfer, intent: DropIntent) => void,
 ): { active: boolean; dropTargetProps: DropTargetProps } {
   const [active, setActive] = useState(false)
   const depthRef = useRef(0)
@@ -89,7 +106,7 @@ export function useChatFileDrop(
     event.stopPropagation()
     const cancelled = suppressedRef.current
     reset()
-    if (!cancelled) onDrop(event.dataTransfer)
+    if (!cancelled) onDrop(event.dataTransfer, { insertPath: dropWantsPathInsert(event) })
   }, [onDrop, reset])
 
   const dropTargetProps = useMemo(() => ({

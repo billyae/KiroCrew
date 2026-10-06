@@ -10,7 +10,7 @@ import {
 import { type QueryClient, useQuery } from '@tanstack/react-query'
 
 import { api } from '../../api/client'
-import { useChatFileDrop } from '../../components/ChatDropOverlay'
+import { useChatFileDrop, type DropIntent } from '../../components/ChatDropOverlay'
 import { makeRelative } from '../../components/FilePickerMenu'
 import { PREVIEW_SNIP_EVENT } from '../../components/WebPreviewPanel'
 import { PREVIEW_ANNOTATE_EVENT, type PreviewAnnotateDetail } from '../../utils/browserAnnotations'
@@ -785,15 +785,17 @@ export function useChatPageResourcesController({
     if (slot === activeSlotRef.current) setInput(optimized)
   }, [drafts, saveDrafts, activeSlotRef, setInput])
 
-  const handleDrop = useCallback((dataTransfer: DataTransfer) => {
+  const handleDrop = useCallback((dataTransfer: DataTransfer, intent: DropIntent) => {
     // Classify BEFORE acting (issue #743): a dropped folder inserts its path
     // into the composer as an `@rel/` token — the same reference the @-picker
     // stages — instead of taking the upload route, which cannot ingest a
-    // directory. Files keep uploading; a mixed drop takes both routes. In a
-    // plain browser no real path is visible, so classifyDrop leaves folders
-    // on the upload route there (today's behaviour) rather than inserting a
-    // misleading bare name.
-    const { files, dirPaths } = classifyDrop(dataTransfer)
+    // directory. A plain drop uploads files; a drop with the path-insert
+    // modifier held (issue #2355) inserts a dropped FILE's resolved path as an
+    // `@`-mention reference instead of uploading it; a mixed drop takes every
+    // applicable route. In a plain browser no real path is visible, so
+    // classifyDrop leaves folders and files on the upload route there (today's
+    // behaviour) rather than inserting a misleading bare name.
+    const { files, dirPaths, filePaths } = classifyDrop(dataTransfer, { insertFilePaths: intent.insertPath })
     if (dirPaths.length) {
       // Short relative form when the folder lies inside the project root,
       // absolute otherwise — exactly the picker's own fallback convention.
@@ -810,10 +812,28 @@ export function useChatPageResourcesController({
         setInput(spliced.value)
       }
     }
+    if (filePaths.length) {
+      // Issue #2355: the modifier asked for a path reference, not an upload.
+      // Stage the resolved absolute path(s) through the SAME sink a finished
+      // upload uses (finishComposerAttachment), capturing the live slot exactly
+      // as uploadFiles does — they serialize to the SAME `[attached_file N]
+      // <path>` reference the @-picker produces, so the agent resolves the file
+      // by path with no copy of its contents.
+      //
+      // finishComposerAttachment RELEASES a send hold, so pair it with a
+      // holdComposerSend the way uploadFiles / takeScreenshot do: without the
+      // matching hold this would decrement a hold a concurrent in-flight upload
+      // for the same slot took, unlocking Send before that upload's attachment
+      // landed. The hold/release net to zero here (nothing async in between),
+      // but the pairing keeps the slot's hold count honest.
+      const slot = activeSlotRef.current
+      holdComposerSend(slot)
+      finishComposerAttachment(slot, filePaths)
+    }
     if (files.length) {
       uploadFiles(files)
     }
-  }, [currentProjectRef, inputRef, voiceCaretRef, voicePendingCaretRef, setInput, uploadFiles])
+  }, [currentProjectRef, inputRef, voiceCaretRef, voicePendingCaretRef, setInput, activeSlotRef, uploadFiles])
   const { active: dragOver, dropTargetProps } = useChatFileDrop(handleDrop)
   return {
     tabsCtl,

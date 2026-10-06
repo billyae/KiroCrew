@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { i18nT } from '../i18n/t'
 import type { ReactNode } from 'react'
-import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { act, createEvent, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { RootState } from '../store'
 import { Provider } from 'react-redux'
@@ -792,6 +792,35 @@ describe('ChatPane file drop', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('chat-drop-overlay')).not.toBeInTheDocument()
     })
+  })
+
+  it('inserts a path reference instead of uploading when Alt is held on drop (issue #2355)', async () => {
+    vi.stubGlobal('kirocrew', { getPathForFile: () => '/work/report.pdf' })
+    renderPane('pane-drop-path')
+    const box = (await screen.findAllByRole('textbox'))[0]
+    const file = new File(['hello'], 'report.pdf', { type: 'application/pdf' })
+    const dataTransfer = {
+      types: ['Files'],
+      items: [{
+        kind: 'file',
+        type: file.type,
+        getAsFile: () => file,
+        webkitGetAsEntry: () => ({ isDirectory: false }),
+      }],
+      files: [file],
+      dropEffect: 'none',
+    } as unknown as DataTransfer
+
+    fireEvent.dragEnter(box, { dataTransfer })
+    const dropEvent = createEvent.drop(box, { dataTransfer })
+    Object.defineProperty(dropEvent, 'altKey', { value: true })
+    fireEvent(box, dropEvent)
+
+    // Staged as a reference chip (same plumbing as an uploaded file), and the
+    // contents were NOT uploaded.
+    await waitFor(() => expect(screen.getByRole('group', { name: '/work/report.pdf' })).toBeInTheDocument())
+    expect(api.uploadFiles).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 })
 

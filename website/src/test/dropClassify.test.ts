@@ -166,4 +166,85 @@ describe('classifyDrop', () => {
     const out = classifyDrop(dt([], [f]))
     expect(out.files).toEqual([f])
   })
+
+  describe('insertFilePaths (issue #2355)', () => {
+    it('keeps a dropped file on the upload route by default (plain drop)', () => {
+      stubBridge(() => '/Users/me/report.pdf')
+      const f = fileOf('report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]))
+      expect(out.files).toEqual([f])
+      expect(out.filePaths).toEqual([])
+    })
+
+    it('routes a dropped file to path insertion when opted in and the shell resolves a path', () => {
+      stubBridge(() => '/Users/me/report.pdf')
+      const f = fileOf('report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]), { insertFilePaths: true })
+      expect(out.filePaths).toEqual(['/Users/me/report.pdf'])
+      expect(out.files).toEqual([])
+      expect(out.dirPaths).toEqual([])
+    })
+
+    it('falls back to upload when opted in but no path resolves (browser)', () => {
+      // No bridge: the file name alone is not a usable path, so keep today's
+      // upload behaviour rather than insert a misleading bare name.
+      const f = fileOf('report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]), { insertFilePaths: true })
+      expect(out.files).toEqual([f])
+      expect(out.filePaths).toEqual([])
+    })
+
+    it('falls back to upload when opted in but the resolved path has whitespace (untokenizable)', () => {
+      stubBridge(() => '/Users/me/My Report.pdf')
+      const f = fileOf('My Report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]), { insertFilePaths: true })
+      expect(out.files).toEqual([f])
+      expect(out.filePaths).toEqual([])
+    })
+
+    it('falls back to upload when opted in but the resolved path has @ (untokenizable)', () => {
+      stubBridge(() => '/Users/alice@team/report.pdf')
+      const f = fileOf('report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]), { insertFilePaths: true })
+      expect(out.files).toEqual([f])
+      expect(out.filePaths).toEqual([])
+    })
+
+    it('falls back to upload when opted in but the bridge throws', () => {
+      stubBridge(() => { throw new Error('ipc gone') })
+      const f = fileOf('report.pdf')
+      const out = classifyDrop(dt([{ entry: { isDirectory: false }, file: f }]), { insertFilePaths: true })
+      expect(out.files).toEqual([f])
+      expect(out.filePaths).toEqual([])
+    })
+
+    it('splits a mixed drop under opt-in: tokenizable files insert, others upload, folders insert', () => {
+      // Folder → dirPaths; a file with a clean path → filePaths; a file with a
+      // spaced path → upload. One drop exercises all three routes.
+      const paths: Record<string, string> = {
+        folder: '/abs/folder',
+        'clean.txt': '/abs/clean.txt',
+        'spaced file.txt': '/abs/spaced file.txt',
+      }
+      stubBridge((f: File) => paths[f.name] ?? '')
+      const spaced = fileOf('spaced file.txt')
+      const out = classifyDrop(dt([
+        { entry: { isDirectory: true }, file: fileOf('folder') },
+        { entry: { isDirectory: false }, file: fileOf('clean.txt') },
+        { entry: { isDirectory: false }, file: spaced },
+      ]), { insertFilePaths: true })
+      expect(out.dirPaths).toEqual(['/abs/folder'])
+      expect(out.filePaths).toEqual(['/abs/clean.txt'])
+      expect(out.files).toEqual([spaced])
+    })
+
+    it('still inserts a folder path even when insertFilePaths is false', () => {
+      // The flag governs FILES only; folders keep #743's behaviour regardless.
+      stubBridge(() => '/abs/folder')
+      const out = classifyDrop(dt([{ entry: { isDirectory: true }, file: fileOf('folder') }]), { insertFilePaths: false })
+      expect(out.dirPaths).toEqual(['/abs/folder'])
+      expect(out.files).toEqual([])
+      expect(out.filePaths).toEqual([])
+    })
+  })
 })

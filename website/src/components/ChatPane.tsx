@@ -16,7 +16,7 @@ import { filterCrewmateChat } from './chat/crewmateBubbles'
 import type { CrewmateIdentity } from '../pages/chat/CrewmateMessage'
 import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
-import ChatDropOverlay, { useChatFileDrop } from './ChatDropOverlay'
+import ChatDropOverlay, { useChatFileDrop, type DropIntent } from './ChatDropOverlay'
 import PaneDim from './PaneDim'
 
 /** What the top-left split pane does about the shell's sidebar toggle — see
@@ -986,9 +986,24 @@ export default function ChatPane({
   // appended — the pane does not track a live composer caret. In a plain
   // browser no real path is visible, so classifyDrop leaves folders on the
   // upload route there (today's behaviour).
-  const handleDrop = useCallback((dataTransfer: DataTransfer) => {
-    const { files, dirPaths } = classifyDrop(dataTransfer)
+  const handleDrop = useCallback((dataTransfer: DataTransfer, intent: DropIntent) => {
+    // Issue #2355: a modifier (Alt/Option) held on drop asks for a path
+    // reference instead of an upload — classifyDrop then resolves the dropped
+    // file's absolute path (desktop shell only) and we stage it the same way
+    // an uploaded file is staged, so it serializes to the SAME
+    // `[attached_file N] <path>` reference the @-picker produces, with no copy
+    // of the contents. A plain drop leaves intent.insertPath false and uploads
+    // as before. In a plain browser no real path is visible, so classifyDrop
+    // keeps those files on the upload route (today's behaviour).
+    const { files, dirPaths, filePaths } = classifyDrop(dataTransfer, { insertFilePaths: intent.insertPath })
     if (dirPaths.length) setInput((prev) => spliceDirTokens(prev, null, dirPaths).value)
+    if (filePaths.length) {
+      // Stage the resolved absolute path(s) exactly as an uploaded file is
+      // staged (see the arrival/recovery handlers above) — they serialize to
+      // the SAME `[attached_file N] <path>` reference the @-picker produces, so
+      // the agent resolves the file by path with no copy of its contents.
+      setPendingFiles((prev) => [...prev, ...filePaths.filter((p) => !prev.includes(p))])
+    }
     if (files.length) uploadFiles(files)
   }, [uploadFiles])
   const { active: dragOver, dropTargetProps } = useChatFileDrop(handleDrop)

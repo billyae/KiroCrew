@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import ChatDropOverlay, { useChatFileDrop } from '../components/ChatDropOverlay'
+import ChatDropOverlay, { useChatFileDrop, type DropIntent } from '../components/ChatDropOverlay'
 
 function fileTransfer(): DataTransfer {
   const file = new File(['hello'], 'hello.txt', { type: 'text/plain' })
@@ -31,7 +31,7 @@ function explorerDragTransfer(): DataTransfer {
   } as unknown as DataTransfer
 }
 
-function Harness({ onDrop }: { onDrop: (dataTransfer: DataTransfer) => void }) {
+function Harness({ onDrop }: { onDrop: (dataTransfer: DataTransfer, intent: DropIntent) => void }) {
   const { active, dropTargetProps } = useChatFileDrop(onDrop)
   return (
     <div data-testid="drop-target" {...dropTargetProps}>
@@ -72,6 +72,35 @@ describe('ChatDropOverlay', () => {
 
     expect(onDrop).toHaveBeenCalledTimes(1)
     expect(onDrop.mock.calls[0][0].items[0].getAsFile()?.name).toBe('hello.txt')
+  })
+
+  it('reports insertPath=false for a plain drop (issue #2355)', () => {
+    const onDrop = vi.fn()
+    render(<Harness onDrop={onDrop} />)
+    const target = screen.getByTestId('drop-target')
+    const dataTransfer = fileTransfer()
+
+    fireEvent.dragEnter(target, { dataTransfer })
+    fireEvent.drop(target, { dataTransfer })
+
+    expect(onDrop.mock.calls[0][1]).toEqual({ insertPath: false })
+  })
+
+  it('reports insertPath=true when Alt/Option is held on drop (issue #2355)', () => {
+    const onDrop = vi.fn()
+    render(<Harness onDrop={onDrop} />)
+    const target = screen.getByTestId('drop-target')
+    const dataTransfer = fileTransfer()
+
+    fireEvent.dragEnter(target, { dataTransfer })
+    // happy-dom's synthetic drop event does not reflect an `altKey` init onto
+    // the dispatched event, so build the event and set the modifier on it
+    // explicitly — React reads `nativeEvent.altKey`.
+    const dropEvent = createEvent.drop(target, { dataTransfer })
+    Object.defineProperty(dropEvent, 'altKey', { value: true })
+    fireEvent(target, dropEvent)
+
+    expect(onDrop.mock.calls[0][1]).toEqual({ insertPath: true })
   })
 
   it('clears a drag whose nested target disappears before dragleave', async () => {
