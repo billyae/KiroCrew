@@ -230,6 +230,53 @@ class TestFileRead:
         assert len(body) <= cap
 
     @pytest.mark.asyncio
+    async def test_a_pem_block_below_the_cap_is_masked_and_keeps_the_body_whole(
+        self, tmp_path, mock_sel
+    ):
+        """A key block well below the cap is masked and the body runs to the cap."""
+        line = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7" + "x" * 12
+        pem = (
+            "-----BEGIN PRIVATE KEY-----\n"
+            + "\n".join([line] * 100)
+            + "\n-----END PRIVATE KEY-----\n"
+        )
+        cap = files_mod._FILE_READ_CAP
+        raw = "a\n" * 50_000 + pem + "b\n" * 300_000
+        f = tmp_path / "pem.txt"
+        f.write_text(raw, encoding="utf-8")
+        async with TestClient(TestServer(self._client_app())) as client:
+            resp = await client.get(f"/api/file-read?path={f}")
+            body = await resp.text()
+        assert resp.status == 200
+        assert resp.headers["X-Truncated"] == "true"
+        assert line[:20] not in body
+        assert body.endswith("b\n" * 100)
+        assert len(body) > cap - len(pem) - 8192
+
+    @pytest.mark.asyncio
+    async def test_the_streaming_pass_keeps_its_buffer_bounded_on_a_partial_jwt_run(
+        self, tmp_path, mock_sel, monkeypatch
+    ):
+        """Each streaming scan stays near one slice plus the holdback."""
+        seen: list[int] = []
+
+        class Recording(files_mod.StreamRedactor):
+            def feed(self, chunk: str) -> str:
+                out = super().feed(chunk)
+                seen.append(len(self._buf))
+                return out
+
+        monkeypatch.setattr(files_mod, "StreamRedactor", Recording)
+        f = tmp_path / "eyj.txt"
+        f.write_text("eyJ" * 173_333 + "!", encoding="utf-8")
+        monkeypatch.setattr(files_mod, "redact", lambda text: text)
+        async with TestClient(TestServer(self._client_app())) as client:
+            resp = await client.get(f"/api/file-read?path={f}")
+        assert resp.status == 200
+        assert seen
+        assert max(seen) <= 2 * files_mod._STREAM_HOLDBACK_JWT_MAX
+
+    @pytest.mark.asyncio
     async def test_untruncated_file_has_no_flag(self, tmp_path, mock_sel):
         f = tmp_path / "small.txt"
         f.write_text("short", encoding="utf-8")

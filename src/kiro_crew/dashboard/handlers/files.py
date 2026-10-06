@@ -2163,9 +2163,12 @@ async def api_file_read(request: web.Request) -> web.Response:
         # keeps only what redacting the capped text and redacting the whole read
         # agree on: it holds no prefix the capped pass alone left unmatched, and
         # no raw text from past the cap that the shorter redacted output exposes.
-        # A read that stops short of its bound holds the whole file; a full one
-        # goes through the streaming redactor, which withholds a token the read
-        # itself cut off before it could match.
+        # A read that stops short of its bound holds the whole file. A full one
+        # passes its straddle window (from two holdbacks below the cap) through
+        # the streaming redactor, which withholds a token the read itself cut
+        # off. The window is fed in holdback-sized slices so each internal scan
+        # stays bounded; commits may land at slice or newline edges, which only
+        # a window that may be split tolerates, never a whole document.
         as_written = content[:read_cap]
         content = redact_fn(as_written)
         if truncated:
@@ -2173,7 +2176,11 @@ async def api_file_read(request: web.Request) -> web.Response:
             if len(whole) < read_cap + _STREAM_HOLDBACK_JWT_MAX:
                 whole = redact_fn(whole)
             else:
-                whole = StreamRedactor(redactor=redact_fn).feed(whole)
+                step = _STREAM_HOLDBACK_JWT_MAX
+                lo = max(0, read_cap - 2 * step)
+                stream = StreamRedactor(redactor=redact_fn)
+                tail = "".join(stream.feed(whole[i : i + step]) for i in range(lo, len(whole), step))
+                whole = redact_fn(whole[:lo]) + tail
             content = os.path.commonprefix([content, whole])
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_read", outcome="success", resources=path
