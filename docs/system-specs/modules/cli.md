@@ -1949,12 +1949,40 @@ on crash, and starts on boot. Implemented in `src/kiro_crew/service/`.
     `systemd-journal` / `adm`. See [Logs Command](#logs-command).
 - **macOS** (`current_platform() == LAUNCHD`):
   - Plist: `~/Library/LaunchAgents/dev.kirocrew.gateway.plist`
-  - Install: `launchctl load -w <plist>`. `RunAtLoad=true` and
+  - Install: `launchctl enable gui/<uid>/<label>` then
+    `launchctl bootstrap gui/<uid> <plist>`. `RunAtLoad=true` and
     `KeepAlive` ensure auto-start and crash recovery. `KeepAlive` relaunches
     EVERY exit, including the live-holder refusal (exit 78); the exemption for
     that exit (`RestartPreventExitStatus`) is systemd-only.
   - Stdout and stderr are written to
     `~/Library/Logs/KiroCrew/gateway.{log,err}`.
+  - Install, restart, stop and uninstall name the domain explicitly, so an
+    install from SSH lands where `restart` and `stop` address it; the legacy
+    `load`/`unload` verbs act on the caller's domain (`user/<uid>` from SSH).
+    `is_active` and `status` still read the caller's domain with
+    `launchctl list`, so from SSH they do not see a `gui/<uid>` job. With
+    nobody logged in at the desktop,
+    there is no `gui/<uid>` domain: when `bootstrap gui/<uid>` answers
+    `125: Domain does not support specified action`, install enables and
+    bootstraps into `user/<uid>` instead and logs which domain it used. Any
+    other bootstrap refusal fails the install.
+    Reinstall first boots out an agent an older `load -w` left in
+    `gui/<uid>` or `user/<uid>` and waits for it to leave (`bootout` is
+    asynchronous); `enable` clears the persistent disabled override an older
+    `uninstall`'s `unload -w` wrote.
+  - Restart, stop and uninstall: `launchctl kickstart -k` / `bootout` on
+    `<domain>/<label>`, trying `gui/<uid>` then `user/<uid>`; a domain that
+    answers "not found" or `125` holds no job and the next one is tried.
+    Removing the job leaves nothing for
+    `KeepAlive` to respawn; stop keeps the plist and its enabled state for
+    the next login. `stop()` returns whether launchd accepted the bootout
+    and `stop_service()` passes that on, so `kirocrew stop` never reports a
+    refused bootout as a stop.
+  - `restart_service()` gates on `is_loaded()` (`launchctl print
+    <domain>/<label>` over `gui/<uid>` then `user/<uid>`), not on the
+    caller-domain `is_active()`, so `kirocrew restart` over SSH kickstarts the
+    service job instead of falling to the foreground SIGTERM-and-spawn path
+    beside it.
 - **Other platforms**: install/uninstall return exit code 2 with a
   message pointing to manual setup.
 
