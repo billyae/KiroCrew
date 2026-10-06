@@ -1176,15 +1176,18 @@ class TestCronBindingMetadataEviction:
         new_dir.mkdir()
 
         try:
+            # Same agent name, different folder: the retained-session agent guard
+            # (which defers on an agent mismatch) does not apply, so the binding
+            # check is all that stands between the import and the old runtime.
             old_provider, _, _ = await manager.get_or_create(
                 key,
-                agent="old-agent",
+                agent="new-agent",
                 cwd=str(old_dir),
             )
             manager.release(key)
             gateway._cron_bindings()[key] = (
                 str(old_dir),
-                "old-agent",
+                "new-agent",
                 None,
                 "project",
             )
@@ -2040,6 +2043,29 @@ class TestUnresolvedProjectAgentSkipsRun:
 
         _, kwargs = gw.sessions.get_or_create.call_args
         assert kwargs.get("model") == "job-pinned-model"
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_alias_model_is_named_in_the_downgrade_notice(self, tmp_path):
+        # With no job-level pin, the model that failed is the alias's own, so
+        # the notice must name it rather than the job's empty `model`.
+        gw = _make_gw_for_llm()
+        job = _make_llm_job(project_path=str(tmp_path), agent_id="ea-dev", model="")
+        calls: list[dict] = []
+
+        async def _get_or_create(*_args, **kwargs):
+            calls.append(kwargs)
+            if kwargs.get("model"):
+                raise RuntimeError(f"model {kwargs['model']} is unavailable")
+            return MagicMock(), True, False
+
+        with _resolved_binding() as mock_resolve:
+            _set_alias_pinned_model_binding(mock_resolve)
+            result, _stream_mock = await _run_llm_callback(
+                gw, job, get_or_create_side_effect=_get_or_create
+            )
+
+        assert [c.get("model") for c in calls] == ["alias-pinned-model", None]
+        assert result.startswith("⚠️ Model 'alias-pinned-model' unavailable; ran with default.")
 
 
 class TestMemberShadowRefusalAudit:

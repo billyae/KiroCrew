@@ -5112,6 +5112,10 @@ class GatewayOrchestrator:
                     env["KIROCREW_APPROVAL_MODE"] = "auto"
                 return env or None
 
+            # The model a fallback actually gave up on: a project alias's own
+            # model when the job pins none, so the downgrade notice can name it.
+            _downgraded_from: dict[str, str] = {"model": ""}
+
             async def _acquire_with_model_fallback(
                 key: str,
                 agent_id: str | None,
@@ -5255,6 +5259,7 @@ class GatewayOrchestrator:
                         _model,
                         model_exc,
                     )
+                    _downgraded_from["model"] = _model
                     client, is_new, resumed = await self.sessions.get_or_create(
                         key,
                         agent=agent_id,
@@ -5286,7 +5291,8 @@ class GatewayOrchestrator:
             def _annotate_model_downgrade(text: str) -> str:
                 # job.model is LLM-controllable via MCP; redact before it
                 # reaches Slack/dashboard through last_result.
-                safe_model = redact_credentials(redact_exfiltration_urls(job.model)[0])[0]
+                failed_model = _downgraded_from["model"] or job.model
+                safe_model = redact_credentials(redact_exfiltration_urls(failed_model)[0])[0]
                 return f"⚠️ Model '{safe_model}' unavailable; ran with default.\n\n" + text
 
             # ── Sequential agent execution ──
@@ -5557,6 +5563,7 @@ class GatewayOrchestrator:
                 # retained identity names what the next cold acquisition builds.
                 for _seq_key, _seq_binding in _seq_binding_snapshot.items():
                     if self._cron_session_binding_requires_reset(_seq_key, _seq_binding):
+                        # Stateless ``cron:`` key: the reset alone cold-starts it.
                         await self.sessions.reset(_seq_key)
                         if self.cron_svc is not None:
                             self.cron_svc.clear_active_session_key(job.id, _seq_key)
@@ -6251,8 +6258,10 @@ class GatewayOrchestrator:
                 if job.execution_context is not None:
                     from kiro_crew.cron_service.identity import rebind_cron_session_template
 
+                    # Against the identity this fire binds: a project-bound job
+                    # dispatches the folder's projection, not the bare capture.
                     await asyncio.to_thread(
-                        rebind_cron_session_template, session_key, cron_execution, job.name
+                        rebind_cron_session_template, session_key, _dispatch_execution, job.name
                     )
                 # A live persistent session ignores the cwd/agent passed to
                 # get_or_create below and is reused exactly as it last was --
@@ -6315,6 +6324,9 @@ class GatewayOrchestrator:
                         )
                         _defer_cron_before_dispatch(job, "binding changed while subagents pending")
                         return None
+                    # A plain reset is enough: ``cron:`` keys are stateless, so the
+                    # next acquisition never resumes the mapped conversation and
+                    # cold-starts under the new binding.
                     await self.sessions.reset(session_key)
                     if self.cron_svc is not None:
                         self.cron_svc.clear_active_session_key(job.id, session_key)
@@ -6328,6 +6340,24 @@ class GatewayOrchestrator:
                 # a refused binding must not gain a second, unbounded identity.
                 if self.cron_svc is not None:
                     self.cron_svc.register_active_session_key(job.id, session_key)
+                # The reset above drops the live session but not the durable
+                # identity record, and the plain bind inside acquisition refuses
+                # a record that differs -- so a job whose dispatch identity moved
+                # (its checkout started declaring the template or stopped, or the
+                # folder was unbound) would fail every later fire. Replace it
+                # here, only when the record is one this job itself published.
+                from kiro_crew.cron_service.identity import rebind_own_cron_execution
+
+                if await asyncio.to_thread(
+                    rebind_own_cron_execution,
+                    session_key,
+                    cron_execution,
+                    _dispatch_execution,
+                ):
+                    logger.info(
+                        "Cron '%s': replaced its session's stale execution identity",
+                        redact_log_via_context(job.name),
+                    )
                 client, is_new, _resumed, _model_downgraded = await _acquire_with_model_fallback(
                     session_key,
                     _resolved_agent_id,
