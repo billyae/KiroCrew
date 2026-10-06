@@ -197,9 +197,15 @@ def test_restrict_on_error_warn_publishes_the_file_anyway(tmp_path, monkeypatch)
     ``sel.py`` hard-fails every ``SecurityEventLog()`` init if its HMAC key is
     missing, and ``dashboard/refresh_tokens.py`` loses refresh-token
     reuse-detection state if its store is not persisted. For those two, dropping
-    the write is the worse outcome, so the lockdown failure must not abort it.
+    the write is the worse outcome, so the lockdown failure must not abort it —
+    on EITHER platform. ``"warn"`` is a per-caller choice and this function does
+    not reverse it; the Windows-vs-POSIX difference is only in what lands on disk
+    (owner-only on POSIX, inherited ACL on Windows), pinned by the two tests
+    below. The ``monkeypatch`` of ``IS_WINDOWS`` keeps this deterministic on the
+    Linux test host.
     """
     _failing_restrict(monkeypatch)
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
 
     target = tmp_path / "hmac.key"
     aw.atomic_write(target, b"k" * 32, restrict_to_owner=True, restrict_on_error="warn")
@@ -229,6 +235,7 @@ def test_restrict_on_error_warn_still_applies_the_posix_mode(tmp_path, monkeypat
 def test_restrict_on_error_warn_does_not_log_the_payload(tmp_path, monkeypatch, caplog):
     """The warning fires on a secret write, so it must name the path, not the key."""
     _failing_restrict(monkeypatch)
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
 
     secret = b"correct-horse-battery-staple"
     target = tmp_path / "hmac.key"

@@ -208,6 +208,7 @@ def _is_access_control_xattr(attr: str) -> bool:
 #: than a file whose permissions could not be tightened.
 RestrictErrorPolicy = Literal["raise", "warn"]
 
+
 _umask_lock = threading.Lock()
 _default_mode: int | None = None
 
@@ -1051,12 +1052,15 @@ def atomic_write(
     anyway, for the callers whose own comments say the write matters more than
     the permissions: ``sel.py`` must not brick SecurityEventLog init on a
     read-only filesystem, and ``dashboard/refresh_tokens.py`` must not drop
-    refresh-token reuse-detection state. Note the asymmetry the two platforms
-    give ``"warn"``: on POSIX ``restrict_to_owner`` is ``chmod(0o600)``, which
-    the ``fchmod_safe`` below repeats, so the file still lands at ``0o600``
-    after a warn; on Windows ``fchmod_safe`` is a no-op, so a warn genuinely
-    publishes the file under its inherited ACL. That is the exposure those
-    callers accept today, stated rather than implied.
+    refresh-token reuse-detection state. On POSIX the ``fchmod_safe`` below
+    re-applies ``0o600`` after a warn, so the file still lands locked down; on
+    Windows ``fchmod_safe`` is a no-op, so the file lands under its inherited
+    ACL. ``"warn"`` means "write anyway" on both platforms — reversing that
+    per-caller choice is not this function's call. On Windows the lockdown
+    failure is surfaced by the warning this logs (naming the destination); a
+    durable, after-the-fact signal is a possible follow-up but is not written
+    here, because a no-reparse append writer that is safe against a symlink
+    planted at a fixed path is not available on Windows.
 
     *preserve_access_control_from* is an OPEN file descriptor for the file being
     replaced. When given, the source's extended attributes are read from that
@@ -1175,6 +1179,16 @@ def atomic_write(
             except OSError:
                 if restrict_on_error == "raise":
                     raise
+                # "warn" is a per-caller choice: these callers' own comments say
+                # a failed write is worse than a less-protected one (sel.py must
+                # not brick SecurityEventLog init, config/loader.py must not make
+                # config.json unwritable, refresh_tokens.py must not drop
+                # reuse-detection state). So the write still proceeds — on both
+                # platforms. On POSIX the fchmod_safe below re-applies 0o600, so
+                # the file still lands owner-only; on Windows fchmod_safe is a
+                # no-op, so the file lands under its inherited ACL and this
+                # warning is the signal that it did.
+                #
                 # Logs the DESTINATION path, never the temp name and never
                 # *content*. The temp name is an internal detail an operator
                 # cannot act on; the destination is the file whose permissions
