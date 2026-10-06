@@ -926,6 +926,13 @@ def _up(cfg: PodConfig, args: argparse.Namespace) -> None:
                     "base_url": base,
                     "token": token,
                     "ttl": args.ttl,
+                    # A pod name is a worktree basename, so two clones on one host
+                    # can each hold a same-named worktree. The handle carries the
+                    # pod's own resolved checkout so a consumer (the pod-e2e
+                    # harness) can refuse a handle that names a different checkout
+                    # than the one it reads specs/artifacts from -- the
+                    # cross-clone case the name check cannot reach.
+                    "checkout": str(checkout),
                 }
             )
         )
@@ -1361,10 +1368,25 @@ def _status(cfg: PodConfig, args: argparse.Namespace) -> None:
     port = rt.derive_port(cfg, name)
     up = rt.is_active(cfg, name)
     code = rt.health(cfg, name, port) if up else 0
+    # Resolve the pod's own checkout so the handle carries identity, matching
+    # `pod up --json`. A status read must never fail on resolution, so a pod
+    # whose checkout can no longer be resolved emits an empty string rather
+    # than dying -- the consumer treats an empty/absent checkout as "no
+    # identity to compare" and falls back to its other door checks.
+    try:
+        checkout = str(rt.resolve_checkout(cfg, name, cwd=Path.cwd()))
+    except rt.PodError:
+        checkout = ""
     if args.json:
         print(
             json.dumps(
-                {"name": name, "status": "up" if up else "down", "port": port, "health": code}
+                {
+                    "name": name,
+                    "status": "up" if up else "down",
+                    "port": port,
+                    "health": code,
+                    "checkout": checkout,
+                }
             )
         )
     else:

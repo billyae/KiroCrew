@@ -198,6 +198,20 @@ if url_port in refused_live_ports:
     raise SystemExit("base_url port %d is reserved for a production gateway" % url_port)
 if claimed != url_port:
     raise SystemExit("port %d does not match base_url port %d" % (claimed, url_port))
+# The checkout is the pod'"'"'s own clone path -- the field this issue adds so a
+# handle can be told apart from a same-named worktree in another clone. It is
+# OPTIONAL: a handle produced by an older tool, or a `pod status` that could no
+# longer resolve the checkout, emits it empty or omits it, and the harness falls
+# back to its other door checks rather than refusing. When present it must be a
+# clean non-empty string, held to the same no-control-char discipline every other
+# field is, so a malformed value is refused here rather than compared downstream.
+checkout = d.get("checkout", "")
+if checkout is None:
+    checkout = ""
+if not isinstance(checkout, str):
+    raise SystemExit("checkout must be a string")
+if checkout and has_control_or_space(checkout):
+    raise SystemExit("checkout contains whitespace or a control character")
 canonical_host = "[%s]" % host if ":" in host else host
 print(json.dumps({
     "name": name,
@@ -205,6 +219,7 @@ print(json.dumps({
     "token": token,
     "port": claimed,
     "health": d["health"],
+    "checkout": checkout,
 }, separators=(",", ":")))
 ' "$HANDLE_JSON" "$NAME" "${HANDLE_REFUSED_PORTS[@]}"); then
     echo "FATAL: unusable --handle-json: $HANDLE_JSON" >&2
@@ -290,6 +305,46 @@ if [ -z "$CHECKOUT" ] || [ ! -d "$CHECKOUT" ]; then
   echo "FATAL: could not resolve worktree checkout for '$NAME'" >&2
   echo "  Ensure a git worktree with basename '$NAME' exists, or set KIROCREW_POD_REPO / KIROCREW_POD_WORKTREES_ROOT" >&2
   exit 66
+fi
+
+# A pod name is a worktree basename, so two clones on one host can each hold a
+# same-named worktree. The handle's `name` check cannot tell them apart: it
+# passes for both. In handle mode the pod was booted ELSEWHERE and this script
+# reads its specs and writes its artifacts HERE, from $CHECKOUT -- so if the
+# handle's own checkout names a different clone than $CHECKOUT, every request
+# goes to that other clone's pod while the verdict is filed under this one. That
+# is the wrong-checkout green this issue exists to catch, and the one door check
+# the pre-flight validator above cannot make (it has no $CHECKOUT to compare).
+#
+# Fires only when the handle carries a non-empty checkout: an older tool, or a
+# `pod status` that could not resolve its checkout, emits it empty, and the gate
+# yields to the validator's other door checks rather than refusing a handle it
+# cannot identify. Both sides are canonicalized (symlinks, `..`) so two spellings
+# of one path are not read as a mismatch, mirroring resolve_checkout()'s
+# Path(...).resolve() comparison.
+if [ -n "$HANDLE_JSON" ]; then
+  HANDLE_CHECKOUT=$(printf '%s' "$CANONICAL_HANDLE_JSON" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("checkout") or "")
+except Exception:
+    print("")
+')
+  if [ -n "$HANDLE_CHECKOUT" ]; then
+    _h_real=$(cd -P -- "$HANDLE_CHECKOUT" 2>/dev/null && pwd -P || echo "$HANDLE_CHECKOUT")
+    _c_real=$(cd -P -- "$CHECKOUT" 2>/dev/null && pwd -P || echo "$CHECKOUT")
+    if [ "$_h_real" != "$_c_real" ]; then
+      echo "FATAL: handle checkout does not match this harness's checkout" >&2
+      echo "  handle:  $HANDLE_CHECKOUT" >&2
+      echo "  harness: $CHECKOUT" >&2
+      echo "  The handle describes a pod serving a DIFFERENT clone than the one this" >&2
+      echo "  harness reads specs and writes artifacts from -- a same-name worktree in" >&2
+      echo "  another clone. Running on would file a green verdict under the wrong" >&2
+      echo "  checkout. Boot the pod from this checkout, or run the harness from the" >&2
+      echo "  clone that owns the pod." >&2
+      exit 64
+    fi
+  fi
 fi
 
 # Prefer the WORKTREE'S OWN CLI for the pod verbs, now that the checkout is known.

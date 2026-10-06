@@ -792,6 +792,152 @@ def test_handle_accepts_a_name_that_matches_the_argument(tmp_path):
     assert "ACCEPTED" in res.stdout
 
 
+def test_handle_door_accepts_a_clean_checkout(tmp_path):
+    """The new identity field passes the door when it is a clean string."""
+    handle = tmp_path / "handle.json"
+    handle.write_text(
+        '{"name":"smoke","base_url":"http://127.0.0.1:7811","token":"t",'
+        '"port":7811,"health":200,"checkout":"/home/u/clone-a/wt/smoke"}',
+        encoding="utf-8",
+    )
+    res = _check_handle(tmp_path, str(handle))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
+
+
+def test_handle_door_still_accepts_a_handle_with_no_checkout(tmp_path):
+    """Back-compat: a handle from a tool that predates the field is not refused.
+
+    Older `pod up`/`pod status --json`, and a `pod status` that could not resolve
+    its checkout, carry no checkout; the door must keep accepting them.
+    """
+    handle = tmp_path / "handle.json"
+    handle.write_text(
+        '{"name":"smoke","base_url":"http://127.0.0.1:7811",'
+        '"token":"t","port":7811,"health":200}',
+        encoding="utf-8",
+    )
+    res = _check_handle(tmp_path, str(handle))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
+
+
+def test_handle_door_refuses_a_non_string_checkout(tmp_path):
+    handle = tmp_path / "handle.json"
+    handle.write_text(
+        json.dumps(
+            {
+                "name": "smoke",
+                "base_url": "http://127.0.0.1:7811",
+                "token": "t",
+                "port": 7811,
+                "health": 200,
+                "checkout": 42,
+            }
+        ),
+        encoding="utf-8",
+    )
+    res = _check_handle(tmp_path, str(handle))
+    assert res.returncode == 64, res.stdout + res.stderr
+    assert "checkout must be a string" in res.stderr
+    assert "ACCEPTED" not in res.stdout
+
+
+def test_handle_door_refuses_a_checkout_with_a_control_character(tmp_path):
+    handle = tmp_path / "handle.json"
+    handle.write_text(
+        json.dumps(
+            {
+                "name": "smoke",
+                "base_url": "http://127.0.0.1:7811",
+                "token": "t",
+                "port": 7811,
+                "health": 200,
+                "checkout": "/home/u/wt/\tsmoke",
+            }
+        ),
+        encoding="utf-8",
+    )
+    res = _check_handle(tmp_path, str(handle))
+    assert res.returncode == 64, res.stdout + res.stderr
+    assert "checkout contains whitespace or a control character" in res.stderr
+    assert "ACCEPTED" not in res.stdout
+
+
+# --------------------------------------------------------------------------- #
+# The cross-clone gate: a handle whose checkout differs from the harness's own
+# resolved CHECKOUT must be REFUSED (the wrong-checkout green the name check
+# cannot reach); a matching one, and an identity-less handle, are accepted.
+# --------------------------------------------------------------------------- #
+CHECKOUT_GATE = _fragment('if [ -n "$HANDLE_JSON" ]; then\n  HANDLE_CHECKOUT=', "    fi\n  fi\nfi")
+
+
+def _run_checkout_gate(
+    tmp_path: Path, handle_checkout, harness_checkout: Path
+) -> subprocess.CompletedProcess:
+    """Run the real cross-clone gate with a canonical handle and a resolved CHECKOUT.
+
+    *handle_checkout* is the checkout string the (already door-validated) handle
+    carries; pass None to omit it, mirroring an identity-less handle. The gate
+    reads it out of CANONICAL_HANDLE_JSON exactly as the shipped flow does.
+    """
+    canonical = {
+        "name": "smoke",
+        "base_url": "http://127.0.0.1:7811",
+        "token": "t",
+        "port": 7811,
+        "health": 200,
+        "checkout": "" if handle_checkout is None else handle_checkout,
+    }
+    preamble = [
+        "set -uo pipefail",
+        'HANDLE_JSON="/some/handle.json"',
+        f"CANONICAL_HANDLE_JSON={shlex.quote(json.dumps(canonical))}",
+        f"CHECKOUT={shlex.quote(str(harness_checkout))}",
+    ]
+    snippet = "\n".join([*preamble, CHECKOUT_GATE, 'echo "ACCEPTED"'])
+    return _run(snippet, str(tmp_path))
+
+
+def test_cross_clone_gate_refuses_a_mismatched_checkout(tmp_path):
+    """The core guarantee: a handle naming another clone is refused."""
+    harness = tmp_path / "clone-a" / "wt" / "smoke"
+    harness.mkdir(parents=True)
+    other = tmp_path / "clone-b" / "wt" / "smoke"
+    other.mkdir(parents=True)
+    res = _run_checkout_gate(tmp_path, str(other), harness)
+    assert res.returncode == 64, res.stdout + res.stderr
+    assert "handle checkout does not match this harness's checkout" in res.stderr
+    assert "ACCEPTED" not in res.stdout
+
+
+def test_cross_clone_gate_accepts_a_matching_checkout(tmp_path):
+    harness = tmp_path / "clone-a" / "wt" / "smoke"
+    harness.mkdir(parents=True)
+    res = _run_checkout_gate(tmp_path, str(harness), harness)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
+
+
+def test_cross_clone_gate_accepts_two_spellings_of_one_path(tmp_path):
+    """Canonicalization: `.`/`..` noise in one spelling is not a mismatch."""
+    harness = tmp_path / "clone-a" / "wt" / "smoke"
+    harness.mkdir(parents=True)
+    noisy = tmp_path / "clone-a" / "wt" / "." / "smoke" / ".." / "smoke"
+    res = _run_checkout_gate(tmp_path, str(noisy), harness)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
+
+
+def test_cross_clone_gate_yields_when_the_handle_has_no_checkout(tmp_path):
+    """An identity-less handle falls through to the other door checks, not refused."""
+    harness = tmp_path / "clone-a" / "wt" / "smoke"
+    harness.mkdir(parents=True)
+    res = _run_checkout_gate(tmp_path, None, harness)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
+
+
 def test_handle_refuses_a_missing_health_at_the_door(tmp_path):
     handle = tmp_path / "handle.json"
     handle.write_text(

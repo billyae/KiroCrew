@@ -1238,6 +1238,78 @@ class TestWorktreeResolution:
         assert rt.resolve_checkout(c, "demo", cwd=tmp_path) == tmp_path / "real"
 
 
+POD_CLI = Path(__file__).resolve().parent.parent / "src/kiro_crew/pod/cli.py"
+
+
+class TestStatusJsonCarriesCheckout:
+    """`pod status --json` must carry the pod's own checkout, so a handle it
+    produces can be told apart from a same-named worktree in another clone
+    (issue #10833). The field is best-effort: an unresolvable checkout emits an
+    empty string rather than failing the status read."""
+
+    def _cfg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PodConfig:
+        monkeypatch.setenv("KIROCREW_POD_ENV_DIR", str(tmp_path / "env"))
+        c = PodConfig.load()
+        # `_status` gates on the user bus on Linux; neutralize it and the probes
+        # so the test exercises only the emit shape.
+        monkeypatch.setattr(rt, "require_backend", lambda: None)
+        monkeypatch.setattr(rt, "derive_port", lambda cfg, n: 7811)
+        monkeypatch.setattr(rt, "is_active", lambda cfg, n: True)
+        monkeypatch.setattr(rt, "health", lambda cfg, name, port, timeout=3: 200)
+        return c
+
+    def test_status_json_includes_the_resolved_checkout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        c = self._cfg(tmp_path, monkeypatch)
+        co = tmp_path / "clone-a" / "wt" / "demo"
+        co.mkdir(parents=True)
+        rt.pin_checkout(c, "demo", co)
+        pod_cli._status(c, argparse.Namespace(name="demo", json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["checkout"] == str(co)
+        assert payload["name"] == "demo"
+        assert payload["status"] == "up"
+
+    def test_status_json_emits_empty_checkout_when_unresolvable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A status read must not die because the checkout can no longer be
+        resolved; it emits an empty string and the consumer falls back."""
+        c = self._cfg(tmp_path, monkeypatch)
+
+        def _boom(cfg, name, *, cwd=None, use_pin=True):
+            raise rt.PodError("no checkout")
+
+        monkeypatch.setattr(rt, "resolve_checkout", _boom)
+        pod_cli._status(c, argparse.Namespace(name="demo", json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["checkout"] == ""
+
+    def test_both_json_producers_emit_a_checkout_key(self) -> None:
+        """Static guard: `_up` and `_status` both put `checkout` in their json
+        dict, so the harness's identity check always has a field to read."""
+        tree = ast.parse(POD_CLI.read_text(encoding="utf-8"))
+
+        def _keys(node: ast.Dict) -> set[object]:
+            return {key.value for key in node.keys if isinstance(key, ast.Constant)}
+
+        for fn_name in ("_up", "_status"):
+            fn = next(
+                node
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == fn_name
+            )
+            emits_checkout = any(
+                isinstance(node, ast.Dict)
+                and "checkout" in _keys(node)
+                and _keys(node) & {"base_url", "status"}
+                for node in ast.walk(fn)
+            )
+            assert emits_checkout, f"{fn_name} json dict is missing a checkout key"
+
+
 def _uncommented(unit_text: str) -> str:
     """The unit's directive lines only — comments explain the absent hook by name,
     so a substring scan over the whole file cannot tell prose from configuration."""

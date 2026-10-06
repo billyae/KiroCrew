@@ -599,10 +599,16 @@ def pod_up(name: str, args: dict[str, Any]) -> str:
     _pu_port = _pu_resp.get("port")
     _pu_base = _pu_resp.get("base_url") or (f"http://127.0.0.1:{_pu_port}" if _pu_port else "")
     _pu_token = _pu_resp.get("token") or ""
+    _pu_checkout = _pu_resp.get("checkout") or ""
     _pu_lines = [
         f"Pod `{_pu_worktree}` is up on port {_pu_port}.",
         f"base_url: {_pu_base}",
     ]
+    if _pu_checkout:
+        # The pod's own checkout path identifies WHICH clone this pod serves, so a
+        # consumer holding a same-named worktree in another clone can refuse a
+        # mismatch -- a worktree basename alone cannot tell two clones apart.
+        _pu_lines.append(f"checkout: {_pu_checkout}")
     if _pu_token:
         _pu_lines.append(f"token: {_pu_token}  (ttl {_pu_resp.get('ttl') or '2h'})")
         _pu_lines.append(f"open: {_pu_base}/?token={_pu_token}")
@@ -638,11 +644,15 @@ def pod_status(name: str, args: dict[str, Any]) -> str:
     _ps_err = _pod_failure(_ps_resp, f"pod status {_ps_worktree!r}")
     if _ps_err:
         return _ps_err
-    return redact(
+    _ps_checkout = _ps_resp.get("checkout") or ""
+    _ps_text = (
         f"Pod `{_ps_resp.get('name') or _ps_worktree}`: "
         f"{_ps_resp.get('status') or 'unknown'} "
         f"port={_ps_resp.get('port')} health={_ps_resp.get('health')}"
     )
+    if _ps_checkout:
+        _ps_text += f" checkout={_ps_checkout}"
+    return redact(_ps_text)
 
 
 def pod_ls(name: str, args: dict[str, Any]) -> str:
