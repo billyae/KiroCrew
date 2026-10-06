@@ -6,6 +6,7 @@ const path = require("path");
 const { createTokenRetryHandler, dashboardRetryPath } = require("./token-retry");
 const { createRendererRecovery, withSafeReload, hasSafeReload } = require("./renderer-recovery");
 const { createHangRecovery } = require("./hang-recovery");
+const { createStaleShellWatchdog } = require("./stale-shell-watchdog");
 const { armSplashHistoryClear, fileShellPageBasename } = require("./splash-history");
 const { hideToTray, cancelPendingTrayHide, shouldKeepAppHidden } = require("./hide-to-tray");
 const { attachHtmlFullScreen } = require("./html-fullscreen");
@@ -144,6 +145,7 @@ function createWindowLifecycle(options) {
     systemPreferences,
     screen,
     contentTracing,
+    ipcMain,
   } = electron;
 
   const IS_MAC = platform === "darwin";
@@ -797,6 +799,75 @@ function createWindowLifecycle(options) {
     });
     mainWindow.webContents.on("unresponsive", () => hangRecovery.handleUnresponsive());
     mainWindow.webContents.on("responsive", () => hangRecovery.handleResponsive());
+
+    // Blank-dashboard self-heal. A window whose dashboard document loaded but
+    // whose entry bundle never evaluated (a stale HTTP-cache capsule, seen on
+    // Windows) paints white and no renderer code of ours runs — so a bundle-side
+    // fix can never reach it. The main process can: it sees `did-finish-load`
+    // regardless, waits for the SPA's `dashboard:booted` ping, and if that never
+    // arrives forces `reloadIgnoringCache()` — the literal Ctrl+Shift+R, which
+    // bypasses the HTTP cache so the reload re-fetches a fresh shell. Bounded
+    // like the renderer recovery so a build that can never boot does not loop.
+    const staleShellWatchdog = createStaleShellWatchdog({
+      backendUrl,
+      isQuitting,
+      log: glog,
+      reloadIgnoringCache: () => {
+        if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+        mainWindow.webContents.reloadIgnoringCache();
+      },
+      // Before reloading, ask the window whether it actually rendered. The SPA
+      // mounts into `#root`; a healthy window — even one that never sent the
+      // boot ping because it is an older gateway's pre-ping build — has
+      // children there, and must not be reloaded (that would discard the user's
+      // unsaved input). A genuinely blank shell has an empty root. Return null
+      // on any uncertainty (destroyed, exec error) so the watchdog falls back
+      // to reloading rather than silently skipping a real recovery.
+      probeRendered: async () => {
+        if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return null;
+        try {
+          return await mainWindow.webContents.executeJavaScript(
+            "(() => { try { var r = document.getElementById('root'); " +
+              "return !!(r && r.childElementCount > 0); } catch { return null; } })()",
+            true,
+          );
+        } catch {
+          return null;
+        }
+      },
+    });
+    // A fresh top-level navigation (main frame only) resets any prior boot
+    // acknowledgement, so a reload that then never boots still arms. In-page
+    // and sub-frame navigations (`isMainFrame` false, or `isSameDocument`) must
+    // not reset it.
+    mainWindow.webContents.on("did-start-navigation", (details) => {
+      if (details && details.isMainFrame && !details.isSameDocument) {
+        staleShellWatchdog.noteNavigationStarted();
+      }
+    });
+    // Only the dashboard's own `did-finish-load` arms the watch; the splash and
+    // the remote-crew panes (iframes of this webContents, other origins) are
+    // filtered out inside the watchdog by origin. A warm boot whose
+    // `dashboard:booted` ping already arrived suppresses the arm (see watchdog).
+    mainWindow.webContents.on("did-finish-load", () => {
+      try {
+        staleShellWatchdog.noteDocumentLoaded(mainWindow.webContents.getURL());
+      } catch {
+        // A destroyed webContents has no URL; the watch simply does not arm.
+      }
+    });
+    // The SPA's one-shot boot ping cancels the watch. Scoped to THIS window's
+    // own webContents: the same preload serves every window (panes, connection
+    // windows), and only the frame we armed the watch for may disarm it.
+    const onDashboardBooted = (event) => {
+      if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      if (event.sender === mainWindow.webContents) staleShellWatchdog.noteBooted();
+    };
+    ipcMain.on("dashboard:booted", onDashboardBooted);
+    mainWindow.webContents.once("destroyed", () => {
+      ipcMain.removeListener("dashboard:booted", onDashboardBooted);
+      staleShellWatchdog.reset();
+    });
 
     mainWindow.webContents.on("render-process-gone", (_event, details) => {
       // Flush the trajectory before the terminal event so the log stays causal.
