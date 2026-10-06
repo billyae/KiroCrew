@@ -412,7 +412,7 @@
         "staygreen": "STAYGREEN"
       },
       "manifest": {
-        "description": "Mede um repositório do GitHub antes de alterá-lo. Projeta uma métrica de desempenho calibrada (a régua), prova que a métrica é confiável diante de um ganho conhecido e então executa ciclos de manter ou reverter: cada correção candidata é escrita em um worktree isolado, filtrada por uma lista de permissões de edição e pelos testes do próprio repositório, e mantida apenas quando o ganho medido supera a faixa de ruído. As sobreviventes são redigidas como pull requests do GitHub em rascunho, que você revisa e publica.",
+        "description": "Mede um repositório do GitHub antes de alterá-lo. Projeta uma métrica de desempenho calibrada (a régua), prova que a métrica é confiável diante de um ganho conhecido e então executa ciclos de manter ou reverter: cada correção candidata é escrita em um worktree isolado, filtrada por uma lista de permissões de edição e pelos testes do próprio repositório, e mantida apenas quando o ganho medido supera a faixa de ruído. Por padrão, as sobreviventes são redigidas como pull requests do GitHub em rascunho, que você revisa e publica.",
         "display_name": "Auto-Improvement",
         "highlight_1": "Prova primeiro a própria métrica — uma execução se recusa a começar com uma régua não confiável",
         "highlight_2": "Cada candidato é medido em A/B, ou RED/GREEN para correções de bugs, nunca apenas “parece certo”",
@@ -785,12 +785,12 @@
     },
     "channels": {
       "manifest": {
-        "description": "Uma sala compartilhada onde vários agentes atacam um problema juntos, em vez de um agente trabalhar sozinho. Você atribui uma função a cada agente, e eles publicam o progresso no canal e respondem às @menções uns dos outros à vista de todos — não existe mensagem privada entre agentes, então toda a conversa continua legível, e você segue sendo quem aprova qualquer coisa que altere o estado. Os agentes permanecem ativos no canal até serem dispensados ou expirarem.",
+        "description": "Uma sala compartilhada onde vários agentes atacam um problema juntos, em vez de um agente trabalhar sozinho. Você atribui uma função a cada agente, e eles publicam o progresso no canal e respondem às @menções uns dos outros à vista de todos — não existe mensagem privada entre agentes, então toda a conversa continua legível, e você segue sendo quem aprova qualquer coisa que altere o estado. Os agentes permanecem ativos no canal até serem dispensados, o canal ser fechado ou o agente falhar.",
         "display_name": "Canais",
         "highlight_1": "Vários agentes com funções atribuídas colaboram em um único registro compartilhado e legível",
         "highlight_2": "Sem mensagens privadas entre agentes — toda troca acontece no canal",
         "highlight_3": "Você continua sendo o aprovador final de qualquer operação que altere o estado",
-        "highlight_4": "Os agentes permanecem no canal até serem dispensados ou expirarem",
+        "highlight_4": "Os agentes permanecem no canal até serem dispensados, o canal ser fechado ou o agente falhar",
         "highlight_5": "Oculto na grade da App Store; ative com `kirocrew app enable channels`",
         "page_label": "Canais",
         "use_case_1": "Conduza resposta a incidentes, pesquisa ou revisão de código com vários papéis de agente nomeados em uma transcrição compartilhada e auditável.",
@@ -1224,10 +1224,10 @@
         }
       },
       "manifest": {
-        "description": "Faz uma revisão profunda de pull requests do GitHub e diz quais alterações realmente merecem a sua atenção. Cada arquivo alterado é revisado em uma sessão de agente isolada, ponderado pelo raio de impacto que carrega, e tudo é consolidado em um Focus Report priorizado. As descobertas ficam preparadas como uma revisão rascunho no GitHub, que não é publicada até você enviá-la, e o revisor continua aprendendo os padrões reais do seu repositório a partir de correções já entregues e de comentários de revisões anteriores.",
+        "description": "Faz uma revisão profunda de pull requests do GitHub e diz quais alterações realmente merecem a sua atenção. Cada pull request é revisado em uma sessão de agente isolada que cobre todos os arquivos alterados, ponderados pelo raio de impacto que carrega, e tudo é consolidado em um Focus Report priorizado. As descobertas são lidas no app e só são preparadas como uma revisão rascunho no GitHub quando você as publica ou ativa a publicação automática, e o revisor continua aprendendo os padrões reais do seu repositório a partir de correções já entregues e de comentários de revisões anteriores.",
         "display_name": "Code Review Sage",
         "highlight_1": "O Focus Report classifica as alterações por raio de impacto, para os arquivos arriscados serem lidos primeiro",
-        "highlight_2": "Uma sessão de agente isolada por alteração, para que as descobertas nunca vazem entre arquivos",
+        "highlight_2": "Uma sessão de agente isolada por pull request, para que as descobertas nunca vazem entre revisões",
         "highlight_3": "As revisões são lidas no app — nada é publicado no seu pull request a menos que você peça",
         "highlight_4": "Aprende por repositório com correções entregues, comentários de revisão e discussões de design",
         "highlight_5": "Revisa pull requests do GitHub; precisa de uma CLI `gh` autenticada no host do gateway",
@@ -1795,7 +1795,7 @@
         "highlight_4": "'Limpar mescladas' se recusa a excluir uma worktree com trabalho não commitado ou não rastreado, em vez de descartá-lo",
         "highlight_5": "Acompanhe os logs do pod e emita tokens de acesso ao pod pela interface",
         "highlight_6": "Feito para quem desenvolve o próprio Kiro Crew — não é necessário no uso diário",
-        "highlight_7": "Os pods rodam em Linux (systemd --user) e macOS (launchd) — mas o pod do macOS não tem limite de memória/CPU aplicado; Make Live continua só no Linux; a visão da frota, o status de PR, a sincronização, o rebase e a limpeza funcionam em qualquer plataforma",
+        "highlight_7": "Os pods rodam em Linux (systemd --user) e macOS (launchd) — mas o pod do macOS não tem limite de memória/CPU aplicado; Make Live prepara o ponteiro em todas as plataformas, e o reinício automático exige uma unidade systemd --user ou um LaunchAgent do macOS; a visão da frota, o status de PR, a sincronização, o rebase e a limpeza funcionam em qualquer plataforma",
         "page_label": "Dev Fleet",
         "use_case_1": "Opere worktrees de recursos do Kiro Crew e pods isolados de pré-visualização sem alterar o gateway ativo.",
         "configuration_1": "Aponte o app para um checkout do Kiro Crew; ações de PR precisam do gh autenticado, enquanto pods precisam de systemd --user no Linux ou launchd no macOS e devem ser provisionados primeiro."
@@ -1966,14 +1966,14 @@
         "truncated": "· truncado"
       },
       "manifest": {
-        "description": "Navegue e leia arquivos na máquina que executa o Kiro Crew sem sair do painel. Mantenha vários arquivos abertos em abas, percorra a árvore de diretórios com o status git de cada arquivo ao lado, pesquise um texto em uma pasta inteira e leia markdown renderizado em vez de bruto. É somente leitura por princípio: abre e pesquisa arquivos, mas nunca os edita, move ou exclui, e só alcança o seu diretório pessoal, além de /tmp e /opt.",
+        "description": "Navegue e leia arquivos na máquina que executa o Kiro Crew sem sair do painel. Mantenha vários arquivos abertos em abas, percorra a árvore de diretórios com o status git de cada arquivo ao lado, pesquise um texto em uma pasta inteira e leia markdown renderizado em vez de bruto. É somente leitura por princípio: abre e pesquisa arquivos, mas nunca os edita, move ou exclui, e só alcança o seu diretório pessoal, o diretório temporário do sistema e, no Linux e no macOS, as árvores /home e /opt.",
         "display_name": "Arquivos",
         "highlight_1": "Somente leitura: abre e pesquisa arquivos e nunca os grava, move ou exclui",
         "highlight_2": "Vários arquivos abertos ao mesmo tempo em abas, com realce de sintaxe",
         "highlight_3": "Arquivos Markdown são exibidos como texto formatado, em vez do código bruto",
         "highlight_4": "A árvore de diretórios mostra o status git de cada arquivo na própria linha",
         "highlight_5": "Pesquise em um diretório inteiro, com correspondências por linha e uma prévia do entorno",
-        "highlight_6": "Os caminhos acessíveis se limitam ao seu diretório pessoal, /tmp e /opt — links simbólicos para fora são recusados",
+        "highlight_6": "Os caminhos acessíveis se limitam ao seu diretório pessoal, ao diretório temporário do sistema e, no Linux e no macOS, a /home e /opt — links simbólicos para fora são recusados",
         "page_label": "Arquivos",
         "use_case_1": "Leia, pesquise, visualize, baixe ou discuta arquivos no host do gateway sem conceder acesso de gravação à página.",
         "configuration_1": "Ative o app e abra um diretório permitido pela barra de caminho; nenhuma conta é necessária, e Git ou ripgrep apenas acrescentam recursos opcionais de status e pesquisa."
@@ -4068,7 +4068,7 @@
         "highlight_1": "Assume um alarme em disparo em um único heartbeat e investiga antes de alguém precisar olhar",
         "highlight_2": "Registro de conhecimento com níveis de confiança e credibilidade — uma falha repetida se resolve a partir do que você já sabe",
         "highlight_3": "Quadro ao vivo no painel e em threads do Slack que aceitam resposta, para que o canal seja o painel",
-        "highlight_4": "Conecta AWS CloudWatch, PagerDuty, Datadog, GitHub Issues ou qualquer sistema capaz de fazer POST de JSON assinado — incluindo corpos no formato do Alertmanager, desdobrados em um incidente por alerta",
+        "highlight_4": "Conecta AWS CloudWatch, PagerDuty, Datadog, incident.io, GitHub Issues ou qualquer sistema capaz de fazer POST de JSON assinado — incluindo corpos no formato do Alertmanager, desdobrados em um incidente por alerta",
         "highlight_5": "Somente leitura por padrão — as ações de escrita precisam da sua liberação para cada padrão de sinal, e todas elas são auditadas",
         "highlight_6": "Segue a escala de plantão: o nível de automação se arma e se desarma sozinho",
         "page_label": "Mission Control",
@@ -5005,13 +5005,13 @@
     },
     "workflows": {
       "manifest": {
-        "description": "Crie, execute e acompanhe workflows dinâmicos: scripts em Python, normalmente escritos para você por um agente a partir de um objetivo em linguagem simples, que conduzem vários agentes do Kiro Crew por fases ordenadas. O script é verificado contra um conjunto restrito de comandos de workflow antes de qualquer execução, então os erros aparecem sem nada rodar, e a página então transmite cada fase e cada evento de agente conforme a execução avança. O app já vem com exemplos executáveis para você partir deles.",
+        "description": "Crie, execute e acompanhe workflows dinâmicos: scripts em Python, normalmente escritos para você por um agente a partir de um objetivo em linguagem simples, que conduzem vários agentes do Kiro Crew por fases ordenadas. O script é verificado contra um conjunto restrito de comandos de workflow antes de qualquer execução, então os erros aparecem sem nada rodar, e a página então transmite cada fase e cada evento de agente conforme a execução avança. Em um checkout do código-fonte há exemplos executáveis para você partir deles; instalações empacotadas não incluem nenhum.",
         "display_name": "Workflows",
         "highlight_1": "Valide um workflow antes de executá-lo — os erros aparecem sem nada ser executado",
         "highlight_2": "Acompanhe a execução ao vivo, fase por fase, com eventos de progresso por agente",
         "highlight_3": "Os scripts se limitam a uma API de workflow em sandbox, em vez de Python arbitrário",
         "highlight_4": "Normalmente escritos para você a partir de um objetivo em linguagem simples e depois editáveis à mão",
-        "highlight_5": "Já vem com exemplos executáveis para você partir deles",
+        "highlight_5": "Exemplos executáveis para partir deles em um checkout do código-fonte",
         "page_label": "Workflows",
         "use_case_1": "Valide e inspecione scripts restritos de workflow ou monitore fase a fase as principais execuções de workflows multiagente.",
         "configuration_1": "Ative o app oculto com kirocrew app enable workflows; valide Python DSL em Author ou use as ferramentas de workflow do chat ou MCP para uma orquestração real de agentes e monitore-a em Runs."
