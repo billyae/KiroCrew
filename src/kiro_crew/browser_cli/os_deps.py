@@ -156,8 +156,32 @@ _UNLISTED_ENGINE_HINT = (
     "download."
 )
 
+#: What an rpm-family operator is told for an engine in
+#: :data:`_RPM_UNSUPPORTED_ENGINES`: the engine cannot run on this host, and no
+#: command composed here or by the operator changes that. It names the engine
+#: that failed and the one this host does support, and like every hint it is the
+#: LAST line of the failure detail -- the position that survives truncation.
+_UNSUPPORTED_ENGINE_HINT = (
+    "{title} is not supported on this operating system: Kiro Crew has no way to "
+    "install the OS libraries it needs on this Linux distribution. Chromium is "
+    "the supported browser engine on this host."
+)
+
 #: Engines whose rpm package set is :data:`_RPM_CHROMIUM_PACKAGES`.
 _RPM_LISTED_ENGINES = frozenset({"chromium"})
+
+#: Engines whose libraries the rpm family cannot provide at all, so a failed
+#: download is reported as unsupported rather than as libraries to install.
+#:
+#: MEASURED on Amazon Linux 2023: ``install-browser webkit`` exits 0 and names
+#: 27 missing libraries (``libgtk-4.so.1``, ``libflite*``, ``libmanette-0.2``,
+#: ``libhyphen``, ``libavif``, ``libx264``, ICU 74 sonames where the host ships
+#: ICU 67), most with no package in the distribution's repositories, and
+#: Playwright's own dependency installer is apt-only. ``install-browser firefox``
+#: on the same host passes host validation, so Firefox is NOT here: it stays an
+#: unlisted engine whose libraries, when one is missing, the operator can
+#: install by name.
+_RPM_UNSUPPORTED_ENGINES = frozenset({"webkit"})
 
 #: Display names for the hint text. The engine argument is already allowlisted
 #: by the caller; an unlisted value falls back to itself.
@@ -302,13 +326,19 @@ def missing_deps_hint(engine: str = "chromium") -> str:
 
     An rpm-family host downloading an engine with no verified package list gets
     an engine-named manual instruction instead of a command
-    (:data:`_UNLISTED_ENGINE_HINT`). An unrecognized host still gets nothing.
+    (:data:`_UNLISTED_ENGINE_HINT`) -- unless the engine is one the family cannot
+    serve at all (:data:`_RPM_UNSUPPORTED_ENGINES`), where the instruction could
+    not be followed and the hint is the verdict that the engine is unsupported
+    on this operating system (:data:`_UNSUPPORTED_ENGINE_HINT`). An unrecognized
+    host still gets nothing.
     """
     title = _ENGINE_TITLES.get(engine, engine)
     command = manual_deps_command(engine)
     if command is not None:
         return _MISSING_DEPS_HINT.format(title=title, command=command)
     if linux_family() == FAMILY_RPM and engine not in _RPM_LISTED_ENGINES:
+        if engine in _RPM_UNSUPPORTED_ENGINES:
+            return _UNSUPPORTED_ENGINE_HINT.format(title=title)
         return _UNLISTED_ENGINE_HINT.format(title=title)
     return ""
 
