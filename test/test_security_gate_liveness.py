@@ -189,7 +189,16 @@ def _url_payload_command(n: int) -> str:
 #: safe to withhold, and window classification with whole-run context that exempts
 #: only windows sharing ≥ 24 bytes with that id while every other positive window
 #: redacts each piece it touches. One mechanism, no new pass.
-_PACKAGE_LINE_BUDGET = 28_551
+#: Re-pinned again for ``redaction._ROUTED_COMMIT_RE``: a key-shaped window cut
+#: out of a longer run is declined when twelve of its characters are digits of a
+#: commit right after a code-host route (``blob/``, ``tree/`` and the rest), because
+#: the window of a commit permalink that straddles the repository name and the
+#: commit clears every gate. One regex and one threshold with their measured reason,
+#: a helper that reads only the first commit starting after a window and declines a
+#: window crossing that commit's opening ``/`` with twelve of its digits, one clause
+#: beside the separator ceiling, and the docstring naming them. No pass widened and
+#: no existing threshold moved.
+_PACKAGE_LINE_BUDGET = 28_600
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
