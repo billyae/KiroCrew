@@ -481,6 +481,9 @@ async def test_jsonl_union_rows_name_their_tier_and_the_delete_honours_it(tmp_pa
     request.app = {"state": state}
     request.headers = {"X-Session-Key": "dashboard:ui"}
     request.query = {}
+    # The operator's own Memory tab is a BROWSER caller: no X-Internal-Secret,
+    # so not internal-auth. The all-workspaces union is for that surface.
+    request.get = {}.get
     with (
         patch.object(cron, "_blocks_reads_session", return_value=False),
         patch.object(cron, "resolve_lesson_memory_store", new=AsyncMock(return_value=(None, None))),
