@@ -2015,15 +2015,16 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                   <ChannelBrandIcon channel={link.channel} size={10} />
                 </span>
               ))}
-              {/* Runs-elsewhere marker, first in the strip for the same reason it
-               *  is first on a federated search row: it qualifies the whole row,
-               *  so a user scanning the list should meet it before the per-session
-               *  flags that only make sense once you know where the session is. */}
+              {/* Ran-elsewhere marker on a read-only crew archive, first in the
+               *  strip for the same reason it is first on a federated search row:
+               *  it qualifies the whole row, so a user scanning the list should
+               *  meet it before the per-session flags. Past tense: the chat no
+               *  longer runs there, and its tooltip says where to keep going. */}
               {s.executor === 'remote' && !inCrewGroup && (
                 <RemoteCrewChip
                   name={remoteCrewName}
-                  label={i18nT('pages.chatSidebar.on_instance', { name: remoteCrewName })}
-                  title={i18nT('pages.chatSidebar.runs_on_crew', { name: remoteCrewName })}
+                  label={i18nT('pages.chatSidebar.ran_on_instance', { name: remoteCrewName })}
+                  title={i18nT('pages.chat.relayArchive.notice', { name: remoteCrewName })}
                 />
               )}
               {s.memory_mode === 'incognito' && <span className="text-muted" title={i18nT('pages.chatSidebar.incognito_no_memory_writes')}><EyeOff size={10} /></span>}
@@ -2742,10 +2743,10 @@ function ChatSidebar({
   const clearSearch = useCallback(() => setSlotFilter(''), [])
   const clearFolderHide = useCallback((folderId: string | undefined) => unhideFolderChain(folderId, folders),
     [unhideFolderChain, folders])
-  // Per-machine groups (preview): a row a crew owns, or a local slot whose turns
-  // run on it, leaves the Local lanes and renders under that crew's group, in the
-  // same filtered order. The board keeps every row in its columns, so it groups
-  // nothing.
+  // Per-machine groups (preview): a row a crew owns leaves the Local lanes and
+  // renders under that crew's group, in the same filtered order. A local chat
+  // that once ran on a crew is a read-only archive and stays under Local. The
+  // board keeps every row in its columns, so it groups nothing.
   const shownCrewGroups = orderedColumns.length > 0 ? NO_CREW_GROUPS : crewGroups
   // The row model (./chat-sidebar/rows): which rows pass the filters, the one lane
   // order, the lanes' and folders' populations, the reveal registry and the chip

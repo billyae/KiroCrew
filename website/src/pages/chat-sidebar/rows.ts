@@ -90,8 +90,8 @@ export interface SidebarRowInputs {
   filters: SidebarRowFilters
   clears: SidebarRowClears
   /** The per-machine crew groups the list shows, in order (none on the board, which
-   *  groups nothing). A filtered row whose crew (`crewOf`: the peer that owns it, or
-   *  the crew a local slot's turns run on) has a group here leaves the `Local` lanes
+   *  groups nothing). A filtered row whose crew (`crewOf`: the peer that owns it; a
+   *  local chat that once ran on a crew is an archive and has none) has a group here leaves the `Local` lanes
    *  and renders under that group instead. */
   crewGroups: readonly { id: string }[]
   sortKey: SortKey

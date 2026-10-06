@@ -76,7 +76,8 @@ import { buildOutgoingTurn, isEmptyTurn } from '../chat-core/composer/outgoingTu
 import { storeSentPastes, useComposerPastes } from '../chat-core/composer/composerPastes'
 import FlyingQuote from './FlyingQuote'
 import { revealComposer } from '../pages/chat/composerFocus'
-import { triggerRefresh, updateSlot } from '../store/dashboardSlice'
+import { triggerRefresh, updateSlot, slotIsRemoteBound } from '../store/dashboardSlice'
+import { RelayArchiveNotice } from '../pages/chat/RelayArchiveNotice'
 import { inFlightSlotSwitchOutcome, performSlotSwitch, stagedSlotSwitchTarget } from '../lib/slotSwitch'
 import { drainPendingChunks } from '../lib/pendingChunkDrain'
 import { performAgentSlotSwitch } from '../lib/agentSwitch'
@@ -440,6 +441,12 @@ export default function ChatPane({
   const loadOlderPane = useCallback(() => {
     void dispatch(loadOlderSlotMessages(slotKey))
   }, [dispatch, slotKey])
+  // A chat that ran on a crew is a read-only archive here exactly as on the
+  // chat page: same predicate, and every send path below refuses it. Read
+  // through a ref so the send callbacks see it without re-memoizing.
+  const paneArchived = slotIsRemoteBound(paneSlot)
+  const paneArchivedRef = useRef(paneArchived)
+  paneArchivedRef.current = paneArchived
   // The composer is a `Composer` root around the ChatInput preset (chat-core
   // P3-b). Its Voice atom is what gives the pane a microphone: the pane wires no
   // voice props, only the two things the atom cannot know — the endpointer's
@@ -1045,6 +1052,7 @@ export default function ChatPane({
   }, [dispatch, slotKey])
 
   const doSend = useCallback((optionText?: string, steerNow?: boolean) => {
+    if (paneArchivedRef.current) return
     // `optionText` mirrors ChatPage.send's first parameter: the follow-up
     // bar's direct-send gesture (double-click / split button) hands the option
     // label here so it bypasses the setInput race, superseding any composer
@@ -1245,6 +1253,7 @@ export default function ChatPane({
   // steer sends them — inlined by prepareSendPayload (images as markdown, other
   // files as `[attached_file N]` tokens), the same wire shape doSend now uses.
   const doSteer = useCallback((opts?: { auto?: boolean }) => {
+    if (paneArchivedRef.current) return
     // Nothing to inject into: busy purely because background sub-agents are
     // still running (the parent turn already ended). Same intent — act on
     // this now — so start a real turn through the normal send path with the
@@ -1834,6 +1843,7 @@ export default function ChatPane({
              landed, and handing it back would invite a second answer to a
              question already gone. */
           onFallbackSend={(text) => {
+            if (paneArchivedRef.current) return
             const fail = (reason?: string, status?: SendReceiptStatus) => { reportSendFailure(reason, status); restoreIntoComposer(text, [], [], slotKey) }
             void sendTurn({ message: text, slot: slotKey }).then((receipt) => {
               if (receipt.status === 'refused' || receipt.status === 'transport-error' || receipt.status === 'response-late') {
@@ -1870,6 +1880,7 @@ export default function ChatPane({
              fallback has always used. `onFallbackSend` is left untouched as the
              expired-blocking-card (404) recovery path and is NOT reused here. */
           onDirectSend={(text) => {
+            if (paneArchivedRef.current) return
             // The card IS the interaction, answered in one click. A NATIVE
             // AskUserQuestion card (marked `native` by the server) is raised
             // while its own turn is still running and waiting on the answer, so
@@ -1992,6 +2003,7 @@ export default function ChatPane({
             shape as ChatPage's inputAreaRef). */}
         {quoteFlight && <FlyingQuote text={quoteFlight.text} from={quoteFlight.from} targetRef={inputAreaRef} onComplete={endQuoteFlight} />}
         <div ref={inputAreaRef} className="relative z-10">
+        {paneArchived && paneSlot?.instance_id && <RelayArchiveNotice instanceId={paneSlot.instance_id} rowIdentity={paneSlot.row_identity} />}
         <Composer
           ref={composerRef}
           slotKey={slotKey}
@@ -2092,7 +2104,8 @@ export default function ChatPane({
           project={paneSlot?.project ?? ''}
           // A crewmate's chat is a DM with one named crewmate, so the composer
           // addresses it by name rather than the product ("Message Kiro Crew…").
-          placeholder={crewmate ? i18nT('components.chatInput.message_placeholder', { bot: crewmate.label || crewmate.name }) : undefined}
+          disabled={paneArchived}
+          placeholder={paneArchived ? i18nT('pages.chat.relayArchive.placeholder') : crewmate ? i18nT('components.chatInput.message_placeholder', { bot: crewmate.label || crewmate.name }) : undefined}
           onUploadFiles={uploadFiles}
           onCancelUpload={uploadCancellable ? cancelUpload : undefined}
           pendingFiles={pendingFiles}

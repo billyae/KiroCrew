@@ -1,3 +1,4 @@
+import { i18nT } from '../i18n/t'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { StrictMode } from 'react'
 import type { ReactNode } from 'react'
@@ -32,6 +33,7 @@ vi.mock('../api/client', () => ({
     chatSlots: vi.fn().mockResolvedValue([]),
     chatSlotDetail: vi.fn().mockResolvedValue({ messages: [], running: false, has_more: false, total: 0 }),
     sendChat: vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) }),
+    listInstances: vi.fn().mockResolvedValue({ active: true, instances: [{ id: 'inst-1', name: 'astro' }] }),
     chatHistory: vi.fn().mockResolvedValue({ sessions: [] }),
     models: vi.fn().mockResolvedValue([]),
     agents: vi.fn().mockResolvedValue([]),
@@ -408,5 +410,32 @@ describe('ChatPane plan-shaped follow-ups', () => {
     const [wireText, slot] = (api.sendChat as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(wireText).toBe('Alpha')
     expect(slot).toBe('pane-sendnow-plain')
+  })
+})
+
+describe('ChatPane on a chat that ran on a crew (read-only archive)', () => {
+  const ARCHIVE = { executor: 'remote', instance_id: 'inst-1', row_identity: 'inst-1:peer-slot' }
+
+  it('disables the composer and shows the archive notice', async () => {
+    await renderPane('pane-archive', ARCHIVE)
+    expect(await screen.findByTestId('relay-archive-notice')).toBeTruthy()
+    expect(composer().className).toMatch(/pointer-events-none/)
+    expect(composer().placeholder).toBe(i18nT('pages.chat.relayArchive.placeholder'))
+  })
+
+  it('refuses a follow-up chip send, which bypasses the composer', async () => {
+    await renderPane('pane-archive', ARCHIVE)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Beta' })).toBeTruthy())
+    // An unguarded pane reaches api.sendChat synchronously from the gesture
+    // (sendTurn awaits nothing before it), so this read is the refusal itself.
+    fireEvent.doubleClick(chip('Beta'))
+    expect(api.sendChat).not.toHaveBeenCalled()
+  })
+
+  it('still sends from a plain local pane (control)', async () => {
+    await renderPane('pane-local')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Beta' })).toBeTruthy())
+    fireEvent.doubleClick(chip('Beta'))
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalledTimes(1))
   })
 })
