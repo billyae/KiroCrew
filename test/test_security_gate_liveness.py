@@ -252,7 +252,16 @@ def _url_payload_command(n: int) -> str:
 #: not ``"$@"``/``"$*"``) used as a value-flag's VALUE is one fixed word, so it
 #: is plain in the value slot (``git -C "$VAR" status`` allowed) but stays
 #: non-plain in the subcommand position (``git -C "$VAR" push`` denies).
-_PACKAGE_LINE_BUDGET = 29_131
+#:
+#: Raised for the git-publish scan's single word reader in ``shell_normalizer``:
+#: a ``_LexedWord`` record and ``_read_lexed_word``, which reads a word ONCE from
+#: a single quote walk into every per-word signal the arity layer needs --
+#: operator pieces, open/fragment state, redirection arity, comment start -- so
+#: ``_push_segment_targets_protected`` and ``_git_push_args`` stop re-deriving
+#: shell meaning per token. The reader sits beside the splitter and quote machine
+#: it is built from, so the capped ``argv_floor`` shrinks its re-derivation and
+#: stays within its per-file cap; no matching rule or threshold moved.
+_PACKAGE_LINE_BUDGET = 29_218
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

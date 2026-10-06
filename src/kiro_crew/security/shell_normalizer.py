@@ -2665,16 +2665,15 @@ def _push_token_shell_read(token: str) -> "tuple[list[str] | None, bool]":
     let ``--push-option='ci skip'`` erase the floor tag. A complete word with
     escaped quotes therefore keeps its precise reading, both directions.
 
-    A thin view over :func:`_shell_quote_walk`, which owns the state machine.
-    ONE walk serves every signal (a review subtraction: the identical state
-    machine briefly shipped twice); both consequences here are protective-only
-    — a hit poisons the positional split, never widens an allow.
+    A thin view over :func:`_read_lexed_word`, the single bash-faithful word
+    reader. ``operator_pieces`` and ``open_state`` are two of the fields that one
+    reader produces from ONE :func:`_shell_quote_walk`, so there is exactly one
+    implementation of the operator-split and fragment logic and this view and the
+    reader cannot drift. Both consequences here are protective-only — a hit
+    poisons the positional split, never widens an allow.
     """
-    walk = _shell_quote_walk(token)
-    return (
-        walk.pieces if walk.saw_operator else None,
-        walk.end_state != 0 or walk.trailing_escape,
-    )
+    lexed = _read_lexed_word(token)
+    return (lexed.operator_pieces, lexed.open_state)
 
 
 #: A token that BEGINS with a redirection: optional fd number, ``&``, or bash
@@ -2706,13 +2705,13 @@ def _push_token_redirection(token: str) -> "tuple[bool, bool]":
     program runs, so such a token is never an argv word — treating it as a
     positional is how ``git push origin </dev/null`` erases the single-arg
     tag.
+    A thin view over :func:`_read_lexed_word`: ``is_redirection`` and
+    ``consumes_next`` are two of the fields that one reader derives from the same
+    :func:`_shell_quote_walk` that produces ``open_state``, so the redirection
+    arity and the fragment refusal are one implementation and cannot disagree.
     """
-    m = _PUSH_REDIRECTION_RE.match(token)
-    if m is None:
-        return (False, False)
-    if _push_token_shell_read(token)[1]:
-        return (False, False)  # fragment: the walk handles it protectively
-    return (True, m.group(3) == "")
+    lexed = _read_lexed_word(token)
+    return (lexed.is_redirection, lexed.consumes_next)
 
 
 def _push_option_matches(token: str, names: "frozenset[str]") -> bool:
@@ -2916,6 +2915,81 @@ def _split_shell_words(segment: str) -> list[str]:
     if buf:
         words.append("".join(buf))
     return words
+
+
+class _LexedWord(NamedTuple):
+    """One word a bash-faithful lexer produces, with its shell reading attached.
+
+    Without this, the argument scan splits a segment into words and then
+    RE-DERIVES the shell meaning of each word in three separate places — a
+    quote/escape walk for operator glue and fragments
+    (:func:`_push_token_shell_read`), a redirection arity match
+    (:func:`_push_token_redirection`), and a word-initial ``#`` comment check —
+    each a separate reading of the same bytes. The per-construct review record
+    shows that class reopens per bash construct: four consecutive review rounds
+    each surfaced one construct a re-derivation mis-read. The
+    lexer reads every word ONCE and hands the arity layer this verdict, so there
+    is one bash-faithful reading of a word and the consumer never re-walks it.
+
+    Fields are exactly the per-word signals the git-publish scan consumes:
+
+    * ``raw`` — the word's source text, quoting and operator glue intact (the
+      scan classifies by that shape and dequotes/cuts itself).
+    * ``operator_pieces`` — the word split at its unquoted ``< > &``, or None
+      when it carries none; a mid-word operator means git gets a different word
+      than the source spells (``main>log`` is ``main`` plus a redirection).
+    * ``open_state`` — True when the word is a FRAGMENT: an unterminated quote
+      or trailing escape, i.e. the whitespace that split it was itself quoted or
+      escaped and the real word spans the split. Poisons the positional split.
+    * ``is_redirection`` / ``consumes_next`` — the word is a redirection the
+      shell removes from argv before git runs; ``consumes_next`` means the
+      target is the NEXT word rather than attached.
+    * ``comment`` — the word BEGINS with ``#``: the shell comments out the rest
+      of the segment, so neither this word nor any after it reaches git.
+    """
+
+    raw: str
+    operator_pieces: "list[str] | None"
+    open_state: bool
+    is_redirection: bool
+    consumes_next: bool
+    comment: bool
+
+
+def _read_lexed_word(raw: str) -> "_LexedWord":
+    """Read ONE already-split word into its :class:`_LexedWord` verdict.
+
+    Every per-word signal the git-publish scan needs comes from a SINGLE pass of
+    the one state machine (:func:`_shell_quote_walk`): the operator split, the
+    fragment (open) state, and — derived from that same walk — the redirection
+    arity. This reader is the ONE implementation of that reading: the per-token
+    views :func:`_push_token_shell_read` and :func:`_push_token_redirection`
+    return fields of this record, so the operator grammar
+    (:data:`_PUSH_REDIRECTION_RE`) is matched once here, the fragment refusal is
+    exactly this walk's ``open_state``, and no second copy exists to drift from.
+    ``consumes_next`` is true when the operator run has no attached target, so
+    the shell takes the NEXT word.
+
+    The single lexer the git-publish arity scan reads a word with. Both consumers
+    hold words already split — ``_push_segment_targets_protected`` maps it over a
+    push's argument tokens, and ``_git_push_args`` reads it to model a
+    redirection it must skip — so each word is lexed ONCE, by this one function,
+    rather than re-derived by a quote walk, a redirection match and a comment
+    check in three separate places.
+    """
+    walk = _shell_quote_walk(raw)
+    open_state = walk.end_state != 0 or walk.trailing_escape
+    m = _PUSH_REDIRECTION_RE.match(raw)
+    is_redirection = m is not None and not open_state
+    consumes_next = is_redirection and m is not None and m.group(3) == ""
+    return _LexedWord(
+        raw=raw,
+        operator_pieces=walk.pieces if walk.saw_operator else None,
+        open_state=open_state,
+        is_redirection=is_redirection,
+        consumes_next=consumes_next,
+        comment=raw.startswith("#"),
+    )
 
 
 # Git global flags that consume a separate argument token (they appear between
