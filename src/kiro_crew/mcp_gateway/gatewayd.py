@@ -781,26 +781,42 @@ async def run_gatewayd(
             prewarmer.schedule(initial=True)
 
         # Credential-rotation drain: on a content change of any watched
-        # credential file, drain ALL pooled backends (blue-green cutover) so
-        # they respawn with the fresh credential, then re-warm. Watcher tasks
-        # exist ONLY when the caller supplied watch paths — the public default
-        # (no paths) creates no task and the run flow is byte-identical.
-        async def _on_credential_change() -> None:
+        # credential, drain ALL pooled backends (blue-green cutover) so they
+        # respawn with the fresh credential, then re-warm. Watcher tasks exist
+        # ONLY when the caller supplied watch paths — the public default (no
+        # paths) builds an empty registry, creates no task, and the run flow is
+        # byte-identical.
+        #
+        # Each path becomes a CredentialWatchEntry; the registry drives one
+        # watcher per entry on the shared poll interval. The handler takes the
+        # firing entry so a rotation is attributable in the log line by the
+        # credential's basename. The drain scope is ALL backends (the fail-safe
+        # behaviour) — narrowing it to only the backends that depend on the
+        # changed credential is deferred until a maintainer rules on asserting
+        # an unverifiable dependent set (see credwatch.CredentialWatchEntry).
+        credential_registry = [
+            credwatch.CredentialWatchEntry(path=cred_path)
+            for cred_path in credential_watch_paths or []
+        ]
+
+        async def _on_credential_change(
+            entry: credwatch.CredentialWatchEntry,
+        ) -> None:
+            logger.info(
+                "watched file %s changed — draining pool", entry.label
+            )
             await _drain_and_rewarm_on_credential_change(pool, prewarmer.schedule)
 
-        for cred_path in credential_watch_paths or []:
-            credential_watchers.append(
-                asyncio.create_task(
-                    credwatch.watch_credential(
-                        cred_path,
-                        _CREDENTIAL_WATCH_INTERVAL_SECS,
-                        stop_event,
-                        _on_credential_change,
-                        logger,
-                    ),
-                    name="mcp-gateway-credential-watcher",
-                )
+        credential_watchers.extend(
+            credwatch.watch_credentials(
+                credential_registry,
+                _CREDENTIAL_WATCH_INTERVAL_SECS,
+                stop_event,
+                _on_credential_change,
+                logger,
+                create_task=asyncio.create_task,
             )
+        )
 
         await stop_event.wait()
     finally:

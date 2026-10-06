@@ -72,10 +72,47 @@ import asyncio
 import hashlib
 import inspect
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Optional, Union
 
-OnChange = Union[Callable[[], Awaitable[None]], Callable[[], None]]
+
+@dataclass(frozen=True)
+class CredentialWatchEntry:
+    """One credential the gateway watches.
+
+    Generalizes the former bare ``list[Path]`` into a registry of N independent
+    entries, so the watcher is driven by a list of named things rather than a
+    list of raw paths and a rotation can be attributed to the entry that fired.
+
+    ``path`` is the credential file to watch. File sources only; a
+    helper-command / active-refresh-job source is a deliberately deferred
+    additive extension. The entry is intentionally minimal: it carries no
+    per-entry drain *scope*, because narrowing a rotation's drain from "all
+    pooled backends" to "only the backends that depend on this credential" is
+    unsound today — a secret-bearing backend that reads its credential from
+    disk leaves no trace in its ``PoolKey``, so the verifiable dependent set is
+    empty and a narrowed drain would evict nothing on a real rotation
+    (fail-open). Draining all backends is the fail-safe behaviour every entry
+    gets, until a maintainer rules on whether an operator may assert an
+    unverifiable narrower scope.
+    """
+
+    path: Path
+
+    @property
+    def label(self) -> str:
+        """A short, non-secret identifier for logs: the path's basename only,
+        never the full path and never any content."""
+        return self.path.name
+
+
+#: A credential-change handler. Invoked with no argument; may be sync (returns
+#: ``None``) or async (returns an awaitable, which the watcher awaits). The
+#: registry attributes a rotation to its entry by wrapping this in a per-entry
+#: closure (see :func:`watch_credentials`), so the handler signature itself
+#: stays the historical zero-argument shape.
+OnChange = Callable[[], Union[Awaitable[None], None]]
 
 
 #: Chunk size for the streaming digest — the file is hashed block-by-block so
@@ -322,3 +359,63 @@ async def watch_credential(
                     on_probe_complete()
     except asyncio.CancelledError:
         pass
+
+
+def watch_credentials(
+    registry: "list[CredentialWatchEntry]",
+    interval_secs: float,
+    stop_event: asyncio.Event,
+    on_change: "Callable[[CredentialWatchEntry], Union[Awaitable[None], None]]",
+    logger: logging.Logger,
+    *,
+    create_task: Callable[..., "asyncio.Task[None]"] = asyncio.create_task,
+) -> "list[asyncio.Task[None]]":
+    """Start one :func:`watch_credential` loop per registry entry.
+
+    This is the registry entry point: the gateway hands it N
+    :class:`CredentialWatchEntry` objects and gets back one watcher task per
+    entry. Every watcher polls on the single ``interval_secs`` the caller
+    passes. ``on_change`` is called with the firing entry so a rotation is
+    attributable; each watcher binds its own entry through a per-entry closure,
+    so :func:`watch_credential` keeps its historical zero-argument handler
+    contract untouched.
+
+    An empty ``registry`` creates no tasks and returns an empty list, so the
+    public default (no watched credentials) is byte-identical to the
+    pre-registry daemon: no task runs.
+
+    Args:
+        registry: The credentials to watch. Order is preserved; the returned
+            task list is parallel to it.
+        interval_secs: Seconds between polls, shared by every watcher.
+        stop_event: Shared stop event; setting it ends every watcher within one
+            tick.
+        on_change: Handler invoked on a real content change, passed the firing
+            :class:`CredentialWatchEntry`. Sync or async.
+        logger: Logger threaded into each watcher.
+        create_task: Task factory, overridable for tests. Defaults to
+            :func:`asyncio.create_task` so a running loop schedules each
+            watcher immediately.
+    """
+    def _bind(entry: CredentialWatchEntry) -> OnChange:
+        # Capture this entry in a zero-argument handler so watch_credential
+        # keeps its historical no-arg contract while the shared handler is
+        # still told which credential fired. A factory (not an inline default
+        # arg) both avoids the late-binding loop trap and types cleanly as the
+        # zero-argument OnChange watch_credential expects.
+        def _fire() -> Union[Awaitable[None], None]:
+            return on_change(entry)
+
+        return _fire
+
+    tasks: list[asyncio.Task[None]] = []
+    for entry in registry:
+        coro = watch_credential(
+            entry.path,
+            interval_secs,
+            stop_event,
+            _bind(entry),
+            logger,
+        )
+        tasks.append(create_task(coro, name="mcp-gateway-credential-watcher"))
+    return tasks

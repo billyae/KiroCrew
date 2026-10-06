@@ -1080,3 +1080,153 @@ def test_gatewayd_argparser_accepts_repeatable_watch_flag() -> None:
     assert args.credential_watch_paths == []
     args = p.parse_args(["--credential-watch-path", "/tmp/a", "--credential-watch-path", "/tmp/b"])
     assert args.credential_watch_paths == ["/tmp/a", "/tmp/b"]
+
+
+# ---------------------------------------------------------------------------
+# Per-credential registry: CredentialWatchEntry + watch_credentials. The
+# registry generalizes the bare path list and attributes a rotation to the
+# entry that fired (basename only, no secret). Drain scope stays ALL backends
+# (fail-safe).
+# ---------------------------------------------------------------------------
+
+
+def test_credwatch_entry_label_is_basename_only() -> None:
+    """A CredentialWatchEntry's label is the path basename only — never the
+    full path and never any content."""
+    from kiro_crew.mcp_gateway import credwatch
+
+    e = credwatch.CredentialWatchEntry(path=Path("/var/run/aws/credentials"))
+    assert e.label == "credentials"
+    assert "/var/run" not in e.label
+
+
+def test_credwatch_entry_is_frozen() -> None:
+    """Registry entries are immutable so a running watcher's target cannot be
+    mutated out from under it."""
+    import dataclasses as _dc
+
+    from kiro_crew.mcp_gateway import credwatch
+
+    e = credwatch.CredentialWatchEntry(path=Path("/tmp/cred"))
+    with pytest.raises(_dc.FrozenInstanceError):
+        e.path = Path("/tmp/other")  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_watch_credentials_empty_registry_creates_no_tasks() -> None:
+    """An empty registry starts no watcher tasks — the public default (no
+    watched credentials) is byte-identical to the pre-registry daemon."""
+    from kiro_crew.mcp_gateway import credwatch
+
+    created: list[object] = []
+
+    def _factory(coro, name=None):
+        coro.close()  # we never run it; close to avoid 'never awaited' warning
+        t = MagicMock()
+        created.append(t)
+        return t
+
+    stop = asyncio.Event()
+    tasks = credwatch.watch_credentials(
+        [], 30.0, stop, lambda e: None, logger, create_task=_factory
+    )
+    assert tasks == []
+    assert created == []
+
+
+def test_watch_credentials_one_task_per_entry_on_shared_interval() -> None:
+    """watch_credentials starts one watcher per entry, each polling on the
+    shared interval the caller passes, with the task named for the pool."""
+    from kiro_crew.mcp_gateway import credwatch
+
+    captured: list[dict] = []
+
+    def _factory(coro, name=None):
+        # Read the interval the coroutine was created with, then close it (the
+        # loop is not run here).
+        frame_locals = coro.cr_frame.f_locals
+        captured.append({"interval": frame_locals["interval_secs"], "name": name})
+        coro.close()
+        return MagicMock()
+
+    stop = asyncio.Event()
+    reg = [
+        credwatch.CredentialWatchEntry(path=Path("/tmp/a")),
+        credwatch.CredentialWatchEntry(path=Path("/tmp/b")),
+    ]
+    tasks = credwatch.watch_credentials(
+        reg, 30.0, stop, lambda e: None, logger, create_task=_factory
+    )
+
+    assert len(tasks) == 2
+    assert [c["interval"] for c in captured] == [30.0, 30.0]
+    assert all(c["name"] == "mcp-gateway-credential-watcher" for c in captured)
+
+
+@pytest.mark.asyncio
+async def test_watch_credentials_rotation_fires_handler_with_its_entry(
+    tmp_path: Path,
+) -> None:
+    """An end-to-end rotation through watch_credentials fires the shared
+    handler with the firing entry, so each watcher attributes its own
+    credential (the per-entry closure binds the right entry)."""
+    from kiro_crew.mcp_gateway import credwatch
+
+    cred_a = tmp_path / "a"
+    cred_b = tmp_path / "b"
+    cred_a.write_bytes(b"a-v1")
+    cred_b.write_bytes(b"b-v1")
+    stop = asyncio.Event()
+    seen: list[credwatch.CredentialWatchEntry] = []
+
+    async def _handler(entry: credwatch.CredentialWatchEntry) -> None:
+        seen.append(entry)
+
+    reg = [
+        credwatch.CredentialWatchEntry(path=cred_a),
+        credwatch.CredentialWatchEntry(path=cred_b),
+    ]
+    tasks = credwatch.watch_credentials(
+        reg, 0.01, stop, _handler, logger, create_task=asyncio.create_task
+    )
+    # Let both watchers capture their baseline, then rotate only b.
+    await asyncio.sleep(0.05)
+    _atomic_cred_write(cred_b, b"b-v2-rotated")
+    await asyncio.sleep(0.1)
+    stop.set()
+    for t in tasks:
+        await asyncio.wait_for(t, timeout=5.0)
+
+    # Only b rotated, so the handler fired once, attributed to b's entry.
+    assert [e.label for e in seen] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_watch_credential_zero_arg_handler(tmp_path: Path) -> None:
+    """watch_credential calls its handler with no argument on a real rotation —
+    the historical zero-argument contract the registry builds its closure on."""
+    from kiro_crew.mcp_gateway import credwatch
+
+    cred = tmp_path / "cred"
+    cred.write_bytes(b"secret-v1")
+    stop = asyncio.Event()
+    fired: list[bool] = []
+    barrier = _ProbeBarrier()
+
+    task = asyncio.create_task(
+        credwatch.watch_credential(
+            cred,
+            0.01,
+            stop,
+            lambda: fired.append(True),
+            logger,
+            on_probe_complete=barrier,
+        )
+    )
+    await barrier.wait_for(1)
+    _atomic_cred_write(cred, b"secret-v2-rotated")
+    await barrier.wait_for(barrier.count + 2)
+    stop.set()
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert fired == [True]
