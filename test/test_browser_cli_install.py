@@ -1204,6 +1204,173 @@ class TestCliPathTrust:
         assert repr(str(candidate.resolve())) in warning
         assert "writable by the gateway user" in warning
 
+    @staticmethod
+    def _real_readonly_bundle(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+    ) -> Path:
+        """Build a REAL ``chmod 0o555`` edition bundle and scope the trust walk to it.
+
+        No ``os.stat`` / ``os.access`` is faked. The launcher and every directory
+        down to the prefix are really ``chmod 0o555`` on disk, so the gateway user
+        cannot write them right now -- the writability floor passes. The only
+        shim is :func:`platform_compat.traversed_components`, pinned to the
+        bundle's own real nodes, which models the real deployment: an edition
+        installs under a root-owned parent (``/opt/<edition>``), so the walk the
+        floor runs stops at the bundle rather than climbing into the gateway-
+        writable ``tmp_path`` ancestors the test sandbox happens to sit under.
+        Ownership (``st_uid``) is read from the real files, so the ownership check
+        under test is exercised against the real tree.
+        """
+        bundle = tmp_path / "edition" / "browser" / "cli"
+        cli = TestCliPathTrust._executable(bundle / "bin" / mod.CLI_BIN)
+        resolved = cli.resolve()
+        # The bundle's own real nodes, launcher up to the edition root -- the
+        # chain a root-owned /opt/<edition> install presents, without the
+        # gateway-writable tmp_path ancestors the sandbox sits under.
+        edition_root = (tmp_path / "edition").resolve()
+        components = [resolved]
+        parent = resolved.parent
+        while True:
+            components.append(parent)
+            if parent == edition_root:
+                break
+            parent = parent.parent
+        monkeypatch.setattr(
+            mod.platform_compat, "traversed_components", lambda path: list(components)
+        )
+        for component in components:
+            component.chmod(0o555)
+        # Restore write bits so pytest's tmp_path teardown can remove the 0o555 tree.
+        request.addfinalizer(lambda: [c.chmod(0o755) for c in reversed(components)])
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(bundle))
+        return cli
+
+    def test_a_root_owned_read_only_edition_bundle_is_resolved(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """An edition bundle not owned by the gateway user is trusted.
+
+        Real ``chmod 0o555`` tree; the gateway euid is simulated as a uid that
+        does not own it (an edition installs its bundle root-owned), which is the
+        safe stand-in for "running as root/another user" -- it fakes identity
+        only, never ``os.stat`` / ``os.access``. Without this source the bundle
+        reads as absent and the dashboard offers the npm install it exists to
+        avoid (the reported gap).
+        """
+        self._isolate(tmp_path, monkeypatch)
+        cli = self._real_readonly_bundle(tmp_path, monkeypatch, request)
+        monkeypatch.setattr(os, "geteuid", lambda: os.stat(cli).st_uid + 424242)
+
+        assert mod.cli_path() == str(cli.resolve())
+
+    def test_a_gateway_owned_read_only_edition_bundle_is_refused(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A bundle the gateway user OWNS is refused even at ``chmod 0o555``.
+
+        Current write bits are cleared, so the writability floor alone passes,
+        but the owner can ``chmod`` them back and swap the launcher afterwards.
+        The ownership rule closes that time-of-check/time-of-use gap: an edition
+        tier component owned by this gateway user is refused, and the warning
+        says the bundle must be installed root-owned. Real ``chmod 0o555`` tree,
+        euid unchanged, no faked ``os.stat`` / ``os.access``.
+        """
+        self._isolate(tmp_path, monkeypatch)
+        cli = self._real_readonly_bundle(tmp_path, monkeypatch, request)
+
+        with caplog.at_level("WARNING", logger=mod.__name__):
+            assert mod.cli_path() is None
+
+        warning = next(record.getMessage() for record in caplog.records if record.levelno >= 30)
+        assert repr(str(cli.resolve())) in warning
+        assert "owned by the gateway user" in warning
+        assert "root-owned" in warning
+
+    def test_the_ownership_floor_is_asked_over_the_real_tree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`_gateway_owned_component` reads st_uid from real files, not a fake.
+
+        Direct unit cover of the ownership walk: with the gateway euid owning the
+        tree it names the first owned component; with the euid simulated as a
+        different user it returns ``None`` (nothing owned). A real tree, so a
+        regression that stopped reading ``st_uid`` would be caught here.
+        """
+        bundle = tmp_path / "opt-edition" / "cli"
+        cli = self._executable(bundle / "bin" / mod.CLI_BIN)
+        resolved = cli.resolve()
+        components = [resolved, resolved.parent, resolved.parent.parent]
+        monkeypatch.setattr(
+            mod.platform_compat, "traversed_components", lambda path: list(components)
+        )
+
+        owned = mod._gateway_owned_component(cli, resolved)
+        assert owned == resolved
+
+        monkeypatch.setattr(os, "geteuid", lambda: os.stat(resolved).st_uid + 424242)
+        assert mod._gateway_owned_component(cli, resolved) is None
+
+    def test_a_gateway_writable_edition_bundle_is_refused(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The bundle clears the same read-only floor as a fixed system binary.
+
+        A bundle an agent could overwrite is refused exactly as a planted system
+        binary is -- the trust is "read-only to the agent sandbox", not merely
+        "an edition named it". The writable (not just owned) refusal fires first.
+        """
+        self._isolate(tmp_path, monkeypatch)
+        bundle = tmp_path / "edition" / "browser" / "cli"
+        cli = self._executable(bundle / "bin" / mod.CLI_BIN)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(bundle))
+
+        with caplog.at_level("WARNING", logger=mod.__name__):
+            assert mod.cli_path() is None
+
+        warning = next(record.getMessage() for record in caplog.records if record.levelno >= 30)
+        assert repr(str(cli.resolve())) in warning
+        assert "writable by the gateway user" in warning
+
+    def test_the_managed_leaf_wins_over_an_edition_bundle(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Ordering is leaf, then edition bundle, then system -- the leaf wins."""
+        _home, crew = self._isolate(tmp_path, monkeypatch)
+        leaf = self._executable(crew / "playwright-cli" / "bin" / mod.CLI_BIN)
+        bundle = tmp_path / "edition" / "browser" / "cli"
+        self._executable(bundle / "bin" / mod.CLI_BIN)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(bundle))
+
+        assert mod.cli_path() == str(leaf.resolve())
+
+    def test_no_edition_prefix_leaves_resolution_unchanged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With the env unset, _edition_cli_candidates contributes nothing."""
+        self._isolate(tmp_path, monkeypatch)
+        monkeypatch.delenv(mod._STANDALONE_PREFIX_ENV, raising=False)
+
+        assert mod._edition_cli_candidates() == ()
+        assert mod.cli_path() is None
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and permission semantics")
 class TestGatewayWritableComponentWalksEveryDirectory:
@@ -2416,6 +2583,140 @@ class TestSystemGatewayCommand:
         assert command is None
         assert reason is not None and "no fixed non-writable Node" in reason
         assert str(attacker) not in reason
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX executable and permission semantics")
+    def test_an_edition_bundle_resolves_to_a_node_plus_javascript_argv(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """A read-only, non-gateway-owned edition bundle runs, not just resolves.
+
+        ``cli_path`` returning the bundle entrypoint is only half the goal: the
+        browser is usable only when ``cli_command`` resolves the whole launch to
+        a fixed Node plus the attributed JavaScript entrypoint. This lays the
+        bundle out the way an edition ships a global ``npm install`` -- launcher
+        under ``bin``, Node beside it, package under ``lib/node_modules`` -- as a
+        REAL ``chmod 0o555`` tree, simulates the gateway euid as a different user
+        (an edition installs root-owned), and asserts the argv is
+        ``[node, playwright-cli.js]`` with no shell wrapper. No ``os.stat`` /
+        ``os.access`` is faked -- only the identity (``os.geteuid``) and the
+        traversal scope (to the bundle's own real nodes, as a root-owned
+        ``/opt/<edition>`` parent would present).
+        """
+        prefix = tmp_path / "edition" / "browser" / "cli"
+        launcher = prefix / "bin" / mod.CLI_BIN
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        node = prefix / "bin" / "node"
+        node.write_bytes(b"node")
+        package = prefix / "lib" / "node_modules" / "@playwright" / "cli"
+        package.mkdir(parents=True)
+        entry = package / "playwright-cli.js"
+        entry.write_text("// cli\n", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_managed_cli_root", lambda: tmp_path / "absent-managed")
+        monkeypatch.setattr(mod, "_system_cli_candidates", lambda: ())
+        monkeypatch.setattr(mod.platform_compat, "trusted_system_path", lambda: "")
+        monkeypatch.setattr(mod.github_runner, "PROVIDER_EXECUTABLE_DIRS", ())
+        monkeypatch.setattr(mod, "_warned_cli_refusals", set())
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(prefix))
+        monkeypatch.setenv("PATH", str(tmp_path / "agent-bin"))
+
+        # Real chmod 0o555 over every executed node, up to the edition root --
+        # the launcher, the node binary, and the entrypoint and their dirs.
+        edition_root = (tmp_path / "edition").resolve()
+        touched: list[Path] = []
+        for leaf in (launcher, node, entry):
+            leaf.chmod(0o555)
+            touched.append(leaf.resolve())
+            parent = leaf.resolve().parent
+            while True:
+                if parent not in touched:
+                    parent.chmod(0o555)
+                    touched.append(parent)
+                if parent == edition_root:
+                    break
+                parent = parent.parent
+        request.addfinalizer(lambda: [p.chmod(0o755) for p in reversed(touched)])
+
+        def scoped_walk(path: object) -> list[Path]:
+            resolved = Path(os.fspath(path)).resolve()
+            chain = [resolved]
+            parent = resolved.parent
+            while True:
+                chain.append(parent)
+                if parent == edition_root or parent == parent.parent:
+                    break
+                parent = parent.parent
+            return chain
+
+        monkeypatch.setattr(mod.platform_compat, "traversed_components", scoped_walk)
+        # Simulate running as a user that does not own the bundle (root-owned).
+        monkeypatch.setattr(os, "geteuid", lambda: os.stat(launcher).st_uid + 424242)
+
+        assert mod.cli_path() == str(launcher.resolve())
+        assert mod.cli_command() == [str(node.resolve()), str(entry.resolve())]
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and permission semantics")
+    def test_an_edition_symlink_out_keeps_edition_provenance(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Edition provenance follows a prefix symlink that points OUTSIDE the prefix.
+
+        The hazard: an edition-prefix entry is itself a symlink to a wrapper in a
+        host npm tree, so the launcher RESOLVES outside the prefix. A check keyed
+        on resolved location returns False and routes the launch to the system
+        validators, which check writability but not ownership -- and a
+        gateway-owned package ``playwright-cli.js`` at mode ``0o555`` would then
+        pass, its owner free to rewrite it later and have the next launch execute
+        it unsandboxed. ``_launcher_from_edition_prefix`` answers on PROVENANCE
+        (reached VIA an edition candidate), so it returns True for a symlink-out
+        launcher and the launch stays on the ownership-aware edition validators
+        regardless of where the target lives.
+        """
+        external = tmp_path / "host-npm" / "cli"
+        wrapper = external / "bin" / mod.CLI_BIN
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+
+        prefix = tmp_path / "edition" / "cli"
+        link = prefix / "bin" / mod.CLI_BIN
+        link.parent.mkdir(parents=True)
+        link.symlink_to(wrapper)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(prefix))
+
+        launcher_resolved = link.resolve()
+        # The launcher resolves OUTSIDE the prefix (the symlink target) ...
+        assert not mod._under(launcher_resolved, prefix.resolve())
+        # ... yet provenance recognises it as edition-governed, so cli_command
+        # keeps it on the ownership-aware edition node/entry validators.
+        assert mod._launcher_from_edition_prefix(launcher_resolved) is True
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and permission semantics")
+    def test_a_non_edition_launcher_has_no_edition_provenance(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Guards the provenance check against over-reach.
+
+        A plain system launcher, with the env var set to an unrelated prefix, is
+        NOT edition-governed, so it keeps the fixed-system validators.
+        """
+        prefix = tmp_path / "edition" / "cli" / "bin"
+        prefix.mkdir(parents=True)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / "edition" / "cli"))
+        system = tmp_path / "usr" / "bin" / mod.CLI_BIN
+        system.parent.mkdir(parents=True)
+        system.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        system.chmod(0o755)
+
+        assert mod._launcher_from_edition_prefix(system.resolve()) is False
 
 
 class TestInstallStages:

@@ -10,7 +10,9 @@ Installation is global within a product-owned npm prefix rather than ``npx``.
 expired registry token would take browsing down at use time. The managed prefix
 is ``<data-home>/playwright-cli``. Every agent sandbox exposes that leaf
 read-only, and gateway execution resolves it by absolute path before considering
-fixed, non-writable system locations. ``PATH`` is never an execution source.
+an edition-bundled prefix and then fixed, non-writable system locations. The
+bundled prefix and the system locations clear the same read-only floor. ``PATH``
+is never an execution source.
 
 Node is located through :func:`kiro_crew.env.find_node_tool` rather than bare
 ``shutil.which``: the gateway can run with a PATH that omits the version-manager
@@ -411,24 +413,49 @@ def _stage_managed_node(source: str) -> Path:
     return destination
 
 
+def _npm_prefix_candidates(prefix: Path) -> tuple[Path, ...]:
+    """Entrypoint spellings a global ``npm install`` leaves under *prefix*.
+
+    One enumerator for the npm global-install layout so every trusted prefix
+    (the managed leaf and an operator-provided bundle alike) probes the same
+    shapes and the two lists cannot drift: ``<prefix>/bin/playwright-cli`` on
+    POSIX; on Windows the ``bin`` wrappers and the bare-prefix wrappers, each in
+    ``.cmd``/``.exe``/no-extension form. ``dict.fromkeys`` keeps first-seen order
+    while dropping any duplicate a layout quirk would introduce.
+    """
+    if platform_compat.IS_WINDOWS:
+        return tuple(
+            dict.fromkeys(
+                (
+                    prefix / "bin" / f"{CLI_BIN}.cmd",
+                    prefix / "bin" / f"{CLI_BIN}.exe",
+                    prefix / "bin" / CLI_BIN,
+                    prefix / f"{CLI_BIN}.cmd",
+                    prefix / f"{CLI_BIN}.exe",
+                    prefix / CLI_BIN,
+                )
+            )
+        )
+    return (prefix / "bin" / CLI_BIN,)
+
+
 def _managed_cli_candidates() -> tuple[Path, ...]:
-    """Entrypoint spellings npm creates under the managed prefix."""
+    """Entrypoint spellings npm creates under the managed prefix.
+
+    The sealed ``managed-bin`` leaf is tried first; everything after it is the
+    shared npm global-install layout from :func:`_npm_prefix_candidates`.
+    """
     root = _managed_cli_root()
     managed_bin = root / "managed-bin"
     if platform_compat.IS_WINDOWS:
-        npm_bin = root / "bin"
-        return (
+        managed_leaf: tuple[Path, ...] = (
             managed_bin / f"{CLI_BIN}.cmd",
             managed_bin / f"{CLI_BIN}.exe",
             managed_bin / CLI_BIN,
-            npm_bin / f"{CLI_BIN}.cmd",
-            npm_bin / f"{CLI_BIN}.exe",
-            npm_bin / CLI_BIN,
-            root / f"{CLI_BIN}.cmd",
-            root / f"{CLI_BIN}.exe",
-            root / CLI_BIN,
         )
-    return (managed_bin / CLI_BIN, root / "bin" / CLI_BIN)
+    else:
+        managed_leaf = (managed_bin / CLI_BIN,)
+    return (*managed_leaf, *_npm_prefix_candidates(root))
 
 
 def _system_cli_candidates() -> tuple[Path, ...]:
@@ -454,6 +481,67 @@ def _system_cli_candidates() -> tuple[Path, ...]:
         directories.extend(github_runner.PROVIDER_EXECUTABLE_DIRS)
         candidates.extend(Path(directory) / CLI_BIN for directory in dict.fromkeys(directories))
     return tuple(dict.fromkeys(candidates))
+
+
+def _edition_cli_candidates() -> tuple[Path, ...]:
+    """Entrypoint spellings under an operator-provided bundled CLI prefix.
+
+    A packaging that ships ``@playwright/cli`` with the product instead of
+    leaving the host to ``npm install`` it points :data:`_STANDALONE_PREFIX_ENV`
+    at that bundle. Without this source the bundle has nowhere to be an
+    *execution* candidate: it is neither the managed leaf nor a fixed system
+    directory, so :func:`cli_path` reports the CLI as absent and the dashboard
+    offers the npm install the bundle exists to avoid.
+
+    The prefix is operator/packaging configuration, not a discovered ``PATH``
+    entry, but it is still passed through the :func:`_system_candidate` floor as
+    a fixed system location -- the entrypoint must resolve to a real executable
+    file that this gateway user cannot write -- and then through the extra
+    ownership requirement in :func:`_edition_candidate`: no resolved component may
+    be owned by this gateway user, so a bundle whose mode the gateway user could
+    relax later is refused even at ``chmod 0o555``. The spellings come from the
+    one :func:`_npm_prefix_candidates` enumerator the managed leaf uses, because a
+    bundled tree is produced by the same global ``npm install`` shapes.
+    """
+    prefix_override = os.environ.get(_STANDALONE_PREFIX_ENV, "").strip()
+    if not prefix_override:
+        return ()
+    return _npm_prefix_candidates(Path(prefix_override))
+
+
+def _launcher_from_edition_prefix(launcher_resolved: Path) -> bool:
+    """Whether this launcher was reached VIA the configured edition prefix.
+
+    Provenance, not resolved location. Two ways a launcher is edition-governed:
+
+    * its resolved path lives under the prefix (the ordinary bundle); or
+    * an edition candidate (the UNRESOLVED spelling under the prefix) resolves to
+      this launcher -- a prefix entry that is itself a symlink pointing at a
+      wrapper OUTSIDE the prefix. The resolved target then lives elsewhere, so a
+      where-does-it-resolve test would miss it and the launch would fall to the
+      system validators, which check writability but not ownership; a root-owned
+      link to a root-owned wrapper beside gateway-owned ``0555`` package
+      JavaScript would then run that JavaScript unsandboxed, and its owner could
+      rewrite it later. Keying off provenance keeps such a launcher on the
+      ownership-aware edition validators regardless of where its target lives.
+    """
+    prefix_override = os.environ.get(_STANDALONE_PREFIX_ENV, "").strip()
+    if not prefix_override:
+        return False
+    try:
+        prefix_resolved = Path(prefix_override).resolve(strict=True)
+    except OSError:
+        return False
+    if _under(launcher_resolved, prefix_resolved):
+        return True
+    # A prefix entry that symlinks out: match on the unresolved candidate.
+    for candidate in _edition_cli_candidates():
+        try:
+            if candidate.resolve(strict=True) == launcher_resolved:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _agent_writable_roots() -> tuple[Path, ...]:
@@ -561,6 +649,73 @@ def _system_candidate(candidate: Path) -> tuple[Path | None, str | None]:
     return resolved, None
 
 
+def _gateway_owned_component(candidate: Path, resolved: Path) -> Path | None:
+    """First executable hierarchy component this gateway user *owns*, or ``None``.
+
+    Asked over the same traversed-components enumeration as
+    :func:`_gateway_writable_component`, but the question is ownership
+    (``st_uid == os.geteuid()``), not current writability. A tree the gateway
+    user owns passes the writability floor the moment it is ``chmod``'ed to
+    ``555`` under a root-owned parent, yet the owner can ``chmod`` it back to
+    writable and swap the launcher afterwards -- a time-of-check/time-of-use gap
+    the mode bits cannot close. Requiring root- or other-ownership for every
+    component removes that gap: a uid that does not own the tree cannot relax its
+    mode later. The whole *candidate* is the answer when the walk cannot be
+    enumerated, so an un-enumerable chain is refused, not trusted.
+
+    POSIX only. On Windows there is no ``os.geteuid`` and trust is ACL-driven, so
+    this walk is not run and the writability floor alone stands; callers must
+    guard with :data:`platform_compat.IS_WINDOWS`.
+    """
+    # ``getattr`` rather than a bare ``os.geteuid()``: the attribute is absent on
+    # Windows, where this walk is never reached (the caller guards on
+    # ``platform_compat.IS_WINDOWS``), and the ``-1`` fallback can never equal a
+    # real ``st_uid`` so the ownership test stays correct if it ever is.
+    euid = getattr(os, "geteuid", lambda: -1)()
+    components = platform_compat.traversed_components(candidate)
+    if components is None:
+        return candidate
+    for component in components:
+        try:
+            owner_uid = component.stat().st_uid
+        except OSError:
+            return component
+        if owner_uid == euid:
+            return component
+    return None
+
+
+def _edition_candidate(candidate: Path) -> tuple[Path | None, str | None]:
+    """Validate an edition-bundled entrypoint: the system floor plus ownership.
+
+    An edition points :data:`_STANDALONE_PREFIX_ENV` at a bundle it ships, which
+    is the per-user layout (a user install under ``/opt/<edition>``, a data home,
+    a user venv) that the fixed system directories were never expected to be.
+    The read-only :func:`_system_candidate` floor passes such a tree as soon as
+    it is ``chmod 555``, but if the gateway user *owns* it that mode is reversible
+    by that same user, so the floor's "cannot write it now" guarantee does not
+    hold over time. For the edition tier the floor is therefore tightened to
+    require that no component on the traversed chain is owned by this gateway user
+    (root- or other-owned), which is the property the fixed system directories had
+    for free. An edition that wants its bundle trusted must install it root-owned.
+
+    On Windows the ownership walk is not available (:func:`_gateway_owned_component`
+    is POSIX-only); the system floor alone stands there, matching how the
+    writability floor already degrades to a lexical ACL-shaped check on Windows.
+    """
+    resolved, reason = _system_candidate(candidate)
+    if resolved is None:
+        return None, reason
+    if not platform_compat.IS_WINDOWS:
+        if owned := _gateway_owned_component(candidate, resolved):
+            return (
+                None,
+                f"the executable hierarchy is owned by the gateway user at {owned}; "
+                "an edition bundle must be installed root-owned (or owned by another user)",
+            )
+    return resolved, None
+
+
 _warned_cli_refusals: set[tuple[str, str]] = set()
 
 
@@ -584,10 +739,22 @@ def cli_path() -> str | None:
     """Canonical trusted ``playwright-cli`` path, or ``None``.
 
     Resolution is absolute and ordered: the sandbox-sealed crew-home tools leaf
-    first, then fixed machine-install directories. ``PATH`` and the legacy
-    ``~/.local/bin/playwright-cli`` location are never execution sources. A PATH
-    hit is inspected only after every vetted location misses, so the refusal can
-    name the planted shim without ever running it.
+    first, then an edition-provided bundled prefix, then fixed machine-install
+    directories. ``PATH`` and the legacy ``~/.local/bin/playwright-cli`` location
+    are never execution sources. A PATH hit is inspected only after every vetted
+    location misses, so the refusal can name the planted shim without ever
+    running it.
+
+    The edition bundle and the system directories share the one
+    :func:`_system_candidate` floor, so a bundled payload is trusted only when it
+    is read-only to this gateway user -- the same bar a fixed system binary must
+    clear. The edition tier adds one requirement a fixed system directory meets
+    for free: no component of the bundle's resolved hierarchy may be *owned* by
+    this gateway user (:func:`_edition_candidate`). A tree the gateway user owns
+    passes the read-only floor the moment it is ``chmod 0o555``, yet the owner can
+    restore the write bit and swap the launcher afterwards; requiring root- or
+    other-ownership closes that gap. An edition must therefore install its bundle
+    root-owned (or owned by another user) for it to be trusted.
     """
     first_refusal: tuple[Path, str] | None = None
     for candidate in _managed_cli_candidates():
@@ -600,10 +767,13 @@ def cli_path() -> str | None:
             return str(resolved)
         if reason is not None and first_refusal is None:
             first_refusal = (candidate, reason)
-    for candidate in _system_cli_candidates():
+    for candidate, validate in (
+        *((c, _edition_candidate) for c in _edition_cli_candidates()),
+        *((c, _system_candidate) for c in _system_cli_candidates()),
+    ):
         if not os.path.lexists(candidate):
             continue
-        resolved, reason = _system_candidate(candidate)
+        resolved, reason = validate(candidate)
         if resolved is not None:
             if first_refusal is not None:
                 _warn_cli_refusal(*first_refusal)
@@ -816,10 +986,12 @@ def _standalone_node_modules() -> list[Path]:
     """``node_modules`` roots of the managed, unprivileged CLI install.
 
     The product-owned default is the sandbox-sealed tools leaf. An explicit
-    operator prefix remains useful to the standalone installer and is trusted as
-    operator configuration, but it never adds that prefix to executable
-    resolution: :func:`cli_path` still accepts only the managed leaf or fixed
-    system locations.
+    prefix in :data:`_STANDALONE_PREFIX_ENV` points at a standalone or
+    edition-bundled install and supplies its metadata here. Whether that prefix
+    is also an *execution* source is decided independently by
+    :func:`_edition_cli_candidates`, which passes its entrypoint through the
+    read-only :func:`_system_candidate` floor; reading a package manifest from a
+    prefix never on its own authorises running a launcher from it.
     """
     prefix_override = os.environ.get(_STANDALONE_PREFIX_ENV, "").strip()
     prefix = Path(prefix_override) if prefix_override else _managed_cli_root()
@@ -955,6 +1127,29 @@ def _system_node_for_launcher(launcher: Path, package: Path) -> tuple[Path | Non
     return None, "no fixed non-writable Node executable serves this system launcher"
 
 
+def _edition_node_for_launcher(launcher: Path, package: Path) -> tuple[Path | None, str | None]:
+    """First Node candidate for an edition launcher: non-writable AND not gateway-owned.
+
+    Same candidate set as :func:`_system_node_for_launcher`, but each is held to
+    the stricter edition floor (:func:`_edition_candidate`): the Node that
+    executes a bundle's JavaScript must be root- or other-owned, so a gateway
+    user cannot swap it after a ``chmod``.
+    """
+    first_refusal: tuple[Path, str] | None = None
+    for candidate in _system_node_candidates(launcher, package):
+        if not os.path.lexists(candidate):
+            continue
+        resolved, reason = _edition_candidate(candidate)
+        if resolved is not None:
+            return resolved, None
+        if reason is not None and first_refusal is None:
+            first_refusal = (candidate, reason)
+    if first_refusal is not None:
+        candidate, reason = first_refusal
+        return None, f"the edition Node candidate {candidate} was refused: {reason}"
+    return None, "no non-writable, non-gateway-owned Node executable serves this edition launcher"
+
+
 def _direct_cli_command(cli: str) -> tuple[list[str] | None, str | None]:
     """Direct trusted Node+JavaScript argv for one vetted launcher identity."""
     launcher = Path(cli)
@@ -977,6 +1172,9 @@ def _direct_cli_command(cli: str) -> tuple[list[str] | None, str | None]:
     if managed_root is not None and _under(launcher_resolved, managed_root):
         node, reason = _managed_candidate(_managed_node_path())
         entry_resolved, entry_reason = _regular_file_within(entry, managed_root)
+    elif _launcher_from_edition_prefix(launcher_resolved):
+        node, reason = _edition_node_for_launcher(launcher_resolved, package)
+        entry_resolved, entry_reason = _edition_executable_file(entry)
     else:
         node, reason = _system_node_for_launcher(launcher_resolved, package)
         entry_resolved, entry_reason = _resolve_executable_file_for_system(entry)
@@ -1000,6 +1198,26 @@ def _resolve_executable_file_for_system(candidate: Path) -> tuple[Path | None, s
         return None, common
     if writable := _gateway_writable_component(candidate, resolved):
         return None, f"the direct launcher hierarchy is writable by the gateway user at {writable}"
+    return resolved, None
+
+
+def _edition_executable_file(candidate: Path) -> tuple[Path | None, str | None]:
+    """Validate an edition package file: the system file floor plus ownership.
+
+    The JavaScript entrypoint an edition launcher runs must sit in a tree that is
+    root- or other-owned, matching the launcher's own bar, so the same gateway
+    user cannot replace the executed code after the mode is relaxed.
+    """
+    resolved, reason = _resolve_executable_file_for_system(candidate)
+    if resolved is None:
+        return None, reason
+    if not platform_compat.IS_WINDOWS:
+        if owned := _gateway_owned_component(candidate, resolved):
+            return (
+                None,
+                f"the direct launcher hierarchy is owned by the gateway user at {owned}; "
+                "an edition bundle must be installed root-owned (or owned by another user)",
+            )
     return resolved, None
 
 
