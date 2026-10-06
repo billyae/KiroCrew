@@ -2720,6 +2720,37 @@ def _status(args: argparse.Namespace) -> None:
     print(f"  Cron jobs:   {_format_count(data, 'cron_jobs')}")
     print(f"  Lessons:     {_format_count(data, 'lessons')}")
     print(f"  Memory:      {_format_memory_line(data)}")
+    _print_component_identity(data)
+
+
+def _print_component_identity(data: dict) -> None:
+    """Print the selected-versus-running component version-skew section.
+
+    Compares the selected package (the CLI module's own release version) against
+    the version the running gateway reports in its ``/api/status`` payload,
+    surfacing the "listener healthy but the gateway still runs an earlier
+    package" state that ordinary gateway health cannot distinguish from a
+    fully-aligned install. Never fatal: a comparison that cannot run is skipped
+    silently rather than failing the whole ``status`` command.
+    """
+    try:
+        from kiro_crew import component_identity
+
+        report = component_identity.compare_gateway(data.get("version"))
+    except Exception:
+        return
+    if report.result == component_identity.RESULT_SKEW:
+        age = int(report.mismatch_age_seconds)
+        print(f"\n  Components:  ⚠ version_skew — {report.reason} (skew age {age}s)")
+    elif report.result == component_identity.RESULT_ALIGNED:
+        print("\n  Components:  aligned (the running gateway serves the selected package)")
+    else:
+        print(f"\n  Components:  unknown — {report.reason}")
+    for row in report.rows:
+        print(
+            f"    {row.role:<10} {row.product_version:<14} "
+            f"{row.build_identity:<16} {row.relation}"
+        )
 
 
 def _format_count(data: dict, key: str) -> str:
