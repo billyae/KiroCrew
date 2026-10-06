@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, screen, waitFor, fireEvent } from '@testing-library/react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useNavigate } from 'react-router-dom'
 import ArtifactDetailPage from '../pages/ArtifactDetailPage'
 import { renderWithProviders } from './helpers'
 import { api } from '../api/client'
@@ -132,6 +132,8 @@ describe('ArtifactDetailPage copy content', () => {
 
     act(() => vi.advanceTimersByTime(1500))
     expect(copyBtn()).toBeInTheDocument()
+    // The glyph reverts; the page-level notice keeps the failure readable.
+    expect(screen.getByRole('alert')).toHaveTextContent('Copy failed')
   })
 
   it('lets a retry own the status and timeout after a copy failure', async () => {
@@ -191,6 +193,32 @@ describe('ArtifactDetailPage copy content', () => {
     await screen.findByText(/old v1 body/)
     fireEvent.click(copyBtn())
     expect(copyToClipboard).toHaveBeenCalledWith('old v1 body')
+  })
+
+  it('drops a copy failure notice when the route moves to another artifact', async () => {
+    // The route element is reused across artifacts, so A's failure banner
+    // must not stay up over B.
+    function SwitchArtifact() {
+      const navigate = useNavigate()
+      return <button type="button" onClick={() => navigate('/artifacts/other')}>go to other</button>
+    }
+    vi.mocked(api).artifact = vi.fn((slug: string) => Promise.resolve(mkArtifact({ slug, name: slug })))
+    vi.mocked(copyToClipboard).mockResolvedValueOnce(false)
+    renderWithProviders(
+      <>
+        <SwitchArtifact />
+        <Routes>
+          <Route path="/artifacts/:slug" element={<ArtifactDetailPage />} />
+        </Routes>
+      </>,
+      { route: '/artifacts/cr-queue' },
+    )
+    await screen.findByText('cr-queue', { selector: 'button' })
+    fireEvent.click(copyBtn())
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Copy failed'))
+    fireEvent.click(screen.getByRole('button', { name: 'go to other' }))
+    await screen.findByText('other', { selector: 'button' })
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('offers no copy button for image artifacts (bytes, not text)', async () => {
