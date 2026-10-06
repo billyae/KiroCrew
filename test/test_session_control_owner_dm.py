@@ -1236,11 +1236,12 @@ def test_a_runner_turn_still_records_and_the_marker_is_the_runners_own(tmp_path,
     published the turn's identity on it -- records the admission, and the record
     still fences the read-to-publication path. The marker is the runner's own: it
     is set and compare-and-cleared in ``_run_chat``, whose every-exit tail
-    (``_end_turn_tail``) empties the record, and the messaging driver that runs
-    channel turns never touches it -- pinned at the source, so a driver that starts
-    setting it reds this test rather than resurrecting the stale record."""
+    (``_end_turn_tail``) empties the record -- both driven by a real turn in
+    ``test_a_runner_turn_publishes_its_key_and_its_tail_empties_the_record`` --
+    and the messaging driver that runs channel turns never touches it, pinned at
+    the source, so a driver that starts setting it reds this test rather than
+    resurrecting the stale record."""
     import inspect
-    import re
 
     from kiro_crew.dashboard import chat_runner
     from kiro_crew.messaging import dispatch, driver
@@ -1256,16 +1257,49 @@ def test_a_runner_turn_still_records_and_the_marker_is_the_runners_own(tmp_path,
     state.sessions.set_mirror_link(DISCORD_DM, ChannelLink("discord", channel_id=THREAD))
     assert chat_runner.cross_surface_withheld(state, dm) is True, "and it still fences"
 
-    runner = inspect.getsource(chat_runner._run_chat)
-    assert re.search(r"slot\._active_turn_session_key = session_key", runner)
-    assert re.search(r'slot\._active_turn_session_key = ""', runner)
-    # The teardown that empties the record is the runner's every-exit tail,
-    # which the same ``finally`` runs right after the compare-and-clear above.
-    assert re.search(r"_end_turn_tail\(state, slot, turn_exit", runner)
-    assert "slot._steer_audience_fences.clear()" in inspect.getsource(chat_runner._end_turn_tail)
     for module in (driver, dispatch):
         assert "_active_turn_session_key" not in inspect.getsource(module), module.__name__
     assert "_active_turn_session_key" in inspect.getsource(sc._in_runner_turn)
+
+
+@pytest.mark.asyncio
+async def test_a_runner_turn_publishes_its_key_and_its_tail_empties_the_record():
+    """A real dashboard turn publishes its session key on the slot while it runs,
+    and its every-exit tail clears both that key and the admission record, so a
+    record made during the turn never outlives it."""
+    from turn_harness import Do, SlotSpec, TurnScript, run_turn
+
+    from kiro_crew.acp.types import (
+        EVENT_COMPLETE,
+        EVENT_TEXT_CHUNK,
+        STOP_REASON_END_TURN,
+        AcpEvent,
+    )
+
+    held: dict = {}
+
+    def _arrange(ctx) -> None:
+        held["slot"] = ctx.slot
+
+    def _during(ctx) -> None:
+        held["key"] = ctx.slot._active_turn_session_key
+        ctx.slot._steer_audience_fences["probe-fence"] = object()
+
+    await run_turn(
+        TurnScript(
+            setup=_arrange,
+            events=[
+                Do(_during),
+                AcpEvent(kind=EVENT_TEXT_CHUNK, text="ok"),
+                AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN),
+            ],
+        ),
+        slot=SlotSpec(key="chat-owner-dm-turn"),
+    )
+    assert held["key"], "the running turn published no session key"
+    slot = held["slot"]
+    assert slot._active_turn_session_key == "", "the turn's key outlived the turn"
+    assert not slot._steer_audience_fences, "the admission record outlived the turn"
 
 
 def test_a_turn_whose_only_call_is_create_session_still_records_its_audience(tmp_path, monkeypatch):
