@@ -275,6 +275,64 @@ def _warn_if_transcripts_left_behind(mc: Path, components: list[str] | None) -> 
     )
 
 
+def _replace_omissions(snap: Path, components: list[str] | None) -> list[str]:
+    """The manifest's recorded omissions that ``--mode replace`` would turn into deletions.
+
+    Snapshot tolerates an entry it could not read by leaving it out and naming it in
+    ``MANIFEST.json``'s ``skipped`` list. Replace clears a component's live tree before
+    installing the bundle's copy, so a file the bundle omitted leaves the live data home
+    and survives only in the ``pre-restore-<ts>/`` rollback directory. This function is
+    the reader that acts on the declaration.
+
+    Asked as a CLASS through :func:`pinned_fs.omits_wanted_data`, the same predicate the
+    snapshot's prune guard uses: a symlink or non-regular entry is screened by design and
+    is not something the bundle lacks, while every other reason -- including one this
+    build has never seen -- counts. Only omissions under a component being restored are
+    returned: an omitted ``skills/`` file is no reason to refuse ``--components memory``.
+    A path no component claims is kept rather than dropped, because "could not place it"
+    must not read as "safe to clear". A ``skipped`` that is not a list, or an entry that
+    is not an object, is unreadable rather than empty, so it counts as an omission too.
+    """
+    mf = snap / "MANIFEST.json"
+    if not mf.is_file():
+        return []
+    try:
+        manifest = json.loads(mf.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        # `_manifest_components` has already refused an unparseable manifest by now.
+        return []
+    if not isinstance(manifest, dict):
+        return []
+    skipped = manifest.get("skipped")
+    if skipped is None:
+        return []
+    if not isinstance(skipped, list):
+        return ["(MANIFEST.json 'skipped' is not a list)"]
+
+    wanted = list(COMPONENTS) if components is None else components
+    restored = [(set(s.files), set(s.trees)) for n, s in COMPONENTS.items() if n in wanted]
+    every = [(set(s.files), set(s.trees)) for s in COMPONENTS.values()]
+
+    def _claimed(rel: str, by: list[tuple[set[str], set[str]]]) -> bool:
+        return any(
+            rel in files or any(rel == t or rel.startswith(t + "/") for t in trees)
+            for files, trees in by
+        )
+
+    found: list[str] = []
+    for entry in skipped:
+        if not isinstance(entry, dict):
+            found.append("(unreadable 'skipped' entry)")
+            continue
+        if not pinned_fs.omits_wanted_data(str(entry.get("reason", ""))):
+            continue
+        # Recorded with the snapshot host's separator, so a Windows bundle says `skills\x`.
+        rel = str(entry.get("path", "")).replace("\\", "/").strip("/")
+        if _claimed(rel, restored) or not _claimed(rel, every):
+            found.append(rel or "(no path recorded)")
+    return found
+
+
 def _report_unredacted_upload() -> None:
     """Say plainly what an operator gets by turning redaction off."""
     print(
@@ -1576,9 +1634,21 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 "rather than run with a destination an ancestor swap could redirect."
             ),
         )
+        p.add_argument(
+            "--allow-omissions",
+            action="store_true",
+            dest="allow_omissions",
+            help=(
+                "With --mode replace, restore a bundle whose MANIFEST.json records entries "
+                "the snapshot could not read. Live files at those paths are removed and kept "
+                "only in the pre-restore rollback directory. Without this, such a replace "
+                "is refused."
+            ),
+        )
         parsed = p.parse_args(argv)
     args = parsed
     allow_unpinned = bool(getattr(args, "allow_unpinned", False))
+    allow_omissions = bool(getattr(args, "allow_omissions", False))
 
     if args.list_components:
         _list_components()
@@ -1919,6 +1989,38 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         if components:
             print(f"🔧 Components: {','.join(components)}")
         _warn_if_transcripts_left_behind(mc, components)
+
+        # A bundle that recorded omissions is refused for replace unless the operator says
+        # otherwise. Replace clears each component's live tree before installing
+        # the bundle's copy, so every file the snapshot could not read and left out would
+        # leave the live data home and survive only in the rollback directory -- and the
+        # run would report success. Merge clears nothing and is unaffected. Checked before
+        # the dry run so a preview gives the same answer the real run would.
+        if mode == "replace":
+            omitted = _replace_omissions(snap, components)
+            if omitted and not allow_omissions:
+                shown = ", ".join(_safe_name(p) for p in omitted[:3])
+                more = f", +{len(omitted) - 3} more" if len(omitted) > 3 else ""
+                print(
+                    f"❌ This bundle omits {len(omitted)} entr"
+                    f"{'y' if len(omitted) == 1 else 'ies'} it was asked to carry "
+                    f"({shown}{more}).\n"
+                    "   --mode replace clears each component's live files before installing "
+                    "the bundle's copy, so live files at those paths would be removed and "
+                    "kept only in the pre-restore-<timestamp>/ rollback directory.\n"
+                    "   Nothing was restored. Use --mode merge, which removes nothing, or "
+                    "re-run with --allow-omissions to replace anyway."
+                )
+                _audit(
+                    "state_restore_rejected",
+                    f"reason=bundle_has_omissions from={snap_path.name}",
+                )
+                return 1
+            if omitted:
+                print(
+                    f"⚠️  --allow-omissions: {len(omitted)} omitted path(s) will be removed "
+                    "from live state if present; the rollback directory keeps the only copy."
+                )
 
         if args.dry_run:
             print(f"\n🔍 Dry run — would restore to {mc} in {mode} mode")
