@@ -827,6 +827,20 @@ class TestCatalogAllowlist:
         assert entries, "runtime scan returned nothing"
         assert {e.doc for e in entries} <= TIP_DOC_ALLOWLIST
 
+    def test_conductor_doc_is_offered_as_a_tip(self) -> None:
+        """The conductor pattern must reach users through Feature Tips.
+
+        Both halves are needed: the allowlist feeds the runtime scan, and the
+        bundled catalog is what an install without docs on disk offers.
+        """
+        from kiro_crew.tips import _BUNDLED_CATALOG_FILE
+        from kiro_crew.tips_allowlist import TIP_DOC_ALLOWLIST
+
+        assert "work-ledger.md" in TIP_DOC_ALLOWLIST
+        data = json.loads(_BUNDLED_CATALOG_FILE.read_text(encoding="utf-8"))
+        entry = next(e for e in data["entries"] if e["doc"] == "work-ledger.md")
+        assert "conductor" in entry["summary"]
+
 
 class TestStateFilePermissions:
     """Codex round-11 (HIGH): personalized tips state must be owner-only."""

@@ -233,6 +233,13 @@
       "mtime": 1788686096.0
     },
     {
+      "feature": "Work ledger (conductors and workers)",
+      "title": "Work ledger (conductors and workers)",
+      "summary": "The work ledger is the shared record between a **conductor** session and the **worker** sessions it dispatched. The conductor breaks a goal into items, stands up one session per item, and then learns what each worker did by reading a record \u2014 not by reading the worker's transcript.",
+      "doc": "work-ledger.md",
+      "mtime": 1791239914.0
+    },
+    {
       "feature": "Dynamic workflows",
       "title": "Dynamic workflows",
       "summary": "A dynamic workflow turns a goal into a multi-phase run you can watch, restart in part, and save for reuse.",

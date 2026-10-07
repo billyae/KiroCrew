@@ -63,6 +63,10 @@ TIP_DOC_ALLOWLIST: frozenset[str] = frozenset(
         "webex-integration.md",
         "wecom-integration.md",
         "workflows.md",
+        # The conductor pattern's user doc ("When you want a conductor"). Without
+        # it, Feature Tips never offers conductors, so a user only meets them by
+        # already knowing the `kirocrew-conductor` agent name.
+        "work-ledger.md",
         "weixin-integration.md",
         "whatsapp-integration.md",
     }
