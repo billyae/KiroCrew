@@ -1084,18 +1084,21 @@ describe('ActivityViewer — subagent tool-call timeline', () => {
         view="subagents"
         subagents={{ s1: mkAgent('s1', {
           status: 'tool', streaming: 'x', lastTool: 'Running: npm test', toolCount: 5,
-          toolCalls: [{ tool: 'Reading src/a.ts', ts: 1 }, { tool: 'Running: npm test', ts: 2 }],
+          toolCalls: [{ tool: 'Reading src/a.ts' }, { tool: 'Running: npm test' }],
         }) }}
       />,
     )
     const list = screen.getByTestId('subagent-tool-calls')
+    // The count (5 counted, 2 listed) sits in the heading, outside the
+    // scrolling list, so following the newest call never scrolls it away.
+    const unlisted = within(list).getByTestId('subagent-tool-calls-unlisted')
+    expect(unlisted).toHaveTextContent('3 more not listed')
+    expect(unlisted.closest('ol')).toBeNull()
     const items = within(list).getAllByRole('listitem')
-    // One "not listed" row (5 counted, 2 listed) plus the two calls.
-    expect(items).toHaveLength(3)
-    expect(items[0]).toHaveTextContent('3')
-    expect(items[1]).toHaveTextContent('Reading src/a.ts')
-    expect(items[2]).toHaveTextContent('Running: npm test')
-    expect(items[2]).toHaveAttribute('aria-current', 'step')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toHaveTextContent('Reading src/a.ts')
+    expect(items[1]).toHaveTextContent('Running: npm test')
+    expect(items[1]).toHaveAttribute('aria-current', 'step')
   })
 
   it('keeps the single last-tool line when no timeline was recorded', () => {

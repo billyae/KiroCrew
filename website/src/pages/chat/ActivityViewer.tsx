@@ -112,21 +112,36 @@ function DiskLoader({ id, autoLoad }: { id: string; autoLoad?: boolean }) {
 
 function SubagentToolCalls({ a, isRunning }: { a: SubagentActivity; isRunning: boolean }) {
   const calls = a.toolCalls ?? []
+  // Follow the newest call the way the output body does: stay pinned to the
+  // bottom unless the user scrolled up to read an earlier one.
+  const listRef = useRef<HTMLOListElement>(null)
+  const follow = useRef(true)
+  const newestTool = calls[calls.length - 1]?.tool
+  useEffect(() => {
+    const el = listRef.current
+    if (el && follow.current) el.scrollTop = el.scrollHeight
+  }, [calls.length, newestTool])
   if (!calls.length) return null
   // `toolCount` is the backend's own count; the timeline is capped and can
   // miss frames the scale coalescer merged, so say how many it leaves out
-  // instead of implying the list is the whole run.
+  // instead of implying the list is the whole run. The count sits in the
+  // heading, outside the scroller: the list follows the newest call, so a row
+  // at its top would scroll away on exactly the long, capped runs it is for.
   const unlisted = Math.max(0, (a.toolCount ?? 0) - calls.length)
   return (
     <div className="px-3 pb-2" data-testid="subagent-tool-calls">
-      <div className="text-[10px] text-muted/40 uppercase tracking-wider mb-1">{i18nT('pages.chat.activityViewer.tool_calls')}</div>
-      <ol className="px-2.5 py-2 bg-bg rounded-md text-[12px] font-mono max-h-[160px] overflow-y-auto space-y-0.5 list-none m-0">
-        {unlisted > 0 && <li className="text-muted/40 italic font-body">{i18nT('pages.chat.activityViewer.tool_calls_not_listed', { count: unlisted })}</li>}
+      <div className="text-[10px] text-muted/40 uppercase tracking-wider mb-1">
+        {i18nT('pages.chat.activityViewer.tool_calls')}
+        {unlisted > 0 && <span className="normal-case tracking-normal" data-testid="subagent-tool-calls-unlisted"> · {i18nT('pages.chat.activityViewer.tool_calls_not_listed', { count: unlisted })}</span>}
+      </div>
+      <ol ref={listRef} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8 }} className="px-2.5 py-2 bg-bg rounded-md text-[12px] font-mono max-h-[160px] overflow-y-auto space-y-0.5 list-none m-0">
         {calls.map((c, i) => {
           const current = isRunning && i === calls.length - 1
           return (
-            <li key={`${c.ts}-${i}`} className={`truncate ${current ? 'text-accent' : 'text-muted/70'}`} title={sanitizeLlmOutput(c.tool)} aria-current={current ? 'step' : undefined}>
-              <Wrench className="lucide-inline" aria-hidden="true" /> {sanitizeLlmOutput(c.tool)}
+            <li key={i} className={`truncate ${current ? 'text-accent' : 'text-muted/70'}`} title={sanitizeLlmOutput(c.tool)} aria-current={current ? 'step' : undefined}>
+              {current
+                ? <LoaderIcon className="lucide-inline animate-spin" aria-hidden="true" />
+                : <Wrench className="lucide-inline" aria-hidden="true" />} {sanitizeLlmOutput(c.tool)}
             </li>
           )
         })}
