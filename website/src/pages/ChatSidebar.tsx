@@ -2689,7 +2689,7 @@ function ChatSidebar({
   } = useSidebarTags({ filterTagIds, localSlots })
   const {
     rawColumns, tagColumnsSettled, columnsFailed, columnsError, refetchColumns, tagColumnsEnabled,
-    hideEmptyFolderBody, orderedColumns,
+    hideEmptyFolderBody, hideEmptyFolders, orderedColumns,
   } = useBoardColumns()
   // After the columns: only board view may widen the sidebar past SIDEBAR_MAX.
   const {
@@ -2710,7 +2710,7 @@ function ChatSidebar({
 
   const {
     slotFolders, foldersWithActiveSubtree, setRevealForcedVisible, isFolderHidden, filterHiddenSubtree,
-  } = useFolderVisibility({ folders, localSlots, filterHiddenFolders })
+  } = useFolderVisibility({ folders, localSlots, filterHiddenFolders, hideEmptyFolders })
 
   useStaleMoveWatcher({ foldersLoaded, localSlots, slotFolders, setStaleRecentlyMoved })
 

@@ -15043,6 +15043,8 @@
         "confirm_before_closing_session": "সেশন বন্ধ করার আগে নিশ্চিত করুন",
         "compact_empty_folders": "খালি ফোল্ডার সংক্ষিপ্ত দেখান",
         "a_folder_with_no_chats_takes_one_row_instead_of": "চ্যাট নেই এমন ফোল্ডার দুই সারির বদলে এক সারি নেয়, এবং তার নতুন চ্যাট বোতামটি ফোল্ডারের সারিতে চলে আসে",
+        "hide_empty_folders": "খালি ফোল্ডার লুকান",
+        "hide_folders_with_no_sessions_entirely_they_reap": "সেশন নেই এমন ফোল্ডার লুকানো থাকে, যতক্ষণ না তাতে কোনো সেশন তৈরি বা সরানো হয়",
         "content_width": "কনটেন্টের প্রস্থ",
         "context": "কনটেক্সট",
         "context_usage_at_which_auto_compaction_triggers": "কনটেক্সট ব্যবহারের যে %-এ অটো-কম্প্যাকশন শুরু হয়। কম মান = আরও ঘন ঘন কম্প্যাকশন, দীর্ঘ সেশন",

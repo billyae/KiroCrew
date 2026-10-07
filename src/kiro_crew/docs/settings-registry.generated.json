@@ -587,6 +587,13 @@
       "description": "Multiline wraps suggestions onto multiple rows. Single line keeps them on one horizontally-scrollable row."
     },
     {
+      "id": "chat.hide-empty-folders",
+      "label": "Hide Empty Folders",
+      "tab": "chat",
+      "route": "/settings/chat/sessions?highlight=chat.hide-empty-folders",
+      "description": "Folders with no sessions are hidden until a session is created or moved into them"
+    },
+    {
       "id": "chat.history-expanded",
       "label": "History Expanded",
       "tab": "chat",

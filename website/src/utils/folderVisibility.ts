@@ -23,12 +23,22 @@ export function computeActiveSubtree(
 }
 
 /**
- * A folder drops out of the active-sessions list only when the user hid it AND
- * its subtree currently has no active session. Re-engaging a session clears
- * `hidden` server-side, so the steady-state rule is `!hidden || hasActive`.
+ * A folder drops out of the active-sessions list when its subtree currently has
+ * no active session AND either the user hid this one folder (`folder.hidden`) OR
+ * the global "hide empty folders" setting is on. Re-engaging or filing a session
+ * clears `hidden` server-side and repopulates the active subtree, so the
+ * steady-state rule is `hasActive ? false : (hidden || hideEmpty)`.
+ *
+ * `hideEmptyAll` defaults false so the signature stays compatible with callers
+ * that only know the per-folder attribute.
  */
-export function folderIsHidden(folder: ChatFolder, activeSubtree: Set<string>): boolean {
-  return !!folder.hidden && !activeSubtree.has(folder.id)
+export function folderIsHidden(
+  folder: ChatFolder,
+  activeSubtree: Set<string>,
+  hideEmptyAll = false,
+): boolean {
+  if (activeSubtree.has(folder.id)) return false
+  return !!folder.hidden || hideEmptyAll
 }
 
 /**

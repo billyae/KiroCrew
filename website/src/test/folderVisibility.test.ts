@@ -47,6 +47,24 @@ describe('folderIsHidden', () => {
     expect(folderIsHidden({ ...folders[0], hidden: false }, active)).toBe(false)
     expect(folderIsHidden(folders[0], active)).toBe(false)
   })
+
+  describe('with the global "hide empty folders" setting on', () => {
+    it('hides an empty folder even when its own hidden attribute is not set', () => {
+      expect(folderIsHidden(folders[0], active, true)).toBe(true)
+      expect(folderIsHidden({ ...folders[0], hidden: false }, active, true)).toBe(true)
+    })
+
+    it('keeps a folder visible while its subtree has an active session', () => {
+      // `other` holds the only active slot; the global setting must not hide it.
+      expect(folderIsHidden(folders[3], active, true)).toBe(false)
+      expect(folderIsHidden({ ...folders[3], hidden: true }, active, true)).toBe(false)
+    })
+
+    it('leaves the per-folder hide unchanged when the setting is off (default)', () => {
+      expect(folderIsHidden(folders[0], active, false)).toBe(false)
+      expect(folderIsHidden({ ...folders[0], hidden: true }, active, false)).toBe(true)
+    })
+  })
 })
 
 describe('folderOffersHide', () => {

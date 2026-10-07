@@ -147,10 +147,14 @@ export function useFolderSort({ queryClient, mcCfg, mcCfgStatus, mcCfgError, mcC
 }
 
 /** Which folders each slot sits in and which folders are hidden. */
-export function useFolderVisibility({ folders, localSlots, filterHiddenFolders }: {
+export function useFolderVisibility({ folders, localSlots, filterHiddenFolders, hideEmptyFolders }: {
   folders: ChatFolder[]
   localSlots: Slot[]
   filterHiddenFolders: Set<string>
+  /** The global "hide empty folders" preference. When on, a folder whose
+   *  subtree holds no active session is hidden even without its own `hidden`
+   *  attribute set. */
+  hideEmptyFolders: boolean
 }) {
   const slotFolders = useMemo(() => {
     const valid = new Set(folders.map(f => f.id))
@@ -167,9 +171,11 @@ export function useFolderVisibility({ folders, localSlots, filterHiddenFolders }
     return computeActiveSubtree(folders, direct)
   }, [folders, localSlots, slotFolders])
 
-  // A folder drops out of the active list only when the user hid it AND it is
-  // currently empty (no active session in its subtree). Re-engaging a session
-  // clears `hidden` server-side, so visibility is `!hidden || hasActive`.
+  // A folder drops out of the active list when it is currently empty (no active
+  // session in its subtree) AND either the user hid this one folder OR the
+  // global "hide empty folders" setting is on. Re-engaging or filing a session
+  // repopulates the active subtree (and clears `hidden` server-side), so
+  // visibility is `hasActive || !(hidden || hideEmptyFolders)`.
   //
   // A reveal adds its target's ancestor chain to `revealForcedVisible`, which
   // overrides the hide for as long as this component lives. That is the whole
@@ -179,8 +185,8 @@ export function useFolderVisibility({ folders, localSlots, filterHiddenFolders }
   // so the override cannot outlive the visit it was needed for.
   const [revealForcedVisible, setRevealForcedVisible] = useState<Set<string>>(new Set())
   const isFolderHidden = useCallback(
-    (f: ChatFolder) => !revealForcedVisible.has(f.id) && folderIsHidden(f, foldersWithActiveSubtree),
-    [foldersWithActiveSubtree, revealForcedVisible],
+    (f: ChatFolder) => !revealForcedVisible.has(f.id) && folderIsHidden(f, foldersWithActiveSubtree, hideEmptyFolders),
+    [foldersWithActiveSubtree, revealForcedVisible, hideEmptyFolders],
   )
 
   // Folder IDs whose sessions are excluded from the flat lane because the

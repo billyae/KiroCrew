@@ -98,6 +98,26 @@ describe('loadChatConfig', () => {
     expect(loadChatConfig().hideEmptyFolderBody).toBe(false)
   })
 
+  it('defaults hideEmptyFolders OFF so existing sidebars are unchanged', () => {
+    // OFF is the contract: an empty folder stays a visible, labelled drop target as
+    // every install has always drawn it, so a client with no stored config must never
+    // inherit the hide.
+    expect(loadChatConfig().hideEmptyFolders).toBe(false)
+    localStorage.setItem('mc-chat-config', JSON.stringify({ showTimestamps: false }))
+    expect(loadChatConfig().hideEmptyFolders).toBe(false)
+  })
+
+  it('respects stored hideEmptyFolders=true', () => {
+    localStorage.setItem('mc-chat-config', JSON.stringify({ hideEmptyFolders: true }))
+    expect(loadChatConfig().hideEmptyFolders).toBe(true)
+  })
+
+  it('repairs a non-boolean hideEmptyFolders value to the disabled default', () => {
+    // A truthy string must not drop every empty folder out of the sidebar by accident.
+    localStorage.setItem('mc-chat-config', JSON.stringify({ hideEmptyFolders: 'yes' }))
+    expect(loadChatConfig().hideEmptyFolders).toBe(false)
+  })
+
   it('keeps collapsing long pastes until the user opts out', () => {
     // OFF is the contract: the chip is what keeps a very large paste from being
     // laid out in the composer and the sent bubble, so a client with no stored

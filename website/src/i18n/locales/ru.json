@@ -15511,6 +15511,8 @@
         "confirm_before_closing_session": "Подтверждение перед закрытием сессии",
         "compact_empty_folders": "Компактные пустые папки",
         "a_folder_with_no_chats_takes_one_row_instead_of": "Папка без чатов занимает одну строку вместо двух, а её кнопка нового чата переходит в строку папки",
+        "hide_empty_folders": "Скрывать пустые папки",
+        "hide_folders_with_no_sessions_entirely_they_reap": "Папки без сеансов скрыты, пока в них не будет создан или перемещён сеанс",
         "content_width": "Ширина содержимого",
         "context": "Контекст",
         "context_usage_at_which_auto_compaction_triggers": "Процент использования контекста, при котором срабатывает автосжатие. Меньше = чаще сжатие, длиннее сессии",

@@ -1066,6 +1066,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.hide-empty-folders",
+    "label": "Hide Empty Folders",
+    "labelKey": "pages.settings.chatPanel.hide_empty_folders",
+    "description": "Folders with no sessions are hidden until a session is created or moved into them",
+    "tab": "chat",
+    "type": "toggle",
+    "occurrence": 1,
+    "params": {
+      "sub": "sessions"
+    }
+  },
+  {
     "id": "chat.history-expanded",
     "label": "History Expanded",
     "labelKey": "pages.settings.chatPanel.history_expanded",
