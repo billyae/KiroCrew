@@ -14253,3 +14253,287 @@ def test_resolve_spawn_agent_argv_converts_a_refusal_to_acperror(tmp_path):
     client._agent = "fine"
     client._native_skill_projection = NativeSkillProjection(aliases={})
     assert client._resolve_spawn_agent_argv() == "fine"
+
+
+def _drain_frame(payload: dict) -> bytes:
+    return (json.dumps({"jsonrpc": "2.0", **payload}) + "\n").encode()
+
+
+def _drain_chunk(text: str, kind: str = "agent_message_chunk") -> bytes:
+    return _drain_frame(
+        {
+            "method": "session/update",
+            "params": {
+                "sessionId": "s1",
+                "update": {"sessionUpdate": kind, "content": {"type": "text", "text": text}},
+            },
+        }
+    )
+
+
+def _drain_tool_call(call_id: str) -> bytes:
+    return _drain_frame(
+        {
+            "method": "session/update",
+            "params": {
+                "sessionId": "s1",
+                "update": {"sessionUpdate": "tool_call", "toolCallId": call_id, "title": "Bash"},
+            },
+        }
+    )
+
+
+class TestPreTurnDrain:
+    """Between-turn text never reaches the next turn; every other frame does."""
+
+    @staticmethod
+    def _client(tmp_path, *, turn_ended: bool = True, backend: str = "claude"):
+        client = AcpClient(work_dir=tmp_path, acp_backend=backend)
+        reader = asyncio.StreamReader()
+        process = MagicMock()
+        process.stdout = reader
+        process.returncode = None
+        client._process = process
+        client._session_id = "s1"
+        client._turn_ended_on_process = turn_ended
+        return client, reader
+
+    @pytest.mark.asyncio
+    async def test_stale_text_is_not_yielded_by_the_next_turn(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        # An agent-started turn the client never read: its reply and terminal.
+        reader.feed_data(_drain_chunk("STALE background reply"))
+        reader.feed_data(_drain_chunk("STALE thinking", "agent_thought_chunk"))
+        reader.feed_data(_drain_frame({"id": 3, "result": {"stopReason": "end_turn"}}))
+
+        async def send_request(method, params):
+            # The new turn's frames arrive only once its request is written.
+            reader.feed_data(_drain_chunk("fresh answer"))
+            reader.feed_data(_drain_frame({"id": 9, "result": {"stopReason": "end_turn"}}))
+            return 9
+
+        client.ensure_ready = AsyncMock()
+        client._send_request = send_request
+
+        chunks = [chunk async for chunk in client.send_message_stream("status?", timeout=5)]
+
+        assert chunks == ["fresh answer"]
+
+    @pytest.mark.asyncio
+    async def test_every_non_text_frame_goes_back_in_order(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        reader.feed_data(_drain_tool_call("t1"))
+        reader.feed_data(_drain_chunk("STALE"))
+        reader.feed_data(
+            _drain_frame(
+                {
+                    "id": 11,
+                    "method": "session/request_permission",
+                    "params": {"sessionId": "s1", "options": []},
+                }
+            )
+        )
+        reader.feed_data(_drain_frame({"id": 4, "result": {"stopReason": "end_turn"}}))
+        reader.feed_data(
+            _drain_frame(
+                {
+                    "method": "_kiro.dev/mcp/oauth_request",
+                    "params": {"serverName": "srv", "oauthUrl": "https://example.com/a"},
+                }
+            )
+        )
+
+        await client._pre_turn_drain()
+
+        kept = [(m.method, m.id) for m in client._buffer]
+        assert kept == [
+            ("session/update", None),
+            ("session/request_permission", 11),
+            (None, 4),
+            ("_kiro.dev/mcp/oauth_request", None),
+        ]
+        assert not client._turn_lock.locked()
+
+    @pytest.mark.asyncio
+    async def test_kept_frames_never_overflow_the_replay_buffer(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        room = client._buffer.maxlen
+        for i in range(room + 3):
+            reader.feed_data(_drain_tool_call(f"t{i}"))
+
+        await client._pre_turn_drain()
+
+        assert len(client._buffer) == room
+        # The rest stays in the pipe, in order, behind the kept frames.
+        for i in range(room):
+            assert client._buffer[i].params["update"]["toolCallId"] == f"t{i}"
+        client._buffer.clear()
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.params["update"]["toolCallId"] == f"t{room}"
+
+    @pytest.mark.asyncio
+    async def test_dropped_chunks_are_counted_once_without_content(self, tmp_path, caplog):
+        client, reader = self._client(tmp_path)
+        for _ in range(3):
+            reader.feed_data(_drain_chunk("SECRET model text"))
+
+        with caplog.at_level("WARNING", logger="kiro_crew.acp.client"):
+            await client._pre_turn_drain()
+
+        lines = [r.getMessage() for r in caplog.records if "pre-turn drain" in r.getMessage()]
+        assert len(lines) == 1
+        assert "discarded 3 text chunk(s)" in lines[0]
+        assert "SECRET" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_drain_runs_on_the_claude_backend_only(self, tmp_path):
+        client, reader = self._client(tmp_path, backend="pi")
+        reader.feed_data(_drain_chunk("left for pi's next turn"))
+
+        await client._pre_turn_drain()
+
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.method == "session/update"
+
+    @pytest.mark.asyncio
+    async def test_no_drain_before_the_first_turn_on_a_process(self, tmp_path):
+        client, reader = self._client(tmp_path, turn_ended=False)
+        reader.feed_data(_drain_chunk("session/load replay"))
+
+        await client._pre_turn_drain()
+
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.method == "session/update"
+
+    @pytest.mark.asyncio
+    async def test_drain_skips_while_a_read_turn_holds_the_lock(self, tmp_path, monkeypatch):
+        client, reader = self._client(tmp_path)
+        monkeypatch.setattr(acp_client, "_PRE_TURN_DRAIN_LOCK_WAIT", 0.01)
+        reader.feed_data(_drain_chunk("live turn frame"))
+        await client._turn_lock.acquire()
+        try:
+            await client._pre_turn_drain()
+        finally:
+            client._turn_lock.release()
+
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.method == "session/update"
+
+    @pytest.mark.asyncio
+    async def test_a_finished_read_turn_arms_the_drain(self, tmp_path):
+        from contextlib import aclosing
+
+        client, reader = self._client(tmp_path, turn_ended=False)
+        reader.feed_data(_drain_frame({"id": 1, "result": {"stopReason": "end_turn"}}))
+
+        async with aclosing(client._prompt_loop(1, timeout=5)) as loop:
+            async for _ in loop:
+                break
+
+        assert client._turn_ended_on_process is True
+
+    @pytest.mark.asyncio
+    async def test_drain_does_not_read_while_a_command_waits(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        client._awaited_responses.add(5)
+        reader.feed_data(_drain_chunk("STALE"))
+
+        await client._pre_turn_drain()
+
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.method == "session/update"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_marks_its_id_only_while_waiting(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        seen: list[set] = []
+
+        async def unmarked(req_id, timeout, **_kw):
+            seen.append(set(client._awaited_responses))
+            return {"ok": True}
+
+        client._wait_for_response_unmarked = unmarked
+
+        assert await client._wait_for_response(7, timeout=1.0) == {"ok": True}
+        assert seen == [{7}]
+        assert client._awaited_responses == set()
+
+    @pytest.mark.asyncio
+    async def test_drain_never_parks_on_stdout_beside_a_waiter(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        # A partial line: a parked readline() here would make the next reader raise.
+        reader.feed_data(b'{"jsonrpc": "2.0", "id": 5, "res')
+
+        drain = asyncio.ensure_future(client._pre_turn_drain())
+        await asyncio.sleep(0)
+        # A command's reader starts while the drain is still running.
+        waiter = asyncio.ensure_future(client._read_message(timeout=1.0))
+        await asyncio.sleep(0)
+        reader.feed_data(b'ult": {"ok": true}}\n')
+        msg = await waiter
+        await drain
+        assert msg is not None and msg.id == 5
+
+    @pytest.mark.asyncio
+    async def test_drain_stops_when_a_request_write_starts_mid_drain(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        reader.feed_data(_drain_tool_call("t1"))
+        reader.feed_data(_drain_chunk("left for the request's own reader"))
+        original = client._read_message
+
+        async def read_then_start_a_write(timeout):
+            msg = await original(timeout=timeout)
+            client._requests_in_write.add(42)
+            return msg
+
+        client._read_message = read_then_start_a_write
+
+        await client._pre_turn_drain()
+
+        client._read_message = original
+        assert [m.params["update"]["sessionUpdate"] for m in client._buffer] == ["tool_call"]
+        client._buffer.clear()
+        msg = await client._read_message(timeout=1.0)
+        assert msg is not None and msg.params["update"]["sessionUpdate"] == "agent_message_chunk"
+
+    @pytest.mark.asyncio
+    async def test_send_request_marks_its_id_only_across_the_write(self, tmp_path):
+        client, reader = self._client(tmp_path)
+        client._process.stdin = MagicMock()
+        seen: list[set] = []
+
+        async def write(data, request_id, method):
+            seen.append(set(client._requests_in_write))
+
+        client._write_request_bounded = write
+
+        req_id = await client._send_request("session/set_mode", {"sessionId": "s1"})
+
+        assert seen == [{req_id}]
+        assert client._requests_in_write == set()
+
+    @pytest.mark.asyncio
+    async def test_a_chunk_written_while_the_prompt_blocks_build_is_drained(
+        self, tmp_path, monkeypatch
+    ):
+        client, reader = self._client(tmp_path)
+        loop = asyncio.get_running_loop()
+
+        def build(message, *, allow_image=True):
+            # Runs in a worker thread: the backend writes while it works.
+            loop.call_soon_threadsafe(reader.feed_data, _drain_chunk("STALE late frame"))
+            return [{"type": "text", "text": message}]
+
+        monkeypatch.setattr(acp_client, "build_prompt_blocks", build)
+        sent: list[dict] = []
+
+        async def send_request(method, params):
+            sent.append(params)
+            return 9
+
+        client._send_request = send_request
+
+        assert await client._send_prompt("hi") == 9
+        assert sent[0]["prompt"] == [{"type": "text", "text": "hi"}]
+        assert not client._buffer
+        assert not client._stdout_line_buffered()

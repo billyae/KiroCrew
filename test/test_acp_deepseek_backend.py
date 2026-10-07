@@ -2083,7 +2083,7 @@ def test_a_stalled_restore_keeps_its_mcp_detail() -> None:
     gates on a set of methods, so a harness sent the other verb loses that detail
     while the message still claims to describe the restore.
     """
-    body = inspect.getsource(AcpClient._wait_for_response)
+    body = inspect.getsource(AcpClient._wait_for_response_unmarked)
     assert (
         "{METHOD_SESSION_NEW, METHOD_SESSION_LOAD, METHOD_SESSION_RESUME}" in body
     ), "the enricher must name every restore verb this client can send"
