@@ -157,6 +157,59 @@ def _navigate_target_is_public(url: str) -> bool:
     return all(c.is_global for c in candidates)
 
 
+def _allowed_local_origins() -> frozenset[str]:
+    """The operator's ``dashboard.browser_local_origins``, read fresh each call.
+
+    Already canonical ``host:port`` entries (``config.sections`` drops every
+    other shape). Fail-CLOSED to empty: a config read error must not widen the
+    navigate gate, the opposite polarity from ``_use_builtin_browser``.
+    """
+    try:
+        raw = getattr(KiroCrewConfig.load().dashboard, "browser_local_origins", [])
+    except Exception:
+        return frozenset()
+    return frozenset(e for e in raw if isinstance(e, str)) if isinstance(raw, list) else frozenset()
+
+
+def _navigate_target_is_allowed_local(url: str, allowed: frozenset[str]) -> bool:
+    """True iff ``url`` is a loopback origin the operator listed, exactly.
+
+    The exception to :func:`_navigate_target_is_public`, never a relaxation of
+    it: the same parser-differential refusals run first, then the URL's own
+    ``host:port`` (default port filled in from the scheme) must equal an entry
+    byte for byte. Only the three spellings ``config.sections`` admits can ever
+    match, so an alternate IPv4 encoding (``0x7f000001``, ``2130706433``) or a
+    ``*.localhost`` name stays refused even when ``localhost:<port>`` is listed.
+    Userinfo is refused outright so ``http://localhost:5173@host/`` cannot be
+    read two ways. The gateway's own port is refused even when listed: it is
+    the control plane this gate exists to keep the panel away from.
+    """
+    if not allowed:
+        return False
+    raw = url.strip()
+    if "\\" in raw or " " in raw or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+        return False
+    parts = urlsplit(raw)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or "@" in parts.netloc:
+        return False
+    host = (parts.hostname or "").lower()
+    if host == "::1":
+        host = "[::1]"
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    if f"{host}:{port}" not in allowed:
+        return False
+    try:
+        return port != mcp_core._api_port()
+    except Exception:
+        return False  # gateway port unknowable -> cannot prove this is not it
+
+
 def _args_are_scalar(op_args: dict[str, Any]) -> bool:
     """Reject non-scalar op arguments (e.g. an object-valued ``type.text``).
 
@@ -366,16 +419,26 @@ def browser(name: str, args: dict[str, Any]) -> str:
     # loopback/private/link-local target could drive a local control plane (this
     # dashboard included) or the cloud-metadata endpoint. Only public http(s) is
     # auto-driven here; route non-public targets through playwright-cli, whose
-    # path prompts for the required approval (matching the CLI gate).
+    # path prompts for the required approval (matching the CLI gate). The one
+    # exception is a loopback origin the OPERATOR listed in
+    # dashboard.browser_local_origins (exact host:port, never the gateway's
+    # port); config.json is read-only inside the sandbox, so the agent cannot
+    # add to that list itself.
     if op == "navigate":
         url = op_args.get("url")
-        if not isinstance(url, str) or not _navigate_target_is_public(url):
+        if not isinstance(url, str) or not (
+            _navigate_target_is_public(url)
+            or _navigate_target_is_allowed_local(url, _allowed_local_origins())
+        ):
             return (
                 "Error: the browser tool only opens public http(s) URLs in the "
-                "built-in panel. For a localhost/loopback/private/link-local "
-                "address (e.g. a local dev server or an internal host), use "
+                "built-in panel, plus loopback origins the user listed under "
+                "Built-in Browser Local Origins (dashboard.browser_local_origins, "
+                "exact host:port such as localhost:5173). For any other "
+                "localhost/loopback/private/link-local address, use "
                 "playwright-cli, which prompts for the required approval: "
-                "`playwright-cli open <url>`."
+                "`playwright-cli open <url>`. Do not edit the setting yourself; "
+                "ask the user to add the origin if they want the panel to open it."
             )
 
     # Resolve the caller's session key the SAME way every other X-Session-Key
