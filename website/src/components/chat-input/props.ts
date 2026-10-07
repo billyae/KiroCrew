@@ -291,6 +291,13 @@ export interface ChatInputProps {
   /** The host's clamp for a drop offset (out of mentions and pasted chips),
    *  so the drop caret previews where `onTreeEntryDrop` will insert. */
   clampDropOffset?: (text: string, at: number) => number
+  /** Backspace/Delete on or next to a STAGED file mention: the host returns
+   *  the atomic-delete result (new text + caret) that removes the whole
+   *  `@mention` as one unit, or null to let the key do its default
+   *  one-character edit. Keeps an edited mention from leaving a half-reference
+   *  whose chip then silently unstages (#14675). Absent: mentions delete one
+   *  character at a time, as before. */
+  onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: boolean) => { value: string; caret: number } | null
   onFileOpen?: (path: string) => void
   project?: string
   /** Checked-out branch of the active project (or short SHA when detached). */

@@ -739,6 +739,61 @@ export function useFileMentionActions({
     else if (liveToken) recordSlotToken(p, liveToken)
     setInput(prev => stripMentions(prev))
   }
+  // Backspace/Delete on or next to a STAGED file mention removes the whole
+  // `@mention` as one unit, so a hand-edit can never leave a half-reference
+  // (`@src/main.t`) in the text whose chip the reconciliation then silently
+  // unstages, sending the agent a file name with no attachment (#14675). The
+  // chip follows via the reconciliation effect, which drops a chip whose
+  // aliases no longer appear. Returns the atomic-delete result (new text and
+  // caret) when the keystroke lands on a staged mention, or null to let the
+  // key fall through to the default one-character edit -- a plain word, a
+  // typed `@token` with no staged chip behind it, or any key but a modifier-
+  // free Backspace/Delete on a collapsed caret. Only the recorded aliases of
+  // currently-staged files are treated atomically: a leftover alias of a
+  // removed chip is ordinary text the user is editing by hand.
+  const mentionKeyEdit = (
+    text: string, selStart: number, selEnd: number, key: string, mods: boolean,
+  ): { value: string; caret: number } | null => {
+    if (mods || selStart !== selEnd) return null
+    if (key !== 'Backspace' && key !== 'Delete') return null
+    const slotTokens = currentSlotTokens()
+    if (!slotTokens) return null
+    const staged = new Set(pendingFilesRef.current)
+    const fold = foldWinSep(isWindowsShapedPath(currentProjectRef.current || ''))
+    const folded = fold(text)
+    const caret = selStart
+    // Every alias of every currently-staged file, each with the sibling set
+    // the shared matcher needs so one mention is never read as the prefix of
+    // a longer sibling's (`report` vs `report,`). Separators are folded on a
+    // Windows-shaped project so a respelled mention is still found; the fold
+    // is 1:1, so indices on the folded copy are the original's.
+    const aliases: string[] = []
+    for (const p of staged) for (const t of slotTokens[p] ?? []) aliases.push(fold(t.slice(1)))
+    const siblingSet = new Set(aliases)
+    for (const bare of aliases) {
+      const others = new Set([...siblingSet].filter(a => a !== bare))
+      const re = mentionTokenRegex(bare, 'g', others)
+      for (let m = re.exec(folded); m !== null; m = re.exec(folded)) {
+        if (m[0].length === 0) { re.lastIndex++; continue }
+        const at = m.index + m[1].length // the `@`
+        const end = m.index + m[0].length // just past the token (boundary is a lookahead)
+        // Backspace fires when the caret is just past the mention or inside
+        // it; Delete when it is just before or inside. Caret strictly inside
+        // is covered by both so a mid-mention edit is atomic either way.
+        const touches = key === 'Backspace' ? caret > at && caret <= end : caret >= at && caret < end
+        if (!touches) continue
+        // Consume one adjacent space so the surrounding text does not collapse
+        // to a double space (`a @f b` -> `a  b`); drop the leading one when
+        // there is no trailing space to take instead.
+        let s = at
+        let e = end
+        if (e < text.length && text[e] === ' ') e++
+        else if (s > 0 && text[s - 1] === ' ') s--
+        return { value: text.slice(0, s) + text.slice(e), caret: s }
+      }
+    }
+    return null
+  }
   /** The folder chip's remove (ChatInput `onRemoveDir`). */
   const removeDirChip = (rel: string) => {
     // The chip derives from the `@rel/` token, so removing the
@@ -762,5 +817,5 @@ export function useFileMentionActions({
     if (token) recordSlotToken(canon, token)
     setPendingFiles(prev => addPendingFile(prev, canon))
   }
-  return { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile }
+  return { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile, mentionKeyEdit }
 }

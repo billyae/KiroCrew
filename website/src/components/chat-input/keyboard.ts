@@ -103,11 +103,12 @@ export function useComposerFocus({ autoFocusKey, disabled, isMobile, composerCon
   }, [typedCommandMenus, composerCollapsed, expandComposer, composerControl])
 }
 
-export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, promptOptimizer, connected, optimizePrompt, sendOnEnter, onChange, optimizingRef, fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef }: {
+export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, onMentionKey, promptOptimizer, connected, optimizePrompt, sendOnEnter, onChange, optimizingRef, fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef }: {
   rawPasteRef: React.MutableRefObject<boolean>
   handleUndoKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
   endUndoBurst: () => void
   handleTokenKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
+  onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: boolean) => { value: string; caret: number } | null
   promptOptimizer: boolean
   connected: boolean
   optimizePrompt: () => void
@@ -140,6 +141,22 @@ export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, h
     // Enter/history, so edits on or around a token never reach the default
     // textarea handling.
     if (handleTokenKey(e)) return
+    // Atomic file-mention handling: Backspace/Delete on or next to a staged
+    // `@mention` removes the whole mention as one unit, so an edit never
+    // leaves a half-reference whose chip then silently unstages (#14675). Runs
+    // in the same slot as the paste-token atom, before Enter/history, so the
+    // mention never reaches the default one-character edit.
+    if (onMentionKey && !ime.isComposing(e)) {
+      const ta = e.currentTarget
+      const mods = e.metaKey || e.ctrlKey || e.altKey || e.shiftKey
+      const edit = onMentionKey(valueRef.current, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, e.key, mods)
+      if (edit) {
+        e.preventDefault()
+        onChange(edit.value)
+        requestAnimationFrame(() => inputRef.current?.setSelectionRange(edit.caret, edit.caret))
+        return
+      }
+    }
 
     // Cmd+Shift+Enter (or Ctrl+Shift+Enter) → optimize prompt.
     // Gated on `promptOptimizer` like the Optimize button and plus-menu row:
@@ -221,7 +238,7 @@ export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, h
       e.metaKey || e.ctrlKey || e.altKey || e.shiftKey
     ) return
     promptHistory.recall(e, { sentMessages, current: valueRef.current, onChange, inputRef })
-  }, [rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, promptOptimizer, connected, optimizePrompt, sendOnEnter, onChange, optimizingRef, fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef])
+  }, [rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, onMentionKey, promptOptimizer, connected, optimizePrompt, sendOnEnter, onChange, optimizingRef, fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef])
 }
 
 /** The editor's change handlers. Both mark the edit as the user's (the undo

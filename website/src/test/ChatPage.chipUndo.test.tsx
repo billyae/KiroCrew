@@ -347,4 +347,50 @@ describe('ChatPage file chip remove + undo', { timeout: 15_000 }, () => {
     expect(llm).toContain('/repo/report,')
     expect(llm).not.toMatch(/\/repo\/report(?=\s|$)/m)
   })
+
+  // #14675: a Backspace at the end of a staged `@mention` must remove the
+  // WHOLE mention (and unstage its chip), not one character -- otherwise the
+  // text keeps a half-reference (`@src/main.t`) and the message is sent naming
+  // a file with no attachment. FAILS on origin/main: with no atomic-delete
+  // handler the Backspace is not consumed, so the full `@src/main.ts` mention
+  // stays in the text (and its chip stays staged). Passes with the fix.
+  it('Backspace at the end of a staged mention removes the whole mention atomically (#14675)', async () => {
+    const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
+    await renderPage(store)
+    const ta = await pickFile()
+    // Reproduce the issue's exact steps: `please review @src/main.ts for the bug`.
+    fireEvent.change(ta, { target: { value: 'please review @src/main.ts for the bug' } })
+    await waitFor(() => expect(ta.value).toContain('@src/main.ts'))
+    // Caret right after `@src/main.ts` (before the following space).
+    const caret = 'please review @src/main.ts'.length
+    ta.setSelectionRange(caret, caret)
+    await act(async () => { fireEvent.keyDown(ta, { key: 'Backspace' }) })
+
+    // The whole mention is gone -- no half-reference left behind.
+    await waitFor(() => expect(ta.value).not.toContain('@src/main.t'))
+    expect(ta.value).not.toContain('@src/main.ts')
+    expect(ta.value).toBe('please review for the bug')
+    // The chip unstages with it, and the send carries no attachment.
+    await waitFor(() => expect(screen.queryByLabelText('Remove')).not.toBeInTheDocument())
+    const llm = await send(ta)
+    expect(llm).not.toContain('@src/main.t')
+    expect(llm).not.toMatch(/\[attached_file \d\]/)
+  })
+
+  // The mirror of the above for the forward Delete key, caret just BEFORE the
+  // `@`. Same atomic removal, same chip unstage.
+  it('Delete just before a staged mention removes the whole mention atomically (#14675)', async () => {
+    const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
+    await renderPage(store)
+    const ta = await pickFile()
+    fireEvent.change(ta, { target: { value: 'please review @src/main.ts for the bug' } })
+    await waitFor(() => expect(ta.value).toContain('@src/main.ts'))
+    const caret = 'please review '.length // just before the `@`
+    ta.setSelectionRange(caret, caret)
+    await act(async () => { fireEvent.keyDown(ta, { key: 'Delete' }) })
+
+    await waitFor(() => expect(ta.value).not.toContain('@src/main.ts'))
+    expect(ta.value).toBe('please review for the bug')
+    await waitFor(() => expect(screen.queryByLabelText('Remove')).not.toBeInTheDocument())
+  })
 })
