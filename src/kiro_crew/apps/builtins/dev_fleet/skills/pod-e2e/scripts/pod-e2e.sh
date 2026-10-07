@@ -198,20 +198,20 @@ if url_port in refused_live_ports:
     raise SystemExit("base_url port %d is reserved for a production gateway" % url_port)
 if claimed != url_port:
     raise SystemExit("port %d does not match base_url port %d" % (claimed, url_port))
-# The checkout is the pod'"'"'s own clone path -- the field this issue adds so a
-# handle can be told apart from a same-named worktree in another clone. It is
-# OPTIONAL: a handle produced by an older tool, or a `pod status` that could no
-# longer resolve the checkout, emits it empty or omits it, and the harness falls
-# back to its other door checks rather than refusing. When present it must be a
-# clean non-empty string, held to the same no-control-char discipline every other
-# field is, so a malformed value is refused here rather than compared downstream.
+# The checkout is the pod'"'"'s own clone path, the field that lets a handle be
+# told apart from a same-named worktree in another clone. It is OPTIONAL: a
+# handle from an older tool, or a `pod status` with no pinned checkout, emits it
+# empty or omits it, and the harness falls back to its other door checks rather
+# than refusing. When present it must be a clean non-empty string. A real
+# checkout path may contain spaces (e.g. "/home/u/My Projects/..."), so reject
+# only control characters here; the later bash comparison quotes both sides.
 checkout = d.get("checkout", "")
 if checkout is None:
     checkout = ""
 if not isinstance(checkout, str):
     raise SystemExit("checkout must be a string")
-if checkout and has_control_or_space(checkout):
-    raise SystemExit("checkout contains whitespace or a control character")
+if checkout and any(unicodedata.category(ch).startswith("C") for ch in checkout):
+    raise SystemExit("checkout contains a control character")
 canonical_host = "[%s]" % host if ":" in host else host
 print(json.dumps({
     "name": name,
@@ -317,10 +317,10 @@ fi
 # the pre-flight validator above cannot make (it has no $CHECKOUT to compare).
 #
 # Fires only when the handle carries a non-empty checkout: an older tool, or a
-# `pod status` that could not resolve its checkout, emits it empty, and the gate
+# `pod status` for a pod with no pinned checkout, emits it empty, and the gate
 # yields to the validator's other door checks rather than refusing a handle it
 # cannot identify. Both sides are canonicalized (symlinks, `..`) so two spellings
-# of one path are not read as a mismatch, mirroring resolve_checkout()'s
+# of one path are not read as a mismatch, mirroring the pinned path's
 # Path(...).resolve() comparison.
 if [ -n "$HANDLE_JSON" ]; then
   HANDLE_CHECKOUT=$(printf '%s' "$CANONICAL_HANDLE_JSON" | python3 -c '
@@ -345,6 +345,15 @@ except Exception:
       exit 64
     fi
   fi
+fi
+
+# Make a dormant gate visible. When a handle carries no checkout the cross-clone
+# gate above cannot fire, so the harness runs exactly as an older tool did -- a
+# silent skip. Say so once on stderr (never stdout, which the summary parser
+# reads), so a QA verdict produced without the cross-clone check is not mistaken
+# for one that passed it. HANDLE_CHECKOUT is set only when $HANDLE_JSON mode ran.
+if [ -n "$HANDLE_JSON" ] && [ -z "${HANDLE_CHECKOUT:-}" ]; then
+  echo "note: handle has no checkout; cross-clone check skipped" >&2
 fi
 
 # Prefer the WORKTREE'S OWN CLI for the pod verbs, now that the checkout is known.

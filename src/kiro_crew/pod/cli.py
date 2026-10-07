@@ -1368,15 +1368,14 @@ def _status(cfg: PodConfig, args: argparse.Namespace) -> None:
     port = rt.derive_port(cfg, name)
     up = rt.is_active(cfg, name)
     code = rt.health(cfg, name, port) if up else 0
-    # Resolve the pod's own checkout so the handle carries identity, matching
-    # `pod up --json`. A status read must never fail on resolution, so a pod
-    # whose checkout can no longer be resolved emits an empty string rather
-    # than dying -- the consumer treats an empty/absent checkout as "no
-    # identity to compare" and falls back to its other door checks.
-    try:
-        checkout = str(rt.resolve_checkout(cfg, name, cwd=Path.cwd()))
-    except rt.PodError:
-        checkout = ""
+    # Carry the pod's own pinned checkout so the handle has identity. Emit the
+    # pinned CHECKOUT= verbatim -- the path `pod up` wrote and `boot()` relies
+    # on -- never a git-worktree guess, which from a caller's cwd can name the
+    # caller's own same-named worktree in a different clone and let a handle
+    # pass the cross-clone gate for the wrong clone. A missing pin emits an
+    # empty string; the consumer treats empty/absent as "no identity to
+    # compare" and falls back to its other door checks.
+    checkout = rt.read_env_file(cfg, name).get("CHECKOUT", "")
     if args.json:
         print(
             json.dumps(

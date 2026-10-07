@@ -808,8 +808,8 @@ def test_handle_door_accepts_a_clean_checkout(tmp_path):
 def test_handle_door_still_accepts_a_handle_with_no_checkout(tmp_path):
     """Back-compat: a handle from a tool that predates the field is not refused.
 
-    Older `pod up`/`pod status --json`, and a `pod status` that could not resolve
-    its checkout, carry no checkout; the door must keep accepting them.
+    An older `pod up`/`pod status --json`, and a `pod status` for a pod with no
+    pinned checkout, carry no checkout; the door keeps accepting them.
     """
     handle = tmp_path / "handle.json"
     handle.write_text(
@@ -860,8 +860,30 @@ def test_handle_door_refuses_a_checkout_with_a_control_character(tmp_path):
     )
     res = _check_handle(tmp_path, str(handle))
     assert res.returncode == 64, res.stdout + res.stderr
-    assert "checkout contains whitespace or a control character" in res.stderr
+    assert "checkout contains a control character" in res.stderr
     assert "ACCEPTED" not in res.stdout
+
+
+def test_handle_door_accepts_a_checkout_with_a_space(tmp_path):
+    """A real checkout path may contain spaces (e.g. "My Projects"); the door
+    accepts it. Only control characters are refused."""
+    handle = tmp_path / "handle.json"
+    handle.write_text(
+        json.dumps(
+            {
+                "name": "smoke",
+                "base_url": "http://127.0.0.1:7811",
+                "token": "t",
+                "port": 7811,
+                "health": 200,
+                "checkout": "/home/u/My Projects/clone-a/wt/smoke",
+            }
+        ),
+        encoding="utf-8",
+    )
+    res = _check_handle(tmp_path, str(handle))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ACCEPTED" in res.stdout
 
 
 # --------------------------------------------------------------------------- #
@@ -936,6 +958,47 @@ def test_cross_clone_gate_yields_when_the_handle_has_no_checkout(tmp_path):
     res = _run_checkout_gate(tmp_path, None, harness)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ACCEPTED" in res.stdout
+
+
+# --------------------------------------------------------------------------- #
+# The dormant-gate notice: when a handle carries no checkout the cross-clone
+# gate cannot fire, so the harness runs without it. That silent skip must be
+# announced on stderr (never stdout, which the summary parser reads) so a
+# verdict produced without the cross-clone check is not mistaken for one that
+# passed it.
+# --------------------------------------------------------------------------- #
+SKIP_NOTICE = _fragment('if [ -n "$HANDLE_JSON" ] && [ -z "${HANDLE_CHECKOUT:-}" ]; then', "\nfi")
+
+
+def _run_skip_notice(tmp_path: Path, handle_checkout) -> subprocess.CompletedProcess:
+    """Run the dormant-gate notice with HANDLE_JSON set and a given checkout.
+
+    Pass None to model an identity-less handle (notice must fire); pass a path
+    to model a handle that armed the gate (notice must stay silent).
+    """
+    preamble = [
+        "set -uo pipefail",
+        'HANDLE_JSON="/some/handle.json"',
+        "HANDLE_CHECKOUT=" + ("''" if handle_checkout is None else shlex.quote(handle_checkout)),
+    ]
+    snippet = "\n".join([*preamble, SKIP_NOTICE, 'echo "DONE"'])
+    return _run(snippet, str(tmp_path))
+
+
+def test_skip_notice_fires_when_the_handle_has_no_checkout(tmp_path):
+    """An identity-less handle emits the skip note on stderr, keeps stdout clean."""
+    res = _run_skip_notice(tmp_path, None)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "cross-clone check skipped" in res.stderr
+    assert "cross-clone check skipped" not in res.stdout
+    assert "DONE" in res.stdout
+
+
+def test_skip_notice_is_silent_when_the_handle_carries_a_checkout(tmp_path):
+    """A handle that armed the gate produces no skip note."""
+    res = _run_skip_notice(tmp_path, "/home/u/clone-a/wt/smoke")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "cross-clone check skipped" not in res.stderr
 
 
 def test_handle_refuses_a_missing_health_at_the_door(tmp_path):

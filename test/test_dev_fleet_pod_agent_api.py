@@ -469,6 +469,46 @@ def test_pod_up_tool_says_so_when_the_cli_withheld_the_token(
     assert not out.startswith("Error:")
 
 
+def test_pod_up_tool_carries_the_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handle must name WHICH clone the pod serves, so the documented copy-paste
+    arms the harness's cross-clone gate. Without this line the gate stays dormant."""
+    monkeypatch.setattr(
+        apps_tools.mcp_core,
+        "_post",
+        lambda *_a, **_k: {
+            "ok": True,
+            "name": "kc-wt-1",
+            "port": 7913,
+            "base_url": "http://127.0.0.1:7913",
+            "token": "tok-abc123",
+            "checkout": "/home/u/clone-a/wt/kc-wt-1",
+        },
+    )
+    out = apps_tools.pod_up("pod_up", {"worktree": "kc-wt-1"})
+    assert "checkout: /home/u/clone-a/wt/kc-wt-1" in out
+
+
+def test_pod_up_tool_omits_the_checkout_when_the_pod_has_no_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pod with no pinned checkout emits no checkout line, so a consumer leaves
+    the field empty rather than inventing one."""
+    monkeypatch.setattr(
+        apps_tools.mcp_core,
+        "_post",
+        lambda *_a, **_k: {
+            "ok": True,
+            "name": "kc-wt-1",
+            "port": 7913,
+            "base_url": "http://127.0.0.1:7913",
+            "token": "tok-abc123",
+            "checkout": "",
+        },
+    )
+    out = apps_tools.pod_up("pod_up", {"worktree": "kc-wt-1"})
+    assert "checkout:" not in out
+
+
 def test_a_route_refusal_reaches_the_model_as_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """``Error:`` is load-bearing: call_tool_with_logging derives the outcome from it."""
     monkeypatch.setattr(

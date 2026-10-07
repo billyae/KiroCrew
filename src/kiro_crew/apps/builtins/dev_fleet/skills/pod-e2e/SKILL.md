@@ -145,9 +145,9 @@ own reply into the file: it is labelled prose, and `json.load` rejects it with e
 64.
 
 ```bash
-# pod_up {"worktree": "<wt>"} -> {"name": "<wt>", "base_url": ..., "token": ..., "port": ...}
+# pod_up {"worktree": "<wt>"} -> {"name": "<wt>", "base_url": ..., "token": ..., "port": ..., "checkout": ...}
 # pod_status {"worktree": "<wt>"} -> health
-# keep pod_up's name and write the fresh health code into that object, then:
+# keep pod_up's name AND its checkout, write the fresh health code into that object, then:
 bash <app-skills-dir>/pod-e2e/scripts/pod-e2e.sh <wt> --handle-json "$H/handle.json" --video
 # ... and when you are done, pod_down {"worktree": "<wt>"}
 ```
@@ -156,7 +156,7 @@ The file is the object `pod_up` returns, including its own `name`, with the
 `health` code `pod_status` reports added:
 
 ```json
-{"name": "<wt>", "base_url": "http://127.0.0.1:7813", "token": "...", "port": 7813, "health": 200}
+{"name": "<wt>", "base_url": "http://127.0.0.1:7813", "token": "...", "port": 7813, "checkout": "/home/u/clone-a/wt/smoke", "health": 200}
 ```
 
 `name` must be a non-empty string exactly equal to the `<wt>` argument. The
@@ -181,6 +181,16 @@ That is not shape pedantry: validating one representation and using another can
 point the harness at the live plane. The `pod_up` producer already emits the
 canonical URL, token, and port; add only the fresh `health` code from
 `pod_status`.
+
+`checkout` is the pod's own clone path, copied verbatim from `pod_up`'s
+`checkout:` line. Carry it: it is what lets the harness refuse a handle that
+describes a pod serving a DIFFERENT clone than the one it reads specs and writes
+artifacts from (two clones can hold a same-named worktree, and `name` alone
+cannot tell them apart -- that silently-wrong-checkout green is the hazard this
+field closes). When the handle omits `checkout`, the harness cannot make that
+check and runs without it, exactly as an older tool did; a pod with no pinned
+checkout reports an empty `checkout:` line, and leaving the field empty or absent
+is then correct.
 
 In that mode the script calls no pod verb at all, and three things follow:
 

@@ -1243,9 +1243,9 @@ POD_CLI = Path(__file__).resolve().parent.parent / "src/kiro_crew/pod/cli.py"
 
 class TestStatusJsonCarriesCheckout:
     """`pod status --json` must carry the pod's own checkout, so a handle it
-    produces can be told apart from a same-named worktree in another clone
-    (issue #10833). The field is best-effort: an unresolvable checkout emits an
-    empty string rather than failing the status read."""
+    produces can be told apart from a same-named worktree in another clone. The
+    field is best-effort: a pod with no pinned checkout emits an empty string
+    rather than failing the status read."""
 
     def _cfg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PodConfig:
         monkeypatch.setenv("KIROCREW_POD_ENV_DIR", str(tmp_path / "env"))
@@ -1271,15 +1271,27 @@ class TestStatusJsonCarriesCheckout:
         assert payload["name"] == "demo"
         assert payload["status"] == "up"
 
-    def test_status_json_emits_empty_checkout_when_unresolvable(
+    def test_status_json_emits_empty_checkout_when_no_pin(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     ) -> None:
-        """A status read must not die because the checkout can no longer be
-        resolved; it emits an empty string and the consumer falls back."""
+        """A pod with no pinned checkout emits an empty string, and the status
+        read still succeeds; the consumer treats empty as "no identity"."""
+        c = self._cfg(tmp_path, monkeypatch)
+        # No pin written for "demo".
+        pod_cli._status(c, argparse.Namespace(name="demo", json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["checkout"] == ""
+
+    def test_status_json_never_resolves_a_same_named_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """With no pin, status emits "" even when a same-named worktree exists
+        under cwd: it reads only the pinned CHECKOUT, never a git guess that
+        could name the caller's own clone and pass the cross-clone gate."""
         c = self._cfg(tmp_path, monkeypatch)
 
-        def _boom(cfg, name, *, cwd=None, use_pin=True):
-            raise rt.PodError("no checkout")
+        def _boom(*a: object, **k: object) -> Path:
+            raise AssertionError("status must not call resolve_checkout")
 
         monkeypatch.setattr(rt, "resolve_checkout", _boom)
         pod_cli._status(c, argparse.Namespace(name="demo", json=True))
