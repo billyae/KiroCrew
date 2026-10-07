@@ -45,9 +45,8 @@
  * to a bare visit; the roster is the explicit `?view=roster`, which the
  * header Back writes and which never auto-opens.
  *
- * Creating a crewmate happens in place of the chat: the guided flow (the
- * embedded Meet CrewMates flow) or the New crewmate form, one at a time,
- * with the chat and side panel hidden but still MOUNTED. See `openGuided`.
+ * Creating a crewmate happens in place of the chat, on the New crewmate card,
+ * with the chat and side panel hidden but still MOUNTED. See `openCreate`.
  */
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -57,7 +56,7 @@ import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 import { PanelRightSolid } from '../../components/icons/panels'
 import { Btn } from '../../components/ui'
 import { CrewMemberMark } from '../../components/CrewMemberMark'
-import NewCrewmateDialog, { type CreatedCrewmate } from './NewCrewmateDialog'
+import NewCrewmateDialog, { type CreatedCrewmate, type CrewmateDraft } from './NewCrewmateDialog'
 import { useTranslation } from 'react-i18next'
 import { api, type CrewTeam, type MemberRosterRow } from '../../api/client'
 import { crewDisplayName, type KiroCrewAgent } from '../../components/AgentSelector'
@@ -131,8 +130,6 @@ import { CrewDashboardFrame } from './CrewWebview'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import ErrorNotice from '../../components/ErrorNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
-import MeetCrewmatesFlow, { CREWMATES_PAGE_ENTERED_EVENT, START_MEET_CREWMATES_EVENT, type CrewmateCreatedReceipt, type MeetCrewmatesDraft } from '../../components/MeetCrewmatesFlow'
-import { hasNoCrewmates, useMeetCrewmatesGate } from '../../hooks/useMeetCrewmatesGate'
 import { useGuideOpenedSurface } from '../../guide/useGuideOpenedSurface'
 import { useGuideRevealScope } from '../../guide/GuideRevealScope'
 import { useGuideSelection } from '../../guide/guidePredicates'
@@ -144,7 +141,7 @@ import { sessionTitleRoster } from '../../utils/sessionRoster'
 import { SearchFilterBar, FilterMenuButton, FilterChip, FILTER_CHIP_ROW_CLS, FilterMenuLabel, FilterMenuContent } from '../../components/SearchFilterBar'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import {
-  countByFilter, listedByDefault, narrowRoster, parseSort, parseSourceFilter, parseStatusFilters, queryNarrows,
+  countByFilter, hasNoCrewmates, listedByDefault, narrowRoster, parseSort, parseSourceFilter, parseStatusFilters, queryNarrows,
   rosterPopulation, sortRoster,
   SORT_OPTIONS, SOURCE_FILTERS, STATUS_FILTERS,
   type MemberSignals, type MemberSort, type MemberSourceFilter, type MemberStatusFilter, type RosterQuery,
@@ -171,7 +168,7 @@ import TeamGroupHeader from './TeamGroupHeader'
 import TeamView, { type TeamMemberInput } from './TeamView'
 import TeamDialog from './TeamDialog'
 import { TEAM_COLLAPSED_KEY, TEAM_PARAM, groupRosterByTeam, parseCollapsedTeams, serializeCollapsedTeams } from './teamGroups'
-import { safeGetItem, safeGetSessionItem, safeSetItem, safeSetSessionItem } from '../../utils/safeStorage'
+import { safeGetItem, safeSetItem } from '../../utils/safeStorage'
 import { useMemberProjection, useMemberRosterViews } from '../../state/useMemberProjection'
 import type { RosterView } from '../../state/memberProjectionTypes'
 import type { CrewmateIdentity } from '../chat/CrewmateMessage'
@@ -182,9 +179,9 @@ import { uiLocation } from '../../uiLocations/uiLocation'
  *  "+" New crewmate, the empty-state hero and the switcher's New crewmate open
  *  `NewCrewmateDialog` (embedded) with its Advanced settings folded; the "+"
  *  menu's Advanced row and the hero's Advanced link open the same form with
- *  Advanced settings already unfolded. A drafted proposal (an
- *  Assistant link carrying a name and goal, a guide) opens the guided flow
- *  (`MeetCrewmatesFlow`, embedded). All perform the same `POST /api/agents`
+ *  Advanced settings already unfolded. A drafted proposal (a Captain
+ *  create link carrying a name and goal, a guide) opens the same card with
+ *  that name and goal filled in. All perform the same `POST /api/agents`
  *  write as the crew manager's create form (one write path, several front
  *  doors); this page's form also asks for the crewmate's first greeting.
  *  Editing an existing crewmate also happens IN this page now (CREW-18688): the
@@ -808,50 +805,9 @@ function CrewmateEmptyHero({ onCreate, onAdvanced, held }: {
   )
 }
 
-/** Browser-session record of the crewmate-created receipts, keyed by the
- *  member whose chat the creation was started from. sessionStorage: it
- *  survives a reload or a page change in this tab, never another tab or a
- *  new browser session. It is NOT a server record -- no backend holds it. */
-export const CREATED_RECEIPTS_KEY = 'mc-members-created-receipts'
-const RECEIPT_SCHEDULES = new Set<CrewmateCreatedReceipt['schedule']>(['saved', 'refused', 'unknown', 'none'])
-/** At most this many origins are kept; one receipt per origin (the latest). */
-const MAX_RECEIPTS = 20
-
-function isReceipt(v: unknown): v is CrewmateCreatedReceipt {
-  if (!v || typeof v !== 'object') return false
-  const r = v as Record<string, unknown>
-  return typeof r.name === 'string' && r.name !== '' && typeof r.goal === 'string'
-    && (r.key === undefined || (typeof r.key === 'string' && r.key !== ''))
-    && RECEIPT_SCHEDULES.has(r.schedule as CrewmateCreatedReceipt['schedule'])
-}
-
-export function readCreatedReceipts(): Record<string, CrewmateCreatedReceipt> {
-  try {
-    const raw = safeGetSessionItem(CREATED_RECEIPTS_KEY)
-    if (!raw) return {}
-    const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const out: Record<string, CrewmateCreatedReceipt> = Object.create(null)
-    for (const [origin, receipt] of Object.entries(parsed as Record<string, unknown>).slice(-MAX_RECEIPTS)) {
-      if (origin && isReceipt(receipt)) {
-        out[origin] = { name: receipt.name, goal: receipt.goal, schedule: receipt.schedule, ...(receipt.key ? { key: receipt.key } : {}) }
-      }
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
-
-function writeCreatedReceipts(receipts: Record<string, CrewmateCreatedReceipt>) {
-  // Storage full or blocked: the receipt still shows for this page's life.
-  const entries = Object.entries(receipts).slice(-MAX_RECEIPTS)
-  safeSetSessionItem(CREATED_RECEIPTS_KEY, JSON.stringify(Object.fromEntries(entries)))
-}
-
 /** A same-origin `/members?create=1` link's draft, or null for anything else
  *  -- including an href the URL parser refuses, which must never throw. */
-export function createDraftFromHref(href: string | null, base: string): MeetCrewmatesDraft | null {
+export function createDraftFromHref(href: string | null, base: string): CrewmateDraft | null {
   if (!href) return null
   let url: URL
   try {
@@ -894,13 +850,6 @@ export default function MembersPage() {
   )
   const loaded = rosterQuery.data !== undefined || rosterQuery.isError
   const loadError = rosterQuery.data === undefined && rosterQuery.isError
-  // Ask the host to show Meet CrewMates on the first visit. The host decides
-  // whether it is still due (whether this workspace has seen it, nothing
-  // else), so announcing on every mount is safe; the empty-state button stays
-  // the on-demand entry.
-  useEffect(() => {
-    window.dispatchEvent(new Event(CREWMATES_PAGE_ENTERED_EVENT))
-  }, [])
   // ONE source of truth for the roster fields the page derives from (starred
   // count, the Starred filter, search, sort, source chips): the react-query
   // rows merged with each member's pushed `roster` projection, projection
@@ -1210,131 +1159,84 @@ export default function MembersPage() {
   // '' — no thread opened). The remembered-member fallback never sets it —
   // there the user named nobody. Cleared once a different member opens.
   const [gone, setGone] = useState<{ name: string; shown: string } | null>(null)
-  // The New crewmate form, shown in place of the chat. Only one creation
-  // surface at a time.
+  // The New crewmate card, shown in place of the chat.
   const [createOpen, setCreateOpen] = useState(false)
-  // Whether that form opens with Advanced settings unfolded: folded for New
+  // Whether the card opens with Advanced settings unfolded: folded for New
   // crewmate, unfolded for Advanced (the "+" menu row and the hero's link).
+  // A proposal carrying a goal unfolds it too (the card's own rule), so the
+  // goal is in view.
   const [createExpanded, setCreateExpanded] = useState(false)
-  const guided = useMeetCrewmatesGate()
-  const [creationDraft, setCreationDraft] = useState<MeetCrewmatesDraft>()
-  // Receipts, keyed by the member the creation started from; see
-  // CREATED_RECEIPTS_KEY. Seeded from this tab's session record.
-  const [createdReceipts, setCreatedReceipts] = useState<Record<string, CrewmateCreatedReceipt>>(readCreatedReceipts)
-  const creationOrigin = useRef('')
+  // The proposal an opening starts from (a create link's name and goal), or
+  // none. A NEW object per opening: the card re-fills from it by identity.
+  const [createDraft, setCreateDraft] = useState<CrewmateDraft>()
   const mayLeave = useMayLeaveForNavigation()
-  // Only one creation surface is ever on screen, and only one holds a draft:
-  // the guided flow stays MOUNTED (its draft survives while hidden), the full
-  // form (Advanced) is opened only while the guided draft is untouched.
-  const guidedEditedRef = useRef(false)
-  const guidedBusyRef = useRef(false)
-  const onDraftStateChange = useCallback(({ edited, busy }: { edited: boolean; busy: boolean }) => {
-    guidedEditedRef.current = edited
-    guidedBusyRef.current = busy
+  // The card's own report of whether the user changed what it opened with,
+  // and whether a create is in flight.
+  const createEditedRef = useRef(false)
+  const createBusyRef = useRef(false)
+  const onCreateDraftState = useCallback(({ edited, busy }: { edited: boolean; busy: boolean }) => {
+    createEditedRef.current = edited
+    createBusyRef.current = busy
   }, [])
-  // The flow kept the user's edited draft over a new proposal: say so.
-  const [draftKept, setDraftKept] = useState(false)
   const createOpenRef = useRef(false)
   createOpenRef.current = createOpen
-  const openGuided = useCallback((draft?: MeetCrewmatesDraft, leaveGranted = false) => {
-    if (guidedBusyRef.current) return
-    // The New crewmate form is up: leaving it is the form's own guard's question
-    // (it asks only when that form holds a draft). Refused, it stays. A guide
-    // that brought us here has already asked it (`leaveGranted`).
-    if (createOpenRef.current) {
-      if (!leaveGranted && !mayLeave()) return
-      setCreateOpen(false)
-    }
-    creationOrigin.current = activeNameRef.current
-    setDraftKept(false)
-    // Handed to the flow as a proposal. The flow, not the page, decides
-    // whether it applies: a draft the user has edited is kept and the new
-    // proposal is not written over it (MeetCrewmatesFlow `onDraftKept`).
-    if (draft) setCreationDraft(draft)
-    window.dispatchEvent(new Event(START_MEET_CREWMATES_EVENT))
+  /** Every door to the New crewmate card: the "+" menu, the hero and the
+   *  switcher (no draft), and a create link or guide (a proposed name and
+   *  goal). A card already open is left only if its guard agrees, which asks
+   *  only when the user changed it (a guide that brought us here already
+   *  asked: `leaveGranted`); refused, it stays as it is. The chat behind the card
+   *  stays mounted, so its unsent draft is there again on the way back. */
+  const openCreate = useCallback((expanded: boolean, draft?: CrewmateDraft, leaveGranted = false) => {
+    // A create in flight keeps its card as sent: nothing re-fills it.
+    if (createOpenRef.current && createBusyRef.current) return
+    if (createOpenRef.current && !leaveGranted && !mayLeave()) return
+    createEditedRef.current = false
+    setCreateDraft(draft ? { ...draft } : undefined)
+    setCreateExpanded(expanded)
+    setCreateOpen(true)
   }, [mayLeave])
   const draftRequest = searchParams.get('create') === '1'
-  // Set below, once `closeGuided` exists: records the guide that opened the flow.
+  // Set below, once the card's close exists: records the guide that opened it.
   const markGuideOpenedRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (!draftRequest) return
     const granted = (location.state as { leaveGranted?: boolean } | null)?.leaveGranted === true
     markGuideOpenedRef.current()
-    openGuided({ name: searchParams.get('name') ?? '', goal: searchParams.get('goal') ?? '' }, granted)
+    openCreate(false, { name: searchParams.get('name') ?? '', goal: searchParams.get('goal') ?? '' }, granted)
     const next = new URLSearchParams(searchParams)
     next.delete('create'); next.delete('name'); next.delete('goal')
     setSearchParams(next, { replace: true })
-  }, [draftRequest, searchParams, setSearchParams, openGuided, location.state])
-  const recordCreated = (receipt: CrewmateCreatedReceipt) => {
-    guidedEditedRef.current = false
-    const origin = creationOrigin.current || activeNameRef.current
-    if (origin) {
-      setCreatedReceipts((prev) => {
-        const next = { ...prev }
-        delete next[origin]
-        next[origin] = receipt
-        writeCreatedReceipts(next)
-        return next
-      })
-    }
-    guided.onCreated()
-  }
-  const guidedOpen = guided.open
-  const guidedDone = guided.onDone
-  /** Hiding the guided flow preserves its form-owned draft state. */
-  const closeGuided = useCallback((outcome: 'completed' | 'dismissed') => {
-    if (guidedBusyRef.current) return
-    setDraftKept(false)
-    guidedDone(outcome)
-  }, [guidedDone])
-  // A guide that opened the flow and was then called off steps it aside so the
+  }, [draftRequest, searchParams, setSearchParams, openCreate, location.state])
+  // A guide that opened the card and was then called off steps it aside so the
   // chat (with the guide's result line) shows again -- only while the user has
   // not touched the draft. An edited draft is theirs and stays open.
   markGuideOpenedRef.current = useGuideOpenedSurface('crewmate.create', {
-    open: guidedOpen,
-    isPristine: () => !guidedEditedRef.current && !guidedBusyRef.current,
-    close: () => closeGuided('dismissed'),
+    open: createOpen,
+    isPristine: () => !createEditedRef.current && !createBusyRef.current,
+    close: () => setCreateOpen(false),
   })
-  // Choosing a chat or a team while a creation surface is up means "show me
-  // that": the guided flow steps aside (its draft stays mounted and resumes
-  // on the next open); the New crewmate form is left only if its own guard agrees.
-  const leaveGuided = useCallback((): boolean => {
-    if (guidedBusyRef.current) return false
+  // Choosing a chat or a team while the card is up means "show me that": the
+  // card is left only if its own guard agrees (a create in flight asks too).
+  // A card whose create just succeeded has already been stood down by
+  // `handleCreated`, so opening the new crewmate passes straight through.
+  const leaveCreate = useCallback((): boolean => {
     if (createOpenRef.current) {
       if (!mayLeave()) return false
       setCreateOpen(false)
     }
-    if (guidedOpen) closeGuided('dismissed')
     return true
-  }, [guidedOpen, closeGuided, mayLeave])
+  }, [mayLeave])
   // A way back to a chat (the guide's "Back to Captain") asked for the chat:
-  // the creation surface standing in its place steps aside, exactly as when
-  // the chat is chosen in the roster. The state is spent once.
+  // the card standing in its place steps aside, exactly as when the chat is
+  // chosen in the roster. The state is spent once.
   const showChatRequested = wantsShownChat(location.state)
   useEffect(() => {
     if (!showChatRequested) return
-    leaveGuided()
+    leaveCreate()
     navigate({ search: location.search }, { replace: true, state: null })
-  }, [showChatRequested, leaveGuided, navigate, location.search])
-  /** The New crewmate (folded) and Advanced (unfolded) doors to the create form.
-   *  Never abandons a guided draft the user worked on: that draft is shown
-   *  again instead of a second, competing one. */
-  const openCreateForm = useCallback((expanded: boolean) => {
-    if (guidedBusyRef.current) return
-    if (guidedEditedRef.current) {
-      if (!guidedOpen) {
-        creationOrigin.current = activeNameRef.current
-        window.dispatchEvent(new Event(START_MEET_CREWMATES_EVENT))
-      }
-      return
-    }
-    if (guidedOpen) guidedDone('dismissed')
-    setDraftKept(false)
-    setCreateExpanded(expanded)
-    setCreateOpen(true)
-  }, [guidedOpen, guidedDone])
-  const openAdvanced = useCallback(() => openCreateForm(true), [openCreateForm])
-  const openQuick = useCallback(() => openCreateForm(false), [openCreateForm])
+  }, [showChatRequested, leaveCreate, navigate, location.search])
+  const openAdvanced = useCallback(() => openCreate(true), [openCreate])
+  const openQuick = useCallback(() => openCreate(false), [openCreate])
   /** The DM column, the containing block of the modal profile card. */
   const threadColumnRef = useRef<HTMLElement>(null)
   // Crewmates just created here whose first chat open has not answered yet,
@@ -2676,7 +2578,7 @@ export default function MembersPage() {
   }, [])
   // A creation surface (guided flow or Advanced form) hides the chat while it
   // stays mounted: hidden is not viewed, so it neither reads nor suppresses.
-  const threadShown = pageVisible && !guided.open && !createOpen
+  const threadShown = pageVisible && !createOpen
   useEffect(() => {
     // Viewing the thread is the read — but only a VISIBLE view is a view. A
     // hidden member tab neither clears its own badge nor relays one; on
@@ -2879,7 +2781,7 @@ export default function MembersPage() {
    *  lands in one tick. */
   const openMember = useCallback(
     async (m: MemberRosterRow): Promise<boolean> => {
-      if (!leaveGuided()) return false
+      if (!leaveCreate()) return false
       // Re-clicking the open member is the repair gesture (re-POST); the URL
       // is unchanged so the sync effect would not fire — call through. It is
       // also an explicit choice of that member, so a swap notice still
@@ -2920,7 +2822,7 @@ export default function MembersPage() {
       if (ok) go()
       return ok
     },
-    [activeName, urlMember, isMobile, activate, setSearchParams, leaveGuided],
+    [activeName, urlMember, isMobile, activate, setSearchParams, leaveCreate],
   )
 
   // A crewmate was just created in this page's dialog: close it and open its
@@ -2971,16 +2873,6 @@ export default function MembersPage() {
     setFollowUp(null)
     setSearchParams({ [MEMBER_PARAM]: created.name }, { replace: true })
   }, [rosterQuery, openMember, setSearchParams, queryClient])
-
-  /** Opens a crewmate created here by its member KEY (never the display
-   *  name), through the same guards as any switch. Not on the roster yet (its
-   *  re-read is in flight): the URL names it once the page's guards agree,
-   *  and the URL sync opens it when the roster lands. */
-  const openCreatedMember = useCallback((key: string) => {
-    const target = members.find((m) => m.name === key)
-    if (target) void openMember(target)
-    else leave(() => setSearchParams({ [MEMBER_PARAM]: key }, { replace: true }))
-  }, [members, openMember, leave, setSearchParams])
 
   const handleCreated = useCallback((created: CreatedCrewmate) => {
     // The form's work is done: the open that follows must not ask to leave it.
@@ -3130,7 +3022,7 @@ export default function MembersPage() {
   // bare roster below md so the back button pops.
   const openTeam = useCallback(
     (id: string) => {
-      if (!leaveGuided()) return
+      if (!leaveCreate()) return
       const go = () => {
         if (urlMember || urlTeam || !isMobile) {
           // The replace keeps the entry's own state: below md this branch is
@@ -3149,7 +3041,7 @@ export default function MembersPage() {
       if (!schedAtStakeRef.current()) { go(); return }
       void schedGuardRef.current().then((ok) => { if (ok) go() })
     },
-    [urlMember, urlTeam, isMobile, setSearchParams, location.state, leaveGuided],
+    [urlMember, urlTeam, isMobile, setSearchParams, location.state, leaveCreate],
   )
   const closeTeamView = useCallback(() => {
     if ((location.state as { fromRoster?: boolean } | null)?.fromRoster) navigate(-1)
@@ -3263,7 +3155,7 @@ export default function MembersPage() {
         className={`${
           activeName && !activeTeam && !rosterPinned
             ? 'hidden'
-            : activeName || activeTeam || guided.open || createOpen || postCreateError
+            : activeName || activeTeam || createOpen || postCreateError
               ? 'hidden md:flex'
               : 'flex'
         } ${LIST_SHELL_CLS} relative w-full md:w-[var(--roster-w)] shrink-0 flex-col min-h-0`}
@@ -3728,7 +3620,7 @@ export default function MembersPage() {
         // panel's own copy — the two surfaces share several sentences, "Opening
         // the conversation…" among them, and each says it about itself.
         data-testid="member-main-column"
-        style={guided.open || createOpen ? { display: 'none' } : undefined}
+        style={createOpen ? { display: 'none' } : undefined}
         onClickCapture={(event) => {
           if (!isAssistantMember(active) || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
           const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
@@ -3737,7 +3629,7 @@ export default function MembersPage() {
           if (!draft) return
           event.preventDefault()
           event.stopPropagation()
-          openGuided(draft)
+          openCreate(false, draft)
         }}
       >
         {postCreateNotice}
@@ -4243,37 +4135,6 @@ export default function MembersPage() {
                     agentLocked
                     frameless
                     followContentWidth
-                    crewmateCreated={Object.prototype.hasOwnProperty.call(createdReceipts, active.name) ? (() => {
-                      const receipt = createdReceipts[active.name]
-                      return (
-                        <section className="mx-4 mb-4 rounded-xl border border-border bg-card text-text p-4" role="status" data-testid="member-created-receipt">
-                          <h2 className="text-sm font-semibold">{t('components.meetCrewmatesFlow.step4_title', { name: receipt.name })}</h2>
-                          <p className="mt-2 text-sm whitespace-pre-wrap break-words">{receipt.goal}</p>
-                          {receipt.schedule === 'none' && (
-                            <p className="mt-2 text-[13px] text-muted">
-                              <span className="font-medium text-text">{t('components.meetCrewmatesFlow.when_label')}</span>{' '}
-                              <span>{t('components.meetCrewmatesFlow.when_ask')}</span>
-                            </p>
-                          )}
-                          {/* No hand-off: the receipt sits above the Assistant composer, whose unsent draft the hand-off navigation would discard. */}
-                          {(receipt.schedule === 'refused' || receipt.schedule === 'unknown') && (
-                            <ErrorNotice message={t(receipt.schedule === 'refused' ? 'components.meetCrewmatesFlow.ready_no_schedule' : 'components.meetCrewmatesFlow.ready_schedule_unknown', { name: receipt.name })} />
-                          )}
-                          <Btn
-                            className="mt-3"
-                            onClick={() => {
-                              // Through the page's own exit guards (an open
-                              // Profile's Schedules draft asks first), like
-                              // every other member switch.
-                              openCreatedMember(receipt.key ?? receipt.name)
-                            }}
-                            data-testid="member-created-receipt-open"
-                          >
-                            {t('components.meetCrewmatesFlow.open_chat', { name: receipt.name })}
-                          </Btn>
-                        </section>
-                      )
-                    })() : undefined}
                     // The failure notice above owns the verdict on this thread
                     // while a repair has failed; the pane's own "Session
                     // ready" would contradict it one line down.
@@ -4299,45 +4160,16 @@ export default function MembersPage() {
           </>
         )}
       </section>
-      <div className={guided.open || createOpen ? 'flex flex-1 min-w-0 min-h-0 flex-col overflow-y-auto' : 'hidden'} data-testid="member-create-pane">
-        {guided.open && draftKept && (
-          <p role="status" className="mx-4 mt-3 mb-0 rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-text" data-testid="member-draft-kept">
-            {t('components.meetCrewmatesFlow.draft_kept')}
-          </p>
-        )}
-        {/* Always mounted: an unfinished guided draft survives while hidden.
-            Below sm the chapter stacks and must GROW past the pane so the pane
-            scrolls (sticky footer); clamping it with min-h-0 there clipped the
-            goal examples with nothing able to scroll. From sm up the chapter's
-            own section scrolls inside the clamped height. */}
-        <div className={guided.open ? 'flex flex-1 min-w-0 sm:min-h-0' : 'hidden'} data-testid="member-create-guided">
-          <MeetCrewmatesFlow
-            embedded
-            open={guided.open}
-            initialDraft={creationDraft}
-            onCreated={recordCreated}
-            persistFailed={guided.persistFailed}
-            onDone={closeGuided}
-            onDraftKept={() => setDraftKept(true)}
-            onDraftStateChange={onDraftStateChange}
-            // The shell's leave registry is synchronous, so this page's own
-            // `window.confirm` asks, as its other guards here do.
-            confirmLeave={(message) => window.confirm(message)}
-            onOpenMember={(key) => {
-              closeGuided('completed')
-              openCreatedMember(key)
-            }}
-            onReturnToChat={() => {
-              if (creationOrigin.current) setSearchParams({ [MEMBER_PARAM]: creationOrigin.current }, { replace: true })
-            }}
-          />
-        </div>
-        {/* The New crewmate form, in place of the chat like the flow. */}
+      <div className={createOpen ? 'flex flex-1 min-w-0 min-h-0 flex-col overflow-y-auto' : 'hidden'} data-testid="member-create-pane">
+        {/* The New crewmate card, in place of the chat. */}
         <div className={createOpen ? 'flex flex-1 min-w-0 min-h-0 justify-center p-4' : 'hidden'} data-testid="member-create-advanced">
           <NewCrewmateDialog
             embedded
             open={createOpen}
             startExpanded={createExpanded}
+            initialDraft={createDraft}
+            guided
+            onDraftStateChange={onCreateDraftState}
             firstGreeting
             onClose={() => setCreateOpen(false)}
             onCreated={handleCreated}
@@ -4357,7 +4189,7 @@ export default function MembersPage() {
           taking the gesture back while it is hidden; narrow ones make it an
           overlay the header button opens, with the same close control, on the
           chat page's dock motion. */}
-      <div className={guided.open || createOpen ? 'hidden' : 'contents'}>
+      <div className={createOpen ? 'hidden' : 'contents'}>
       {active && (() => {
           // Notes — the crewmate's own standing notes, read-only (no editor:
           // see CrewNotesTab). Its briefing read is gated on the tab being on

@@ -826,7 +826,7 @@ Captain's identity is locked:
   `/api/agents/kirocrew-captain` (`deletes_assistant_member`). The crew editor
   shows Captain's Danger zone row disabled with the reason.
 - **Key reserved for the installer.** `members.key_new_crew` -- shared by
-  `POST /api/agents` (which the Meet CrewMates flow and the `crewmate.create`
+  `POST /api/agents` (which the New crewmate card and the `crewmate.create`
   card both call) and `kirocrew agent create` -- refuses the key with 409
   `assistant_member_reserved` whether or not Captain exists, and never derives it
   from a free-form name. The `crewmate.create` card refuses it at preview, and
@@ -1052,8 +1052,8 @@ A newly created crewmate speaks first through the same route and the same
 dispatch (`maybe_start_member_greeting`), and only when its create asked for it:
 `POST /api/agents` with `first_greeting: true` (exactly `true`; any other value
 owes nothing) writes `members/<member_id>/first_greeting_owed.json` after the
-record is published. The Crewmates page's create form sends it, and so does the `crewmate.create` card; the crew manager's door, the
-guided flow and the CLI do not. The page asks only for Captain and for
+record is published. The Crewmates page's create form sends it, and so does the `crewmate.create` card; the crew manager's door and the
+CLI do not. The page asks only for Captain and for
 dashboard-created rows (`dashboard_created`); the server answers `not_owed` for
 a crewmate without the record, so an existing crewmate is never greeted. An
 owed crewmate greets on its own pinned local thread (binding member == slot
@@ -1084,25 +1084,27 @@ same card: Built from, What it looks after, and the crew editor fields
 (workspace, model, triggers, session colour). It is folded by default;
 `startExpanded` opens it unfolded, which is what the hero's Advanced link and
 the crew manager's door pass; the "+" menu holds only New crewmate and New team. Folding unmounts
-those fields but keeps their values, and every create sends them. A
-drafted proposal (an Assistant link carrying a name and goal, a guide's create
-link) opens the embedded `MeetCrewmatesFlow`: goal, name, schedule and
-confirmation in the chapter shell's split-panel layout. The embedded shell retains the original 760px height and
-6xl width caps and the same four-mascot composition. From `xl` its aside takes the
-original shell's widest 415px and shows all four mascots; narrower asides show
-none, since the page navigation leaves no room for them beside the copy.
-No modal, viewport scrim or focus trap is added. The current
-chat stays mounted while hidden, preserving its draft and reading position.
-Back returns to it and retains the unfinished creation draft; navigation away
-warns before losing that draft. A proposal cannot replace an edited draft.
-Completion offers a return to the originating conversation with a host-rendered
-creation receipt, or an explicit link to the new member's chat. Receipts are
-shape-checked records in this browser tab's sessionStorage, keyed by originating
-member; they survive a page return in that tab but are not server-side transcript
-entries or cross-device history. The receipt is
-not an AI message and does not start an agent turn. Schedule failures are reported
-separately from successful member creation. Timing and write reconciliation are
-specified in [config](config.md#meet-crewmates-first-run-state).
+those fields but keeps their values, and every create sends them.
+
+The card is the page's one creation surface. A drafted proposal (a Captain
+create link `/members?create=1&name=…&goal=…`, clicked in Captain's chat or
+reached by address, or the `crewmate.create` guide, whose enter step is that
+link) opens the same card with the proposal filled in: the name in **Name**,
+the goal in **What it looks after**, with Advanced settings unfolded when a
+goal is proposed so it is in view (`initialDraft`). The page strips the link's
+parameters once read. A proposal left as proposed is not the user's draft: it
+leaves without asking, and a later proposal replaces it at once; a card the
+user changed is replaced only once its own leave guard agrees, or when the
+guide that brought the proposal already asked. No modal, viewport scrim or
+focus trap is added. The current chat stays mounted while hidden, preserving
+its draft and reading position, and closing the card returns to it. The guided
+door (`guided`) carries the guide's anchor on its Create button, and its create
+request carries the guide headers so the gateway credits the guide's one
+commit step from the crewmate it actually created; a save the guide had not
+reached closes the guide as saved without it, and a refused save stops it
+waiting. When the crewmate runs is not asked on the card: the crewmate's first
+greeting asks for its goal and, once the goal is clear, may offer a schedule
+for the user to confirm (see `captain_greeting.py`).
 
 The explicit Advanced entry opens the same card with its workspace, model,
 routing and colour controls already unfolded, also embedded in the page. That

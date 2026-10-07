@@ -7529,7 +7529,7 @@
       "add_member_pending_roster": "Refresh the list for {{name}} before adding another crewmate.",
       "add_member_settling": "Finishing {{name}}'s first message before adding another crewmate.",
       "create_options_failed": "Couldn't load the {{list}} choices; the default is shown.",
-      "create_job_hint": "Plain words are fine. If it should run on its own, you can add a schedule after creating, on the Schedule page.",
+      "create_job_hint": "Plain words are fine. If it should run on its own, your crewmate can set up a schedule with you once it's created.",
       "create_roster_failed": "{{name}} was created, but the list didn't refresh.",
       "create_retry_roster": "Refresh your crewmates",
       "create_workspace_hint": "The folder this crewmate reads and writes.",

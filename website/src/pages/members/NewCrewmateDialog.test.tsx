@@ -402,3 +402,91 @@ describe('NewCrewmateDialog', () => {
     expect(confirm).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('NewCrewmateDialog opened from a proposal', () => {
+  beforeEach(() => {
+    props.onClose = vi.fn()
+    props.onCreated = vi.fn()
+    vi.mocked(api.createKirocrewAgent).mockClear()
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+  const goalField = () => screen.queryByRole('textbox', { name: 'What it looks after' }) as HTMLTextAreaElement | null
+
+  it('fills the name, and the goal with Advanced settings open so the goal is in view', async () => {
+    renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} {...props} />)
+    await screen.findByTestId('crewmate-create-form')
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Scout')
+    expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(goalField()).toHaveValue('Watch CI')
+    fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+    await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).toMatchObject({ name: 'Scout', description: 'Watch CI' })
+  })
+
+  it('a proposal with no goal keeps Advanced settings folded', async () => {
+    renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: '  ' }} {...props} />)
+    await screen.findByTestId('crewmate-create-form')
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Scout')
+    expect(screen.getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('an untouched proposal leaves without asking and reports itself unedited; an edit is the user\'s draft', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const states: { edited: boolean; busy: boolean }[] = []
+    renderWithProviders(
+      <NavigationLeaveGuardProvider>
+        <Probe />
+        <NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />
+      </NavigationLeaveGuardProvider>,
+    )
+    await screen.findByTestId('crewmate-create-form')
+    expect(mayLeave()).toBe(true)
+    expect(unloadPrevented()).toBe(false)
+    expect(states.at(-1)).toEqual({ edited: false, busy: false })
+    fireEvent.change(goalField()!, { target: { value: 'Watch CI and the release' } })
+    await waitFor(() => expect(states.at(-1)).toEqual({ edited: true, busy: false }))
+    expect(unloadPrevented()).toBe(true)
+    expect(mayLeave()).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('an untouched proposal whose New workspace form holds input reports itself edited, and unedited once that form is closed', async () => {
+    const states: { edited: boolean; busy: boolean }[] = []
+    renderWithProviders(
+      <NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: 'Watch CI' }} onDraftStateChange={(st) => states.push(st)} {...props} />,
+    )
+    await screen.findByTestId('crewmate-create-form')
+    const workspace = await screen.findByRole('combobox', { name: 'Workspace' })
+    fireEvent.keyDown(workspace, { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: '+ New workspace…' }))
+    const wsName = await screen.findByPlaceholderText('e.g. oncall')
+    expect(states.at(-1)).toEqual({ edited: false, busy: false })
+    // The card's own fields are as proposed; the typed workspace name is the user's.
+    fireEvent.change(wsName, { target: { value: 'staging' } })
+    await waitFor(() => expect(states.at(-1)).toEqual({ edited: true, busy: false }))
+    const cancels = screen.getAllByRole('button', { name: 'Cancel' })
+    fireEvent.click(cancels[cancels.length - 1])
+    await waitFor(() => expect(screen.queryByPlaceholderText('e.g. oncall')).toBeNull())
+    await waitFor(() => expect(states.at(-1)).toEqual({ edited: false, busy: false }))
+  })
+
+  it('a new proposal object re-fills an open card', async () => {
+    const { rerender } = renderWithProviders(<NewCrewmateDialog open embedded initialDraft={{ name: 'Scout', goal: '' }} {...props} />)
+    await screen.findByTestId('crewmate-create-form')
+    typeName('Edited')
+    rerender(<NewCrewmateDialog open embedded initialDraft={{ name: 'Radar', goal: 'Triage issues' }} {...props} />)
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Radar'))
+    expect(goalField()).toHaveValue('Triage issues')
+  })
+
+  it('only the guided door carries the guide anchor on its Create', async () => {
+    const { unmount } = renderWithProviders(<NewCrewmateDialog open embedded {...props} />)
+    await screen.findByTestId('crewmate-create-form')
+    expect(screen.getByTestId('crewmate-create-submit')).not.toHaveAttribute('data-guide-anchor')
+    unmount()
+    renderWithProviders(<NewCrewmateDialog open embedded guided {...props} />)
+    await screen.findByTestId('crewmate-create-form')
+    expect(screen.getByTestId('crewmate-create-submit')).toHaveAttribute('data-guide-anchor', 'crewmate.create')
+    expect(document.querySelectorAll('[data-guide-anchor]')).toHaveLength(1)
+  })
+})

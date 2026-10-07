@@ -108,9 +108,13 @@ settings** unfolds the rest of the form in the same card: what the crewmate is
 **Built from** (the starting setup it copies; `kirocrew` unless you pick
 another), an optional line on **what it looks after**, and the workspace,
 model, triggers and session color. Folding it again keeps whatever you set
-there. The **+** menu offers **New crewmate** and **New team**. Creating opens the new crewmate's chat, and the crewmate starts it by asking
+there. The **+** menu offers **New crewmate** and **New team**. When Captain
+suggests a crewmate, its link opens this same form with the suggested name and
+goal already filled in; nothing is created until you press **Create**. Creating opens the new crewmate's chat, and the crewmate starts it by asking
 what you would like it to do; that opening question comes from Kiro Crew, so no
-message appears as if you had typed it. The name is
+message appears as if you had typed it. Once the goal is clear, a crewmate
+whose work should run on its own may offer a schedule, and sets one up only
+after you say yes. The name is
 free-form display text — spaces, punctuation, any script, emoji (`Dr. Eggbot 🥚`
 is a name) — and the dialog only refuses a blank name or one already on the
 roster before the request leaves the browser; the server owns every other rule

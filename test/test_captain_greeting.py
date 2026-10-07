@@ -289,6 +289,32 @@ class TestHiddenKickoff:
         ]
         assert [m["role"] for m in slot.messages] == ["assistant"]
 
+    @pytest.mark.asyncio
+    async def test_a_known_goal_kickoff_is_the_whole_kickoff_still_hidden(self, tmp_path):
+        # A crewmate created with a goal runs the full kickoff (the goal
+        # question, the schedule offer) plus that goal, as the same hidden
+        # gateway turn: no transcript row, nothing the user typed.
+        state = _make_state(tmp_path)
+        slot = _bind_thread(state, OTHER_SLUG, "code-reviewer")
+        cg.mark_greeting_owed(OTHER_SLUG)
+        seen: list[tuple[str, dict]] = []
+
+        async def fake_run_chat(_state, _slot, message, **kwargs):
+            seen.append((message, kwargs))
+            _slot.append("assistant", "I'm code-reviewer. Review open PRs, right?", "msg")
+
+        with (
+            patch("kiro_crew.dashboard.chat._run_chat", fake_run_chat),
+            patch.object(cg, "_crewmate_description", lambda member: "Review open PRs"),
+        ):
+            assert await cg.maybe_start_member_greeting(state, OTHER_SLUG) == cg.STARTED
+            await slot.task
+        ((message, kwargs),) = seen
+        assert kwargs == {"_synthetic_payload": True, "_turn_actor": "gateway"}
+        assert message.startswith(cg.CREWMATE_GOAL_KICKOFF)
+        assert "Review open PRs" in message[len(cg.CREWMATE_GOAL_KICKOFF) :]
+        assert [m["role"] for m in slot.messages] == ["assistant"]
+
     def test_kickoff_carries_the_tag_the_role_prompt_names(self):
         from kiro_crew.agent import _ASSISTANT_SYSTEM_PROMPT
 

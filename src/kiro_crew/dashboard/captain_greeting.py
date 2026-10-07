@@ -72,7 +72,9 @@ CAPTAIN_GREETING_KICKOFF = (
 #: conversation, not a return. The user picked a name and a look, not a
 #: template, so the greeting must not name the template or role the crewmate
 #: runs as, nor describe how that template works: neither is anything the
-#: user chose or would recognise.
+#: user chose or would recognise. When the crewmate runs is settled in the same
+#: conversation: once the goal is clear the crewmate may offer a schedule, and
+#: sets one up only after the user agrees.
 CREWMATE_GOAL_KICKOFF = (
     "[Crewmate first message] The user just created you and opened your chat for "
     "the first time; it has no messages yet. They have not typed anything: this "
@@ -81,7 +83,11 @@ CREWMATE_GOAL_KICKOFF = (
     "name, then ask them what they want you to do: the goal you should own and "
     "look after. Do not name your template, role or agent type, and do not "
     "describe how you work. Do not start any work, call any tool or propose "
-    "a plan until they answer."
+    "a plan until they answer. Once the goal is clear, if the work should run "
+    "on its own (every morning, every hour, whenever something changes), offer "
+    "a schedule: say in plain words when you would run and ask whether they "
+    "want it. Set it up with your schedule tool, or as a change card they "
+    "confirm, only after they say yes; never create a schedule without asking."
 )
 
 #: Appended to :data:`CREWMATE_GOAL_KICKOFF` when the create carried a

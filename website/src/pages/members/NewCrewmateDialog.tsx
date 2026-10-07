@@ -45,6 +45,15 @@
  * page's greeting request then starts that turn), and the card's hint says so.
  * The crew manager's door does not ask, opens no chat, and shows no hint.
  *
+ * `initialDraft` pre-fills an opening with a proposed name and goal (a
+ * Captain create link, a guide): the name lands in Name, the goal in "What it
+ * looks after", and Advanced settings opens with it so the goal is in view.
+ * The draft is a starting point, not a change: an opening left as it was
+ * proposed leaves without asking, like a blank one. `guided` marks the door
+ * the `crewmate.create` guide walks: its Create carries the guide's anchor,
+ * and the create request carries the guide's headers so the gateway can
+ * confirm the step from what it actually created.
+ *
  * Kept mounted and driven by `open` (Modal's own contract): `Modal` renders
  * nothing while closed, and the form state below is reset on every open so a
  * dismissed draft does not reappear.
@@ -71,6 +80,8 @@ import { ApiError } from '../../api/apiError'
 import { parseErrorCode } from '../../utils/errorReport'
 import { useAvailableModelsQuery } from '../../hooks/useAvailableModels'
 import { captainIdentityRefusal, isOfferableTemplate } from '../../lib/assistantMember'
+import { useGuideRequestHeaders, useGuideSaveLifecycle } from '../../guide/GuideContext'
+import { GUIDE_ANCHORS } from '../../guide/guideActions'
 import {
   Field,
   INHERIT_MODEL,
@@ -288,10 +299,26 @@ interface CreateBody {
   first_greeting?: true
 }
 
+/** A proposed name and goal an opening starts from. */
+export interface CrewmateDraft {
+  name: string
+  goal: string
+}
+
 export default function NewCrewmateDialog({
   open, onClose, onCreated, existingNames, embedded = false, startExpanded = false, firstGreeting = false,
+  initialDraft, guided = false, onDraftStateChange,
 }: {
   open: boolean
+  /** Pre-fills the opening (see the header comment). A new object re-fills an
+   *  opening already on screen; the host replaces it only once leaving the
+   *  current draft was agreed. */
+  initialDraft?: CrewmateDraft
+  /** This is the door the `crewmate.create` guide walks (see the header comment). */
+  guided?: boolean
+  /** Whether the user changed the opening (`edited`) and whether a create is
+   *  in flight (`busy`), for a host that steps a pristine card aside. */
+  onDraftStateChange?: (state: { edited: boolean; busy: boolean }) => void
   /** Every open starts with Advanced settings unfolded: the doors that ask
    *  for every setting up front. Folded otherwise. */
   startExpanded?: boolean
@@ -380,11 +407,14 @@ export default function NewCrewmateDialog({
   // invites the second POST that creates a namesake.
   const [unconfirmed, setUnconfirmed] = useState(false)
 
-  // Every open starts blank: a dismissed draft must not come back.
+  // Every open starts blank, or from the proposal it was opened with: a
+  // dismissed draft must not come back.
   useEffect(() => {
     if (!open) return
+    const draftName = initialDraft?.name ?? ''
+    const draftGoal = initialDraft?.goal ?? ''
     setLookRoll(0)
-    setName(''); setBuiltFrom(''); setJob(''); setAdvanced(startExpanded)
+    setName(draftName); setBuiltFrom(''); setJob(draftGoal); setAdvanced(startExpanded || draftGoal.trim() !== '')
     setWorkspace('default'); setModel(INHERIT_MODEL); setTriggers(''); setSessionColor('')
     setHint(''); setError(''); setNameRefused(false); setUnconfirmed(false); setPendingWorkspace(null)
     // The nested workspace form too: a draft left in it belongs to the
@@ -392,7 +422,9 @@ export default function NewCrewmateDialog({
     // Its generation was already retired when `open` dropped (the layout
     // effect below); this close is for the state, which the retire left alone.
     closeWsModal(); setWsDirty(false)
-  }, [open, closeWsModal, startExpanded])
+    // The draft is read by identity: a new proposal object re-fills an
+    // opening already on screen, even one carrying the same text.
+  }, [open, closeWsModal, startExpanded, initialDraft])
   // Closing the parent retires the nested generation too. The parent cannot
   // be dismissed while the nested dialog is open (see `dismissDisabled`), but
   // `open` can still drop with a create in flight — the page flips it from
@@ -482,8 +514,12 @@ export default function NewCrewmateDialog({
   // Every editable value counts as a draft, not only the two text fields: a
   // template or an Advanced pick is as lost on an accidental dismissal as a
   // typed name, and the reset-on-open above means there is no way back.
+  // Measured against what the opening started from: a proposed name and goal
+  // left as proposed are still the proposal (it lives on where it came from),
+  // not the user's work.
   const dirty = Boolean(
-    name || job || builtFrom || workspace !== 'default' || model !== INHERIT_MODEL || triggers || sessionColor
+    name !== (initialDraft?.name ?? '') || job !== (initialDraft?.goal ?? '') || builtFrom
+    || workspace !== 'default' || model !== INHERIT_MODEL || triggers || sessionColor
     || lookRoll > 0,
   )
 
@@ -533,12 +569,29 @@ export default function NewCrewmateDialog({
     void queryClient.invalidateQueries({ queryKey: ['kirocrew-agents'], exact: true })
     void queryClient.invalidateQueries({ queryKey: ['kirocrewConfig'] })
   }, [queryClient])
+  const guideHeaders = useGuideRequestHeaders('crewmate.create')
+  const guideSave = useGuideSaveLifecycle('crewmate.create')
   const createMut = useMutation({
-    mutationFn: (body: CreateBody) => api.createKirocrewAgent(body) as Promise<{ error?: string; name?: string }>,
-    onSuccess: async (r, body) => {
+    mutationFn: async (body: CreateBody) => {
+      // A guided create (the human pressed Start on Captain's guide and is now
+      // pressing Create) carries the guide headers on THIS request, so the
+      // gateway confirms the step from what it actually created. A progress
+      // report still in flight (the guide catching up with a fast click)
+      // would leave the headers unread and the save uncredited.
+      if (!guided) return { r: await api.createKirocrewAgent(body) as { error?: string; name?: string }, credited: true }
+      await guideSave.sync()
+      const headers = guideHeaders()
+      const r = await (headers ? api.createKirocrewAgent(body, headers) : api.createKirocrewAgent(body)) as { error?: string; name?: string }
+      return { r, credited: !!headers }
+    },
+    onSuccess: async ({ r, credited }, body) => {
       // A 2xx whose body still carries `error` is a refusal in the server's
       // words; like every other failure it is said in the product's.
-      if (r?.error) { setError(t('pages.membersPage.create_failed')); return }
+      if (r?.error) { if (guided) guideSave.refused(); setError(t('pages.membersPage.create_failed')); return }
+      // Saved, but without the guide's headers (the guide had not reached its
+      // Create step): the guide is closed honestly rather than left asking for
+      // the press the user already made.
+      if (!credited) guideSave.savedUncredited()
       // What the crew manager's own create form does (`refetchAgents`): the
       // page re-reads the roster leaf itself, but the registry and config
       // caches are held at `staleTime: Infinity`, and `POST /api/agents`
@@ -580,6 +633,8 @@ export default function NewCrewmateDialog({
       onCreated({ name: r?.name || body.name, job: body.description })
     },
     onError: async (e: Error, body) => {
+      // A 4xx made nothing: the guide stops waiting on this save.
+      if (guided && (captainIdentityRefusal(e) || (e instanceof ApiError && e.status >= 400 && e.status < 500))) guideSave.refused()
       if (e instanceof ApiError) {
         const code = parseErrorCode(e.body)
         const captainRefusal = captainIdentityRefusal(e)
@@ -688,6 +743,11 @@ export default function NewCrewmateDialog({
     },
   })
   const busy = createMut.isPending
+  // Typed New workspace fields are part of the draft too: a card whose own
+  // fields are untouched but whose workspace form holds input is not pristine.
+  useLayoutEffect(() => {
+    onDraftStateChange?.({ edited: open && (dirty || (wsModalOpen && wsDirty)), busy })
+  }, [onDraftStateChange, open, dirty, wsModalOpen, wsDirty, busy])
 
   // The modal's own guards (`guardAccidentalDismiss`, `dismissDisabled`) cover
   // Escape, the backdrop and the X. A client-side route change — the sidebar,
@@ -707,8 +767,8 @@ export default function NewCrewmateDialog({
   // HERE as well would put two entries resolving to this one predicate in the
   // shell's set inside a layout, and `ask()` would raise this confirm twice for
   // a single navigation — the second Cancel vetoing a leave already approved.
-  // The shell keeps a SET of guards and stakes, so this form and the guided
-  // flow beside it on the Crewmates page each register their own.
+  // The shell keeps a SET of guards and stakes, so this form and the page's
+  // other guards (an open Profile's drafts) each register their own.
   const atStake = open && (dirty || busy || (wsModalOpen && wsDirty))
   const mayLeave = () => {
     if (!atStake) return true
@@ -881,7 +941,7 @@ export default function NewCrewmateDialog({
         {/* The primary action, right after the name: full width and 44px
             tall on a phone. It is the form's first submit button, so Enter
             in the Name field submits through it. */}
-        <Btn primary type="submit" disabled={busy || wsModalOpen} className="mt-5 min-h-11 w-full justify-center sm:min-h-9" data-testid="crewmate-create-submit">
+        <Btn primary type="submit" disabled={busy || wsModalOpen} className="mt-5 min-h-11 w-full justify-center sm:min-h-9" data-testid="crewmate-create-submit" data-guide-anchor={guided ? GUIDE_ANCHORS.crewmateCreate : undefined}>
           {busy ? t('pages.membersPage.create_submitting') : t('pages.membersPage.create_submit')}
         </Btn>
         {/* The secondary line, centred under Create: the Advanced settings
