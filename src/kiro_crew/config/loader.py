@@ -3049,7 +3049,7 @@ def _session_start_concurrency(raw: object) -> int | str:
 # cache configuration, and leave resolution and admission checks unchanged.
 def _build_agent_config(agent_data: dict) -> AgentConfig:
     section = _sections.SectionReader(AgentConfig, agent_data)
-    # GB-of-memory knobs share one range with their PATCH entries (#14988).
+    # GB-of-memory knobs share one range with their PATCH entries.
     memory_gb = (_sections.RESOURCE_MEMORY_GB_MIN, _sections.RESOURCE_MEMORY_GB_MAX)
     return AgentConfig(
         approval_mode=section.get("approval_mode"),

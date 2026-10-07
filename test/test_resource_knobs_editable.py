@@ -1,9 +1,9 @@
-"""The resource knobs are editable from Settings (#14988).
+"""The memory knobs are editable from Settings.
 
 ``agent.spawn_min_memory_gb``, ``agent.resource_pressure_gb`` and
-``agent.resource_critical_gb`` used to be config-file-only. They are performance
-trade-offs the user owns, not authority grants, so they go through the generic
-PATCH allowlist with a 0..1024 GB range. These tests pin that a decimal value is
+``agent.resource_critical_gb`` are performance trade-offs the user owns, not
+authority grants, so they go through the generic PATCH allowlist with a
+0..1024 GB range. These tests pin that a decimal value is
 written, that the range holds on the write path and on load, and that none of the
 three asks for a restart.
 """
@@ -40,9 +40,14 @@ def _make_app() -> web.Application:
 
 
 @pytest.fixture
-def tmp_config(tmp_path):
+def tmp_config(tmp_path, monkeypatch):
+    from kiro_crew.config import loader
+
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps({"agent": {"approval_mode": "auto"}}), encoding="utf-8")
+    # config_dir too: the superseded-defaults ack and adoption sidecars live there.
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(loader, "config_local_path", lambda: tmp_path / "config.local.json")
     with patch("kiro_crew.config.loader.config_path", return_value=cfg_path):
         yield cfg_path
 
@@ -124,3 +129,34 @@ def test_write_bounds_come_from_the_shared_constants() -> None:
             sections.RESOURCE_MEMORY_GB_MIN,
             sections.RESOURCE_MEMORY_GB_MAX,
         )
+
+
+@pytest.mark.asyncio
+async def test_saving_the_superseded_floor_survives_the_next_load(tmp_config) -> None:
+    """4.0 is the floor's superseded default, adopted away on load unless acknowledged.
+
+    On an install whose adoption ledger has no row for the key (a fresh one never
+    stored 4.0), a Settings save of 4.0 must not quietly revert to 2.0.
+    """
+    from kiro_crew.config import loader
+    from kiro_crew.config import superseded_defaults as sd
+
+    assert sd.adopted_superseded() == {}
+    async with TestClient(TestServer(_make_app())) as c:
+        resp = await _patch(c, "agent.spawn_min_memory_gb", 4)
+        assert resp.status == 200, await resp.text()
+
+    loader._invalidate_config_cache()
+    assert loader.KiroCrewConfig.load().agent.spawn_min_memory_gb == 4.0
+    assert json.loads(tmp_config.read_text())["agent"]["spawn_min_memory_gb"] == 4.0
+    assert sd.acked_superseded() == {"agent.spawn_min_memory_gb": 4.0}
+
+
+@pytest.mark.asyncio
+async def test_a_value_that_is_not_a_superseded_default_is_not_acknowledged(tmp_config) -> None:
+    from kiro_crew.config import superseded_defaults as sd
+
+    async with TestClient(TestServer(_make_app())) as c:
+        resp = await _patch(c, "agent.spawn_min_memory_gb", 3.0)
+        assert resp.status == 200
+    assert sd.acked_superseded() == {}

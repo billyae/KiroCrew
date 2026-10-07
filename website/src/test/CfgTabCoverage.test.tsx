@@ -317,12 +317,20 @@ describe('KiroCrewCfgTab — numeric rows', () => {
 })
 
 // ── CfgSelect + CfgToggle ────────────────────────────────────────────────
-describe('KiroCrewCfgTab — resource thresholds (#14988)', () => {
+describe('KiroCrewCfgTab — memory limits', () => {
   it('shows the shipped defaults when the config omits the three keys', async () => {
     await renderTab()
-    expect(num('Spawn Min Memory').value).toBe('2')
-    expect(num('Memory Pressure Threshold').value).toBe('4')
-    expect(num('Memory Critical Threshold').value).toBe('2')
+    expect(num('Free memory needed to start a subagent').value).toBe('2')
+    expect(num('Warn when free memory drops below').value).toBe('4')
+    expect(num('Critical when free memory drops below').value).toBe('2')
+  })
+
+  it('says what each field does in visible text, not only in a tooltip', async () => {
+    await renderTab()
+    expect(screen.getByText(/A new subagent waits in the queue/)).toBeVisible()
+    expect(screen.getByText(/Warns only; nothing is blocked/)).toBeVisible()
+    expect(screen.getByText(/scheduled jobs wait/)).toBeVisible()
+    expect(screen.getByText(/Each field saves when you leave it/)).toBeVisible()
   })
 
   it('saves a fractional GB value as a decimal, not truncated to an integer', async () => {
@@ -331,7 +339,7 @@ describe('KiroCrewCfgTab — resource thresholds (#14988)', () => {
     seed(CFG, updated)
 
     await renderTab()
-    const input = num('Spawn Min Memory')
+    const input = num('Free memory needed to start a subagent')
     fireEvent.change(input, { target: { value: '1.5' } })
     fireEvent.blur(input)
 
@@ -343,8 +351,8 @@ describe('KiroCrewCfgTab — resource thresholds (#14988)', () => {
   it('patches each threshold under its own config path', async () => {
     await renderTab()
     for (const [label, path] of [
-      ['Memory Pressure Threshold', 'agent.resource_pressure_gb'],
-      ['Memory Critical Threshold', 'agent.resource_critical_gb'],
+      ['Warn when free memory drops below', 'agent.resource_pressure_gb'],
+      ['Critical when free memory drops below', 'agent.resource_critical_gb'],
     ] as const) {
       const input = num(label)
       fireEvent.change(input, { target: { value: '0.5' } })
@@ -355,9 +363,52 @@ describe('KiroCrewCfgTab — resource thresholds (#14988)', () => {
     }
   })
 
+  it('keeps an unsaved Subagent Settings draft when a memory row saves', async () => {
+    const updated = clone() as Cfg & { agent: Record<string, unknown> }
+    updated.agent.resource_pressure_gb = 0.5
+    seed(CFG, updated)
+
+    await renderTab()
+    fireEvent.change(num('Max Concurrent Subagents'), { target: { value: '7' } })
+
+    const input = num('Warn when free memory drops below')
+    fireEvent.change(input, { target: { value: '0.5' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(input.value).toBe('0.5'))
+    // The PATCH replaced the cached config; the draft above was never saved.
+    await waitFor(() => expect(vi.mocked(api).patchConfig).toHaveBeenCalled())
+    expect(num('Max Concurrent Subagents').value).toBe('7')
+  })
+
+  it('shows a refused save through the shared error notice', async () => {
+    vi.mocked(api).patchConfig = vi.fn().mockRejectedValue(new Error('read-only config'))
+    await renderTab()
+    const input = num('Free memory needed to start a subagent')
+    fireEvent.change(input, { target: { value: '3' } })
+    fireEvent.blur(input)
+    const alerts = await screen.findAllByRole('alert')
+    // Shown once, in this card, naming the field whose save was refused.
+    const mine = alerts.filter(a => /read-only config/.test(a.textContent || ''))
+    expect(mine).toHaveLength(1)
+    expect(mine[0].textContent).toMatch(/Free memory needed to start a subagent: read-only config/)
+  })
+
+  it('keeps a draft typed in one memory row when a neighbouring row\'s save is refused', async () => {
+    vi.mocked(api).patchConfig = vi.fn().mockRejectedValue(new Error('read-only config'))
+    await renderTab()
+    const floor = num('Free memory needed to start a subagent')
+    fireEvent.change(floor, { target: { value: '3' } })
+    fireEvent.blur(floor)
+    fireEvent.change(num('Warn when free memory drops below'), { target: { value: '0.5' } })
+    await screen.findAllByRole('alert')
+    // The refused row reverts to its stored value; the neighbour keeps its draft.
+    await waitFor(() => expect(num('Free memory needed to start a subagent').value).toBe('2'))
+    expect(num('Warn when free memory drops below').value).toBe('0.5')
+  })
+
   it('refuses a value above the write ceiling without patching', async () => {
     await renderTab()
-    const input = num('Spawn Min Memory')
+    const input = num('Free memory needed to start a subagent')
     fireEvent.change(input, { target: { value: '2048' } })
     fireEvent.blur(input)
     expect(screen.getByText('max 1024')).toBeInTheDocument()
@@ -606,10 +657,10 @@ describe('KiroCrewCfgTab — select and toggle rows', () => {
     await renderTab()
     fireEvent.click(toggleFor('MCP Tool Search'))
 
-    // The banner is rendered once in each card of patch-saved rows: Resource
-    // Thresholds, Warm Pool and Config Summary.
+    // The banner is rendered once in Warm Pool and once in Config Summary; the
+    // RAM Limits card shows only its own rows' refusals.
     await waitFor(() => {
-      expect(screen.getAllByText('read-only config')).toHaveLength(3)
+      expect(screen.getAllByRole('alert').filter(a => /read-only config/.test(a.textContent || ''))).toHaveLength(2)
     })
     // onError also invalidates the config query, so it refetches.
     await waitFor(() => expect(m.kirocrewConfig).toHaveBeenCalledTimes(2))

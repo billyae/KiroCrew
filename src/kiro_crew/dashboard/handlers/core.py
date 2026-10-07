@@ -2745,12 +2745,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "min": SOFT_STOP_BUDGET_MIN,
         "max": SOFT_STOP_BUDGET_MAX,
     },
-    # Resource knobs (#14988): the per-start spawn memory floor and the two
-    # [RESOURCES] posture thresholds. Performance/stability trade-offs the user
-    # owns, not authority grants -- none of them widens a permission, approval
-    # tier or credential path, which is why they belong here while
-    # ``agent.default_approval_mode`` (#8987) does not. Hot-applied: every
-    # reader takes them from the live config on each check.
+    # Memory knobs: the per-start spawn memory floor and the two [RESOURCES]
+    # posture thresholds. Performance trade-offs the user owns, not authority
+    # grants -- none widens a permission, approval tier or credential path, which
+    # is why they belong here while ``agent.default_approval_mode`` does not.
+    # Hot-applied: every reader takes them from the live config on each check.
     "agent.spawn_min_memory_gb": {
         "type": "float",
         "min": RESOURCE_MEMORY_GB_MIN,
@@ -3394,6 +3393,11 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
                     raise ValueError(f"config section '{part}' is not an object")
                 section = nxt
             section[parts[-1]] = value
+            # A value saved here that equals a superseded old default would be
+            # adopted away by the next load; acknowledge it under this same lock.
+            from kiro_crew.config.superseded_defaults import ack_written_values
+
+            ack_written_values(data, [path_key])
             return data
 
         try:
