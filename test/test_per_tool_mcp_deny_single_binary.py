@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
 import subprocess
 import sys
 import threading
@@ -624,7 +625,17 @@ class _FakeModel:
                     }
                 )
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class _Server(ThreadingHTTPServer):
+            def server_bind(self) -> None:
+                # http.server resolves socket.getfqdn(host) on bind, which can
+                # stall on some hosts while the socket is bound but not yet
+                # listening. The stub is reached by address, so skip the lookup.
+                socketserver.TCPServer.server_bind(self)
+                host, port = self.server_address[:2]
+                self.server_name = str(host)
+                self.server_port = int(port)
+
+        self.server = _Server(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
