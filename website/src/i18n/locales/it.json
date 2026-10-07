@@ -17081,7 +17081,8 @@
         "thread_label": "Conversazione",
         "secret_unavailable": "Non e stato possibile leggere le credenziali di questa crew. Controlla che il deploy sia finito e riprova.",
         "resume_failed": "Questa crew era sospesa e non e stato possibile riattivarla. Riprova o riconnettila.",
-        "message_too_large": "Questo messaggio e troppo lungo. Accorcialo e invialo di nuovo."
+        "message_too_large": "Questo messaggio e troppo lungo. Accorcialo e invialo di nuovo.",
+        "name_unavailable": "Il nome di questa crew non e stato registrato all'avvio, quindi un turno non puo essere indirizzato. Riavviala o usa il suo URL."
       }
     },
     "settingsPage": {

@@ -191,6 +191,64 @@ class TestProvision:
         built.provision(tag="kc-a", size_key="t3.large", profile="p", region="us-east-1")
 
 
+class TestTheLaunchRecordsTheCrewNameTheGuestWillServe:
+    """The tag is this launch's id; the crew's NAME comes from the bundle.
+
+    The guest sets ``SMC_CREW_NAME`` from the bundle manifest baked into its
+    image, and its front answers a turn addressed to anything else with a 404.
+    The turn path holds an instance row and a tag, so unless the launch records
+    the name nothing on this side can address the crew.
+    """
+
+    @staticmethod
+    def _bundle(tmp_path, crew_name="l2crew"):
+        import json as _json
+
+        root = tmp_path / "bundle"
+        root.mkdir()
+        (root / "manifest.json").write_text(_json.dumps({"crew_name": crew_name}))
+        return root
+
+    def _engine(self, tmp_path, monkeypatch, bundle_dir):
+        import dataclasses
+
+        store = CrewStore(tmp_path / "crews.json")
+        launcher = FakeLauncher()
+        monkeypatch.setattr(
+            "kiro_crew.cloud.microvm.engine._delete_activation",
+            lambda activation_id, *, profile, region: None,
+        )
+        spec = dataclasses.replace(SPEC, bundle_dir=str(bundle_dir))
+        return MicroVmLaunchEngine(spec=spec, store=store, launcher=launcher), store
+
+    def test_the_bundles_name_lands_in_the_record(self, tmp_path, monkeypatch):
+        built, store = self._engine(tmp_path, monkeypatch, self._bundle(tmp_path))
+        built.provision(tag="kc-22d27f", size_key="", profile="p", region="us-east-1")
+        record = store.get("kc-22d27f")
+        assert record.crew_name == "l2crew"
+        assert record.tag == "kc-22d27f"
+
+    def test_an_unreadable_manifest_leaves_the_name_empty_rather_than_failing(
+        self, tmp_path, monkeypatch
+    ):
+        """The launch works without the name -- the guest reads its own manifest --
+        so failing a provision over this would cost the owner a crew to protect a
+        field only the turn path reads. The turn path says so instead."""
+        root = tmp_path / "bundle"
+        root.mkdir()
+        (root / "manifest.json").write_text("{not json")
+        built, store = self._engine(tmp_path, monkeypatch, root)
+        built.provision(tag="kc-a", size_key="", profile="p", region="us-east-1")
+        assert store.get("kc-a").crew_name == ""
+
+    def test_a_lane_with_no_bundle_dir_records_no_name(self, tmp_path, monkeypatch):
+        """``Path("")`` is the working directory, so an empty bundle_dir must not
+        be read as a bundle that happens to be here."""
+        built, store = self._engine(tmp_path, monkeypatch, "")
+        built.provision(tag="kc-a", size_key="", profile="p", region="us-east-1")
+        assert store.get("kc-a").crew_name == ""
+
+
 class TestProvisionCleanup:
     def test_a_failed_run_terminates_nothing_and_deletes_the_activation(self, engine):
         """The measured leak: an activation that enrolled nothing."""

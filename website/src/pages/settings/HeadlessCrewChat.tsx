@@ -102,6 +102,11 @@ function readable(detail: string): string {
     // directly. Flattening it into "the crew did not answer" would send them
     // looking at the crew for a limit on their message.
     message_too_large: i18nT('pages.settings.headlessCrewChat.message_too_large'),
+    // A crew whose NAME the launch did not record. Its own line rather than the
+    // credential one: nothing is wrong with the credential, and the remedy is a
+    // relaunch, so folding it into "could not be read" sends the reader to check
+    // a secret that is fine.
+    crew_name_unavailable: i18nT('pages.settings.headlessCrewChat.name_unavailable'),
     bad_request: unreachable,
   }
   // The FALLBACK is the one that says what to do, not the raw value. A code this

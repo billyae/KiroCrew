@@ -173,6 +173,43 @@ class TestTheCliContract:
         assert seen["etag"] == "old-etag"
         assert json.loads(capsys.readouterr().out.strip())["etag"] == "new-etag"
 
+    def test_a_refused_precondition_is_reported_with_its_own_code(
+        self, monkeypatch, capsys, idle_state
+    ):
+        """The gateway's two answers to a failed pack are opposite -- terminate the
+        VM for a generic failure, leave the home completely alone for a conflict --
+        so a conflict that arrived as an ordinary error took the branch that
+        discards the disk this home is on. A code survives the channel; matching
+        on the message text would not."""
+        from container.microvm.watchdog import PackConflict
+
+        def refuse(**kwargs):
+            raise PackConflict("another writer holds this crew's archive")
+
+        monkeypatch.setattr(ops.hooks, "pack_data_home", refuse)
+        code = ops.main(
+            ["pack", "--bucket", "b", "--key", "k", "--region", "us-east-1", "--etag", "e"]
+        )
+        assert code == 1
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["code"] == ops.PACK_CONFLICT_CODE
+        assert "another writer" in payload["error"]
+
+    def test_every_other_failure_carries_no_code(self, monkeypatch, capsys, idle_state):
+        """Only the conflict is special-cased, so a generic failure still reaches
+        the gateway's generic branch rather than being left for a human."""
+
+        def boom(**kwargs):
+            raise RuntimeError("the disk is full")
+
+        monkeypatch.setattr(ops.hooks, "pack_data_home", boom)
+        code = ops.main(
+            ["pack", "--bucket", "b", "--key", "k", "--region", "us-east-1", "--etag", "e"]
+        )
+        assert code == 1
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert "code" not in payload
+
 
 class TestTheSealVerb:
     def test_an_unconfirmed_exit_is_reported_rather_than_assumed(self, monkeypatch):

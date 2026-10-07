@@ -31,7 +31,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from kiro_crew.cloud.microvm import api
+from kiro_crew.cloud.microvm import api, pack
 from kiro_crew.cloud.microvm.lifecycle import GuestState, LifecycleDeps, MicroVmLifecycle
 from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
 
@@ -104,6 +104,19 @@ class GuestUnreachable(RuntimeError):
     """The guest could not be asked. Distinct from the guest answering badly."""
 
 
+#: The ``code`` the guest's ``pack`` verb reports when its conditional write was
+#: refused, and the one guest failure that is NOT a generic one.
+#:
+#: A literal on both sides rather than one import, because the guest's
+#: ``container.microvm.ops`` cannot import ``kiro_crew`` -- the image narrows its
+#: COPY to keep the control plane out of the customer-facing container, which is
+#: the same reason ``payload_shape.py`` is a copy. ``test_the_guest_and_the_host_
+#: agree_on_the_conflict_code`` reads the guest's source and asserts the two
+#: strings match, so a rename on one side fails the suite instead of shipping a
+#: host that reads the other's conflict as an unreachable guest.
+GUEST_PACK_CONFLICT_CODE = "pack_conflict"
+
+
 def _run_guest(
     record: CrewRecord,
     verb: str,
@@ -117,6 +130,17 @@ def _run_guest(
     output is not the one JSON line the verb promises. The caller turns that into
     whichever answer its own contract needs -- ``None`` for a read, a raise for a
     write -- and that choice is deliberately not made here.
+
+    The one exception is :data:`GUEST_PACK_CONFLICT_CODE`, which is re-raised as
+    the host's own :class:`pack.PackConflict`. That distinction has to survive the
+    channel: a conflict means another writer holds the archive and the home must
+    be LEFT ALONE, while ``GuestUnreachable`` reaches
+    :meth:`MicroVmLifecycle.pack`'s generic failure branch, which terminates the
+    VM and discards the disk the home is on.
+
+    So stdout is parsed BEFORE the exit status is judged. A failing verb exits
+    non-zero -- that is how a shell reports a failure -- and deciding on the
+    status first threw away the line that says WHICH failure it was.
     """
     from kiro_crew.cloud import ssm
 
@@ -129,23 +153,35 @@ def _run_guest(
         region=region,
         run_as=GUEST_RUN_AS,
     )
-    if not result.ok:
-        raise GuestUnreachable(
-            f"crew {record.tag}: the guest's {verb} command failed: "
-            f"{(getattr(result, 'stderr', '') or '').strip()[:300]}"
-        )
     text = (getattr(result, "stdout", "") or "").strip().splitlines()
     for line in reversed(text):
         try:
             payload = json.loads(line)
         except ValueError:
             continue
-        if isinstance(payload, dict):
-            if payload.get("error"):
-                raise GuestUnreachable(
-                    f"crew {record.tag}: the guest's {verb} failed: {payload['error']}"
-                )
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("code") == GUEST_PACK_CONFLICT_CODE:
+            raise pack.PackConflict(
+                f"crew {record.tag}: the guest's archive write was refused because its "
+                f"precondition failed, so another writer holds it: {payload.get('error') or ''}",
+                held_etag=str(payload.get("held_etag") or ""),
+            )
+        if payload.get("error"):
+            raise GuestUnreachable(
+                f"crew {record.tag}: the guest's {verb} failed: {payload['error']}"
+            )
+        if result.ok:
             return payload
+        # A clean-looking payload from a verb that exited non-zero is not an
+        # answer: the exit status is the guest's own verdict on its own run, and
+        # trusting the payload over it would read a half-finished pack as done.
+        break
+    if not result.ok:
+        raise GuestUnreachable(
+            f"crew {record.tag}: the guest's {verb} command failed: "
+            f"{(getattr(result, 'stderr', '') or '').strip()[:300]}"
+        )
     raise GuestUnreachable(f"crew {record.tag}: the guest's {verb} printed no JSON answer")
 
 
@@ -236,10 +272,32 @@ def production_deps(config: Any, *, store: Optional[CrewStore] = None) -> Lifecy
     endpoint = spec.endpoint_url
     kms_key_id = spec.kms_key_id
 
+    def _where(record: CrewRecord) -> "tuple[str, str]":
+        """Where this crew's resources ARE, which is not where a new one would go.
+
+        The record's own profile and region, and the current config only as the
+        fallback for a row written before either was stored. A crew's VM, its
+        managed node and its archive all live in the account and region the launch
+        used, and the configured default is the answer to a different question --
+        where the NEXT launch should go. Changing it is an ordinary operator
+        action, and reading the VM's status in the new region returns
+        resource-not-found: :meth:`MicroVmLifecycle.resume` reads that as the wall
+        having taken the VM and records :data:`states.RESUME_TARGET_GONE`
+        permanently, for a crew that is still sitting there in the other region.
+        """
+        return record.profile or profile, record.region or region
+
     def _vm(method: Any) -> Any:
-        return lambda record: method(
-            record.microvm_id, profile=profile, region=region, endpoint_url=endpoint
-        )
+        def call(record: CrewRecord) -> Any:
+            where_profile, where_region = _where(record)
+            return method(
+                record.microvm_id,
+                profile=where_profile,
+                region=where_region,
+                endpoint_url=endpoint,
+            )
+
+        return call
 
     def _wait_terminated(record: CrewRecord) -> None:
         """Poll until the platform agrees the VM is gone.
@@ -251,10 +309,14 @@ def production_deps(config: Any, *, store: Optional[CrewStore] = None) -> Lifecy
         """
         import time
 
+        where_profile, where_region = _where(record)
         deadline = time.time() + TERMINATE_TIMEOUT_SECONDS
         while time.time() < deadline:
             status = api.microvm_status(
-                record.microvm_id, profile=profile, region=region, endpoint_url=endpoint
+                record.microvm_id,
+                profile=where_profile,
+                region=where_region,
+                endpoint_url=endpoint,
             )
             if status is None or status in api.TERMINAL_MICROVM_STATES:
                 return
@@ -263,13 +325,18 @@ def production_deps(config: Any, *, store: Optional[CrewStore] = None) -> Lifecy
             f"MicroVM {record.microvm_id} for crew {record.tag} did not reach a terminal state"
         )
 
+    def _guest(fn: Any, **extra: Any) -> Any:
+        def call(record: CrewRecord) -> Any:
+            where_profile, where_region = _where(record)
+            return fn(record, profile=where_profile, region=where_region, **extra)
+
+        return call
+
     return LifecycleDeps(
         store=store if store is not None else CrewStore(),
-        read_guest=lambda record: read_guest(record, profile=profile, region=region),
-        stop_gateway=lambda record: stop_gateway(record, profile=profile, region=region),
-        pack_home=lambda record: pack_home(
-            record, profile=profile, region=region, kms_key_id=kms_key_id
-        ),
+        read_guest=_guest(read_guest),
+        stop_gateway=_guest(stop_gateway),
+        pack_home=_guest(pack_home, kms_key_id=kms_key_id),
         suspend_vm=_vm(api.suspend_microvm),
         resume_vm=_vm(api.resume_microvm),
         terminate_vm=_vm(api.terminate_microvm),

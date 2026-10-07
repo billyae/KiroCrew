@@ -276,3 +276,199 @@ class TestTheGuestsOwnPackReachesTheRecord:
         state = wiring.read_guest(_record(), profile="p", region="us-east-1")
         assert state is not None
         assert state.self_packed_etag == ""
+
+
+class TestAGuestConflictIsNotAnUnreachableGuest:
+    """The two answers to a failed pack are OPPOSITE, so the difference between
+    them has to survive the channel.
+
+    ``MicroVmLifecycle.pack`` terminates the VM for a generic failure -- the right
+    call for a home that could not be written, since leaving an eight-hour VM
+    running costs the owner money for a rescue nobody is coming to make. For a
+    :class:`pack.PackConflict` it does the reverse and leaves everything alone,
+    because another writer holds that archive and the home is intact.
+
+    A failing verb EXITS NON-ZERO, which is how a shell reports a failure, so a
+    reader that judged the exit status before parsing stdout threw away the line
+    that said which failure it was -- and every conflict took the branch that
+    discards the disk the home is on.
+    """
+
+    def test_a_refused_precondition_raises_the_hosts_own_pack_conflict(self, monkeypatch):
+        from kiro_crew.cloud.microvm import pack as pack_mod
+
+        _install_ssm(
+            monkeypatch,
+            _Result(
+                json.dumps(
+                    {
+                        "error": "PackConflict('another writer holds this archive')",
+                        "code": wiring.GUEST_PACK_CONFLICT_CODE,
+                        "held_etag": '"other"',
+                    }
+                ),
+                ok=False,
+            ),
+        )
+        with pytest.raises(pack_mod.PackConflict) as caught:
+            wiring.pack_home(_record(), profile="p", region="us-east-1", kms_key_id="k")
+        assert caught.value.held_etag == '"other"'
+
+    def test_a_conflict_is_not_reported_as_unreachable(self, monkeypatch):
+        """Named separately from the test above because ``GuestUnreachable`` is the
+        exception the generic branch answers, and that branch terminates the VM."""
+        _install_ssm(
+            monkeypatch,
+            _Result(
+                json.dumps({"error": "boom", "code": wiring.GUEST_PACK_CONFLICT_CODE}), ok=False
+            ),
+        )
+        with pytest.raises(Exception) as caught:
+            wiring.pack_home(_record(), profile="p", region="us-east-1", kms_key_id="k")
+        assert not isinstance(caught.value, wiring.GuestUnreachable)
+
+    def test_a_conflict_with_no_held_etag_still_raises_a_conflict(self, monkeypatch):
+        from kiro_crew.cloud.microvm import pack as pack_mod
+
+        _install_ssm(
+            monkeypatch,
+            _Result(
+                json.dumps({"error": "boom", "code": wiring.GUEST_PACK_CONFLICT_CODE}), ok=False
+            ),
+        )
+        with pytest.raises(pack_mod.PackConflict) as caught:
+            wiring.pack_home(_record(), profile="p", region="us-east-1", kms_key_id="k")
+        assert caught.value.held_etag == ""
+
+    def test_every_other_non_zero_exit_is_still_unreachable(self, monkeypatch):
+        _install_ssm(monkeypatch, _Result(json.dumps({"error": "disk full"}), ok=False))
+        with pytest.raises(wiring.GuestUnreachable):
+            wiring.pack_home(_record(), profile="p", region="us-east-1", kms_key_id="k")
+
+    def test_a_clean_payload_from_a_failed_command_is_not_an_answer(self, monkeypatch):
+        """The exit status is the guest's own verdict on its own run. Trusting a
+        well-formed payload over it would read a half-finished pack as done and
+        write its ETag into the record."""
+        _install_ssm(monkeypatch, _Result(json.dumps({"etag": '"half"'}), ok=False))
+        with pytest.raises(wiring.GuestUnreachable):
+            wiring.pack_home(_record(), profile="p", region="us-east-1", kms_key_id="k")
+
+    def test_the_guest_and_the_host_agree_on_the_conflict_code(self):
+        """Two literals, because the guest package cannot import ``kiro_crew`` --
+        the image narrows its COPY to keep the control plane out of the
+        customer-facing container. So the parity is asserted here instead, and a
+        rename on either side fails this test rather than shipping a host that
+        reads the guest's conflict as an unreachable guest."""
+        import re
+        from pathlib import Path
+
+        import kiro_crew
+
+        ops = (
+            Path(kiro_crew.__file__).parent
+            / "apps"
+            / "builtins"
+            / "aws_control"
+            / "crew"
+            / "runtime"
+            / "container"
+            / "microvm"
+            / "ops.py"
+        )
+        found = re.search(r'^PACK_CONFLICT_CODE = "([^"]+)"', ops.read_text(), re.MULTILINE)
+        assert found is not None, "the guest no longer defines PACK_CONFLICT_CODE"
+        assert found.group(1) == wiring.GUEST_PACK_CONFLICT_CODE
+
+
+class TestEachCrewIsReachedWhereItActuallyIs:
+    """A crew's resources live where its LAUNCH put them, not where the next one
+    would go.
+
+    Changing the configured default region is an ordinary operator action. Taking
+    profile and region from the current config means a suspended crew's status is
+    then read in the new region, which answers resource-not-found --
+    :meth:`MicroVmLifecycle.resume` reads that as the wall having taken the VM and
+    records ``RESUME_TARGET_GONE`` permanently, for a crew that is sitting there
+    in the other region with its home on its disk.
+    """
+
+    @staticmethod
+    def _deps(monkeypatch, tmp_path, *, profile="config-profile", region="eu-west-1"):
+        from types import SimpleNamespace
+
+        import kiro_crew.cloud.config as cloud_config_mod
+        from kiro_crew.cloud.microvm.record import CrewStore
+
+        monkeypatch.setattr(
+            cloud_config_mod.CloudConfig,
+            "load",
+            staticmethod(lambda: SimpleNamespace(profile=profile, region=region)),
+        )
+        config = SimpleNamespace(
+            launch_spec=lambda: SimpleNamespace(endpoint_url="", kms_key_id="k")
+        )
+        return wiring.production_deps(config, store=CrewStore(tmp_path / "crews.json"))
+
+    def test_a_vm_call_uses_the_records_region_and_profile(self, monkeypatch, tmp_path):
+        from kiro_crew.cloud.microvm import api
+
+        seen: list[dict] = []
+        monkeypatch.setattr(
+            api,
+            "suspend_microvm",
+            lambda vm_id, **kwargs: seen.append({"vm": vm_id, **kwargs}),
+        )
+        deps = self._deps(monkeypatch, tmp_path)
+        deps.suspend_vm(_record(profile="launch-profile", region="us-east-2"))
+        assert seen[0]["region"] == "us-east-2"
+        assert seen[0]["profile"] == "launch-profile"
+
+    def test_a_guest_command_uses_the_records_region_and_profile(self, monkeypatch, tmp_path):
+        from kiro_crew.cloud import ssm
+
+        seen: list[dict] = []
+
+        def fake(instance_id, command, profile="", region="", *, run_as="", total_wait=0):
+            seen.append({"profile": profile, "region": region})
+            return _Result(json.dumps({"ready": True}))
+
+        monkeypatch.setattr(ssm, "run_command", fake)
+        deps = self._deps(monkeypatch, tmp_path)
+        deps.read_guest(_record(profile="launch-profile", region="us-east-2"))
+        assert seen[0] == {"profile": "launch-profile", "region": "us-east-2"}
+
+    def test_the_terminate_wait_polls_the_records_region(self, monkeypatch, tmp_path):
+        from kiro_crew.cloud.microvm import api
+
+        seen: list[dict] = []
+
+        def status(vm_id, **kwargs):
+            seen.append(kwargs)
+            return "TERMINATED"
+
+        monkeypatch.setattr(api, "microvm_status", status)
+        deps = self._deps(monkeypatch, tmp_path)
+        deps.wait_terminated(_record(profile="launch-profile", region="us-east-2"))
+        assert seen[0]["region"] == "us-east-2"
+        assert seen[0]["profile"] == "launch-profile"
+
+    def test_a_record_written_before_either_was_stored_falls_back_to_the_config(
+        self, monkeypatch, tmp_path
+    ):
+        """Forward-compatibility, not a preference: a row from an older build has
+        neither field, and refusing to act on it would strand the crew."""
+        from kiro_crew.cloud.microvm import api
+
+        seen: list[dict] = []
+        monkeypatch.setattr(
+            api,
+            "suspend_microvm",
+            lambda vm_id, **kwargs: seen.append(kwargs),
+        )
+        deps = self._deps(monkeypatch, tmp_path)
+        deps.suspend_vm(_record(profile="", region=""))
+        assert seen[0] == {
+            "profile": "config-profile",
+            "region": "eu-west-1",
+            "endpoint_url": "",
+        }

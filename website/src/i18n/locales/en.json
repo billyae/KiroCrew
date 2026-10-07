@@ -9489,7 +9489,8 @@
         "thread_label": "Conversation",
         "secret_unavailable": "This crew's credential could not be read. Check its deploy finished, then try again.",
         "resume_failed": "This crew was asleep and could not be woken. Try again, or reconnect it.",
-        "message_too_large": "That message is too long. Shorten it and send again."
+        "message_too_large": "That message is too long. Shorten it and send again.",
+        "name_unavailable": "This crew's name was not recorded at launch, so a turn cannot be addressed to it. Relaunch it, or chat with it through its own URL."
       }
     },
     "settingsPage": {

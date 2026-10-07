@@ -47,9 +47,8 @@ import aiohttp
 from aiohttp import web
 
 from kiro_crew.cloud.connect import FARGATE_TURN_PATH
-from kiro_crew.cloud.microvm.engine import MICROVM_PROVISIONER_ID
 from kiro_crew.instances.registry import HEADLESS_CREW_PROVISIONERS as _REGISTRY_HEADLESS
-from kiro_crew.platform.defaults import FARGATE_PROVISIONER_ID
+from kiro_crew.platform.defaults import FARGATE_PROVISIONER_ID, MICROVM_PROVISIONER_ID
 
 if TYPE_CHECKING:
     from kiro_crew.dashboard.state import DashboardState
@@ -154,6 +153,59 @@ def control_secret_id(inst: Any) -> str:
     config = CloudConfig.load().microvm_config()
     prefix = config.secret_path_prefix if config else "kirocrew/crew"
     return _SECRET_PATH.format(prefix=prefix, crew=tag)
+
+
+def served_crew_name(inst: Any) -> str:
+    """The crew name this instance's deployment SERVES, or ``""``.
+
+    The value the turn must send as ``model``, and it is not the instance's
+    display name. Both lanes set the container's ``SMC_CREW_NAME`` from the crew
+    the operator named -- Fargate from its secrets' own binding, MicroVM from the
+    bundle manifest the image was built from -- and the guest's front compares
+    ``model`` against that name and answers 404 ``crew_not_served_here`` for
+    anything else. The display name is a label: this lane's is the launch tag
+    (``kc-22d27f``) and Fargate's is ``Kiro Crew Cloud (<tag>)``, so on both lanes
+    the label addresses nobody.
+
+    Resolved from the record the LAUNCH wrote, the same way
+    :func:`control_secret_id` resolves the secret and for the same reason: the
+    launch is the only party that held the crew's name, and nothing recoverable
+    from an instance row stands in for it. Deliberately NO fallback to the tag --
+    a tag that happens to equal the crew name would make this look like it works
+    and leave every other crew answering 404.
+    """
+    provisioner = str(getattr(inst, "provisioner_id", "") or "")
+    if provisioner == FARGATE_PROVISIONER_ID:
+        # Fargate's crew comes from the binding its own secret ARNs carry, which
+        # is exactly what ``runtask`` writes into ``SMC_CREW_NAME``. ``sole_binding``
+        # is the lane's own reader and refuses a set naming more than one crew, so
+        # calling it is what keeps this answer and the task's answer the same.
+        try:
+            from kiro_crew.cloud.config import CloudConfig
+            from kiro_crew.cloud.fargate.identity import sole_binding
+
+            config = CloudConfig.load().fargate_config()
+            arns = {
+                f"secrets[{index}].valueFrom": str(arn)
+                for index, (_name, arn) in enumerate(getattr(config, "secrets", ()) or ())
+            }
+            return str(sole_binding(arns).crew) if arns else ""
+        except Exception:  # noqa: BLE001 - no config, or one this lane refuses
+            return ""
+    if provisioner != MICROVM_PROVISIONER_ID:
+        return ""
+    try:
+        from kiro_crew.cloud.microvm.record import CrewStore
+    except Exception:  # noqa: BLE001 - no lane, no record
+        return ""
+    name = str(getattr(inst, "name", "") or "")
+    tag = str(getattr(inst, "provisioner_tag", "") or "") or _tag_in(name)
+    if not tag:
+        return ""
+    for record in CrewStore().iter_records():
+        if record.tag == tag:
+            return str(record.crew_name or "")
+    return ""
 
 
 #: A launch tag's shape, which is also the one segment a secret name may carry.
@@ -445,11 +497,21 @@ async def api_crew_turn(request: web.Request) -> web.StreamResponse:
     if resume_error:
         return _refuse("crew_resume_failed", resume_error, 503)
 
+    crew_name = await asyncio.to_thread(served_crew_name, inst)
+    if not crew_name:
+        return _refuse(
+            "crew_name_unavailable",
+            "this crew's name is not recorded, so the gateway cannot address a turn "
+            "to it. Relaunch the crew, or chat with it through its own turn URL.",
+            503,
+        )
+
     payload = {
-        # The crew's display name, which is what the turn route echoes back as
-        # the model. A label, deliberately: the SECRET is named by the lane's own
-        # recorded reference, and the two are different values.
-        "model": str(inst.name or ""),
+        # The crew this deployment SERVES, which the guest's front compares against
+        # its own ``SMC_CREW_NAME`` and 404s on a mismatch. Not the instance's
+        # display name: that is the launch tag on this lane and a bracketed label
+        # on Fargate, and neither addresses the crew.
+        "model": crew_name,
         "id": thread,
         "stream": stream,
         "messages": [{"role": "user", "content": message}],

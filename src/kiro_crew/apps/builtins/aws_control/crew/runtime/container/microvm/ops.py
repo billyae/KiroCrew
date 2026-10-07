@@ -34,6 +34,14 @@ import time
 from typing import Any, Optional
 
 from container.microvm import hooks
+from container.microvm.watchdog import PackConflict
+
+#: The ``code`` a refused conditional archive write is reported under.
+#:
+#: The gateway matches on this string (``wiring.GUEST_PACK_CONFLICT_CODE``) and
+#: the two are separate literals because this package cannot import ``kiro_crew``.
+#: A parity test asserts they agree.
+PACK_CONFLICT_CODE = "pack_conflict"
 
 #: Where the guest remembers when it last had a running slot.
 #:
@@ -208,7 +216,17 @@ def main(argv: Optional["list[str]"] = None) -> int:
         # On stdout as JSON, because the gateway's only channel here is the
         # command's output and an exception that reached stderr alone would read
         # as an empty answer rather than as a failure.
-        print(json.dumps({"error": repr(exc)}), flush=True)
+        #
+        # A refused precondition is reported with its own CODE, not only as a
+        # message. The gateway's two answers to a failed pack are opposite --
+        # terminate the VM for a generic failure, leave the home completely alone
+        # for a conflict -- so a conflict that arrived as an ordinary error took
+        # the branch that discards the disk this home is on. A code survives the
+        # channel; matching on the message text would not.
+        failure: "dict[str, Any]" = {"error": repr(exc)}
+        if isinstance(exc, PackConflict):
+            failure["code"] = PACK_CONFLICT_CODE
+        print(json.dumps(failure), flush=True)
         return 1
     print(json.dumps(payload), flush=True)
     return 0

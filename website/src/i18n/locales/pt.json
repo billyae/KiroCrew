@@ -17081,7 +17081,8 @@
         "thread_label": "Conversa",
         "secret_unavailable": "Nao foi possivel ler as credenciais desta crew. Verifique se o deploy terminou e tente novamente.",
         "resume_failed": "Esta tripulacao estava suspensa e nao foi possivel reativa-la. Tente de novo ou reconecte-a.",
-        "message_too_large": "Essa mensagem e muito longa. Encurte-a e envie de novo."
+        "message_too_large": "Essa mensagem e muito longa. Encurte-a e envie de novo.",
+        "name_unavailable": "O nome desta crew nao foi registrado no lancamento, por isso nao e possivel enderecar um turno a ela. Relance-a ou use a URL dela."
       }
     },
     "settingsPage": {

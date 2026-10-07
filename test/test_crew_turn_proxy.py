@@ -281,6 +281,152 @@ class TestTheSecretIsNamedByTheLaneNotTheDisplayName:
         assert _SECRET_PATH.startswith("{prefix}")
 
 
+class TestTheCrewIsAddressedByItsOwnNameNotTheLaunchTag:
+    """``model`` names the crew, and the launch tag is not that name.
+
+    The guest's front compares ``model`` against its own ``SMC_CREW_NAME`` and
+    answers 404 ``crew_not_served_here`` for anything else. ``SMC_CREW_NAME``
+    comes from the bundle's manifest, while the tag is this launch's id -- so a
+    turn carrying the tag reaches a crew that can be seen, connected and never
+    talked to.
+
+    The assertion runs the resolved name through the GUEST'S OWN matcher rather
+    than comparing two strings here. Two functions deciding what counts as
+    addressing a crew is how one of them drifts, and the one that drifts is this
+    side, which has no 404 to show for it.
+    """
+
+    @staticmethod
+    def _judge():
+        """The guest's ``judge_addressed_crew``, imported off the image's root.
+
+        The container package is a separate source root that ships inside the
+        image; ``recipe.RUNTIME_DIR`` is where it lives, and the same insert the
+        bundle-digest test uses reaches it.
+        """
+        import sys
+
+        from kiro_crew.cloud.microvm import recipe as recipe_mod
+
+        sys.path.insert(0, str(recipe_mod.RUNTIME_DIR))
+        try:
+            from container.front.app import judge_addressed_crew
+
+            return judge_addressed_crew
+        finally:
+            sys.path.remove(str(recipe_mod.RUNTIME_DIR))
+
+    @staticmethod
+    def _store(tmp_path, monkeypatch, record=None):
+        from kiro_crew.cloud.microvm.record import CrewStore
+
+        store = CrewStore(tmp_path / "crews.json")
+        if record is not None:
+            store.put(record)
+        monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
+        return store
+
+    def test_a_tag_that_is_not_the_crew_name_still_resolves_the_name(self, tmp_path, monkeypatch):
+        from kiro_crew.cloud.microvm.record import CrewRecord
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f", crew_name="l2crew"))
+
+        class Inst:
+            name = "kc-22d27f"
+            provisioner_id = "microvm"
+
+        assert served_crew_name(Inst()) == "l2crew"
+
+    def test_the_guests_own_matcher_accepts_the_resolved_name(self, tmp_path, monkeypatch):
+        """The whole defect in one assertion: launch tag != crew name, and the
+        value this side sends is the one the guest serves."""
+        from kiro_crew.cloud.microvm.record import CrewRecord
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f", crew_name="l2crew"))
+
+        class Inst:
+            name = "kc-22d27f"
+            provisioner_id = "microvm"
+
+        judge = self._judge()
+        crew, refusal = judge({"model": served_crew_name(Inst())}, "l2crew")
+        assert refusal is None
+        assert crew == "l2crew"
+
+    def test_the_guests_own_matcher_refuses_the_launch_tag(self, tmp_path, monkeypatch):
+        """The red half, asserted through the same function: this is the 404 the
+        live take hit, and it is what sending the display label produces."""
+        judge = self._judge()
+        crew, refusal = judge({"model": "kc-22d27f"}, "l2crew")
+        assert crew is None
+        assert refusal is not None
+        assert refusal.status_code == 404
+
+    def test_an_unrecorded_name_resolves_to_nothing_rather_than_the_tag(
+        self, tmp_path, monkeypatch
+    ):
+        """No fallback. A tag that happened to equal the crew name would make this
+        look like it works and leave every other crew answering 404, so a record
+        written before the name was stored resolves to nothing and the turn says
+        so."""
+        from kiro_crew.cloud.microvm.record import CrewRecord
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f"))
+
+        class Inst:
+            name = "kc-22d27f"
+            provisioner_id = "microvm"
+
+        assert served_crew_name(Inst()) == ""
+
+    def test_a_lane_with_no_headless_crew_resolves_nothing(self, tmp_path, monkeypatch):
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        class Inst:
+            name = "some-ec2-box"
+            provisioner_id = "aws_ec2"
+
+        assert served_crew_name(Inst()) == ""
+
+    def test_a_fargate_crew_is_named_by_its_own_secret_binding(self, monkeypatch):
+        """Fargate has the SAME split: it registers crews as
+        ``Kiro Crew Cloud (<tag>)`` while ``runtask`` writes ``SMC_CREW_NAME``
+        from the binding its secret ARNs carry. The display label can never match,
+        so this lane reads the binding the task itself reads."""
+        from types import SimpleNamespace
+
+        import kiro_crew.cloud.config as cloud_config_mod
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        # The six-character suffix is part of a real ARN and ``sole_binding``
+        # refuses one without it: a reference with no suffix is resolved by search
+        # and can return a different secret.
+        arn = (
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:"
+            "kirocrew/crew/l2crew/CONTROL_SECRET-AbCdEf"
+        )
+        monkeypatch.setattr(
+            cloud_config_mod.CloudConfig,
+            "load",
+            staticmethod(
+                lambda: SimpleNamespace(
+                    fargate_config=lambda: SimpleNamespace(
+                        secrets=(("kirocrew/crew/l2crew/CONTROL_SECRET", arn),)
+                    )
+                )
+            ),
+        )
+
+        class Inst:
+            name = "Kiro Crew Cloud (kc-22d27f)"
+            provisioner_id = "aws_fargate"
+
+        assert served_crew_name(Inst()) == "l2crew"
+
+
 # ======================================================================
 # Driving the turn handler itself.
 #
@@ -418,6 +564,7 @@ def _wire_handler(
     status=None,
     secret_id="kirocrew/crew/l2crew/CONTROL_SECRET",
     secret="s3cret-value",
+    crew_name="l2crew",
 ):
     """Stub the handler's lazily-imported collaborators and secret reads.
 
@@ -456,6 +603,7 @@ def _wire_handler(
     monkeypatch.setattr(hi, "_registry", lambda state: reg)
     monkeypatch.setattr(hi, "_status_for", lambda state, instance_id: status or {})
     monkeypatch.setattr(mod, "control_secret_id", lambda i: secret_id)
+    monkeypatch.setattr(mod, "served_crew_name", lambda i: crew_name)
     monkeypatch.setattr(mod, "_read_control_secret", AsyncMock(return_value=secret))
     return inst
 
@@ -616,6 +764,20 @@ class TestTheTurnHandlerRefusesBeforeItForwards:
         assert resp.status == 503
         assert _code(resp) == "crew_secret_unavailable"
 
+    @pytest.mark.asyncio
+    async def test_a_crew_with_no_recorded_name_is_refused_before_the_forward(self, monkeypatch):
+        """Its own refusal rather than a turn sent with the tag. A turn carrying
+        the tag reaches the guest, which answers 404 ``crew_not_served_here`` --
+        a crew the reader can see, connect and never talk to, with nothing in the
+        pane saying why."""
+        _wire_handler(monkeypatch, status=_connected(), crew_name="")
+        calls: list[dict] = []
+        _install_session(monkeypatch, calls)
+        resp = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+        assert resp.status == 503
+        assert _code(resp) == "crew_name_unavailable"
+        assert calls == []
+
 
 class TestTheTurnHandlerForwardsToTheCrew:
     """The forward itself: the secret reaches the crew, and only the crew."""
@@ -642,7 +804,9 @@ class TestTheTurnHandlerForwardsToTheCrew:
         assert b"S3C" not in resp.body
         # And the payload is the OpenAI shape the crew's front expects.
         sent = calls[0]["json"]
-        assert sent["model"] == inst.name
+        # The crew this deployment SERVES, not the instance's display label.
+        assert sent["model"] == "l2crew"
+        assert sent["model"] != inst.name
         assert sent["id"] == "slot-1"
         assert sent["stream"] is False
         assert sent["messages"] == [{"role": "user", "content": "hello crew"}]

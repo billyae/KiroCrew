@@ -44,13 +44,21 @@ class FakeLifecycle:
         idle=(),
         unreachable=(),
         pack_raises=None,
+        self_packed=(),
     ) -> None:
         self.store = store
         self.wall_due_tags = set(wall_due)
         self.idle_tags = set(idle)
         self.unreachable_tags = set(unreachable)
         self.pack_raises = dict(pack_raises or {})
+        self.self_packed_tags = set(self_packed)
         self.calls: list[tuple[str, str]] = []
+
+    def adopt_self_pack(self, tag: str):
+        self.calls.append(("adopt_self_pack", tag))
+        if tag not in self.self_packed_tags:
+            return None
+        return self.store.get(tag)
 
     def wall_pack_due(self, tag: str, *, now=None) -> bool:
         self.calls.append(("wall_pack_due", tag))
@@ -192,8 +200,27 @@ class TestRunTick:
         assert lifecycle.calls == [
             ("wall_pack_due", "a"),
             ("resume", "a"),
+            ("adopt_self_pack", "a"),
             ("pack", "a"),
         ]
+
+    def test_a_guest_that_already_packed_itself_is_adopted_and_never_repacked(self, tmp_path):
+        """The guest's own wall pack normally fires before this backstop does, and
+        a guest that has packed has STOPPED ITS BACKEND -- which the slot probe
+        reports as one running slot, so ``pack`` raises ``GatewayAlive`` on this
+        tick and on every later one. Adopting first is what lets such a crew reach
+        a terminal state at all; packing again is both wrong and impossible."""
+        lifecycle = _lifecycle(
+            tmp_path,
+            [_record("a")],
+            wall_due={"a"},
+            self_packed={"a"},
+            pack_raises={"a": AssertionError("pack must not be called for a self-packed guest")},
+        )
+        report = tick.run_tick(lifecycle, now=NOW)
+        assert report.packed == 1
+        assert report.failures == 0
+        assert lifecycle.calls == [("wall_pack_due", "a"), ("adopt_self_pack", "a")]
 
     def test_a_suspended_crew_not_at_its_wall_is_not_polled(self, tmp_path):
         """A suspended crew below its wall has nothing the tick does to it: polling

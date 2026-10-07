@@ -38,6 +38,7 @@ refusing to assemble one that could not produce a usable image.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import zipfile
@@ -259,6 +260,36 @@ def bundle_digest_of(bundle_dir: Path) -> str:
                 f"from it: {exc}"
             ) from exc
         raise
+
+
+def bundle_crew_name(bundle_dir: Path) -> str:
+    """The crew name this bundle's manifest declares, or ``""``.
+
+    The name the GUEST will serve. Inside the VM, ``hooks.supervisor_env`` sets
+    ``SMC_CREW_NAME`` from this same manifest -- the one baked into the image --
+    and the supervisor refuses to boot when the bundle's manifest and that
+    variable disagree. The control plane needs the value for a different reason:
+    a turn addresses a crew by name, and the launch tag is not that name. The tag
+    is this launch's id, minted by the launcher; the name belongs to the bundle
+    and is the operator's.
+
+    Read from the operator's configured ``bundle_dir`` -- the same directory the
+    image was built from -- rather than from the running VM, because the control
+    plane needs it at launch, before the guest can be asked anything.
+
+    Empty for every way the manifest is not readable, and the caller's answer to
+    empty is to say the crew's name is not recorded. The alternative is sending
+    the tag, which the guest's own addressing check answers with a 404 naming the
+    crew it does serve: a crew the dashboard can see, connect and never talk to.
+    """
+    try:
+        raw = (bundle_dir / "manifest.json").read_text(encoding="utf-8")
+        document = json.loads(raw)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(document, dict):
+        return ""
+    return str(document.get("crew_name") or "")
 
 
 def check_layout(bundle_dir: Path) -> None:

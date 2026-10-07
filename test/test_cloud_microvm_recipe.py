@@ -182,6 +182,39 @@ class TestCheckLayout:
             check_layout(tmp_path / "nope")
 
 
+class TestTheCrewNameIsReadableFromTheBundle:
+    """The control plane needs the crew's name at LAUNCH, before the guest exists.
+
+    Inside the VM the same manifest becomes ``SMC_CREW_NAME``, and the guest's
+    front compares a turn's ``model`` against it. The launch tag is a different
+    fact -- this launch's id -- so the host reads the name here and records it.
+    """
+
+    def test_the_manifests_crew_name_is_returned(self, bundle):
+        from kiro_crew.cloud.microvm.recipe import bundle_crew_name
+
+        assert bundle_crew_name(bundle) == "demo"
+
+    @pytest.mark.parametrize(
+        "content",
+        ["{not json", "[]", '{"crew_name": ""}', "null"],
+        ids=["unparseable", "not-an-object", "empty-name", "null"],
+    )
+    def test_every_unusable_manifest_reads_as_no_name(self, bundle, content):
+        """Empty rather than a raise: the caller's answer to empty is to say the
+        name is not recorded, which is better than a launch that fails over a
+        field only the turn path reads."""
+        from kiro_crew.cloud.microvm.recipe import bundle_crew_name
+
+        (bundle / "manifest.json").write_text(content)
+        assert bundle_crew_name(bundle) == ""
+
+    def test_an_absent_bundle_reads_as_no_name(self, tmp_path):
+        from kiro_crew.cloud.microvm.recipe import bundle_crew_name
+
+        assert bundle_crew_name(tmp_path / "nope") == ""
+
+
 class TestAssemble:
     def test_the_recipe_names_both_digests(self, bundle, wheel, tmp_path):
         out = assemble(

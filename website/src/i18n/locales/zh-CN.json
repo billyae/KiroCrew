@@ -16573,7 +16573,8 @@
         "thread_label": "会话",
         "secret_unavailable": "无法读取该 crew 的凭据。请确认部署已完成后重试。",
         "resume_failed": "这个 crew 处于挂起状态且无法唤醒。请重试，或重新连接它。",
-        "message_too_large": "这条消息太长了。请缩短后重新发送。"
+        "message_too_large": "这条消息太长了。请缩短后重新发送。",
+        "name_unavailable": "这个 crew 的名称在启动时没有被记录，因此无法把一次对话指向它。请重新启动它，或通过它自己的 URL 对话。"
       }
     },
     "settingsPage": {

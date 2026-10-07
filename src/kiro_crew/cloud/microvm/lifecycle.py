@@ -304,6 +304,50 @@ class MicroVmLifecycle:
             tag, states.EVENT_RESUMED, last_observed_at=self._deps.now()
         )
 
+    def adopt_self_pack(self, tag: str) -> Optional[CrewRecord]:
+        """Finish a crew whose GUEST already wrote the archive. ``None`` if none did.
+
+        The guest arms its own pack at the wall and normally reaches that edge
+        first, which is the design: the control plane is the owner's laptop and a
+        timer that lives only there loses a crew every time the lid closes. What
+        the guest cannot do is finish the job -- the record it has to write and the
+        terminate it has to call are both on this side.
+
+        So this is the step between the two, and without it the crew never
+        reaches a terminal state at all. A guest that has packed has stopped its
+        backend, so the slot probe fails, and ``ops.guest_state`` reports an
+        unreadable probe as ONE RUNNING SLOT rather than as idle -- deliberately,
+        because a failed probe on a crew mid-turn must not read as suspendable.
+        :meth:`pack` sees that slot and raises :class:`pack.GatewayAlive` before
+        it writes anything, on this tick and on every later one, until the
+        platform takes the VM with an archive the record still cannot address.
+
+        Reading the ETag beats reading the slots HERE, and only here: the archive
+        is already written, so there is nothing left to protect from a live
+        writer. The ETag goes into the record BEFORE the terminate for the reason
+        :meth:`pack` orders those two the same way.
+        """
+        record = self._deps.store.get(tag)
+        if record is None or record.state != states.RUNNING:
+            return None
+        guest = self._deps.read_guest(record)
+        if guest is None or not guest.self_packed_etag:
+            return None
+        logger.info(
+            "microvm crew %s packed itself at its wall (etag %s); finishing it here rather "
+            "than packing again",
+            tag,
+            guest.self_packed_etag,
+        )
+        record = self._deps.store.put(record.evolve(archive_etag=guest.self_packed_etag))
+        self._terminate_and_wait(record)
+        return self._deps.store.apply_event(
+            tag,
+            states.EVENT_PACK_OK,
+            archive_etag=guest.self_packed_etag,
+            stopped_at=self._deps.now(),
+        )
+
     def pack(self, tag: str) -> CrewRecord:
         """Stop the crew's gateway, archive its home, then terminate the VM.
 

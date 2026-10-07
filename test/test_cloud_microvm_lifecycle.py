@@ -327,6 +327,65 @@ class TestPackOrder:
             lifecycle.pack("kc-a")
 
 
+class TestAdoptingTheGuestsOwnPack:
+    """The step between a guest that packed itself and a crew that is finished.
+
+    The guest writes the archive and stops its backend; the record and the
+    terminate are both on this side. Without this the crew is stuck: a stopped
+    backend fails the slot probe, ``ops.guest_state`` reports a failed probe as
+    one RUNNING slot, and :meth:`pack` refuses on that slot forever.
+    """
+
+    def test_a_self_packed_guest_is_finished_without_a_second_archive_write(self, tmp_path):
+        platform = Platform(_guest(running_slots=1, self_packed_etag='"guest"'))
+        platform.pack_error = AssertionError("the archive must not be written twice")
+        lifecycle, store = _build(tmp_path, _running(), platform)
+        record = lifecycle.adopt_self_pack("kc-a")
+        assert record is not None
+        assert "pack_home" not in platform.calls
+        assert "stop_gateway" not in platform.calls
+        assert platform.calls == ["read_guest", "terminate_vm", "wait_terminated"]
+        assert store.get("kc-a").state == states.STOPPED
+        assert store.get("kc-a").archive_etag == '"guest"'
+
+    def test_the_adopted_etag_is_in_the_record_before_the_terminate(self, tmp_path):
+        """Same ordering argument as the pack's own: a crash between the two must
+        leave a record that can still authorise the next write to that archive."""
+        platform = Platform(_guest(running_slots=1, self_packed_etag='"guest"'))
+        lifecycle, store = _build(tmp_path, _running(), platform)
+        seen: list[str] = []
+        platform.on_terminate = lambda: seen.append(store.get("kc-a").archive_etag)
+        lifecycle.adopt_self_pack("kc-a")
+        assert seen == ['"guest"']
+
+    def test_a_guest_that_has_not_packed_is_left_to_the_packer(self, tmp_path):
+        platform = Platform(_guest())
+        lifecycle, store = _build(tmp_path, _running(), platform)
+        assert lifecycle.adopt_self_pack("kc-a") is None
+        assert "terminate_vm" not in platform.calls
+        assert store.get("kc-a").state == states.RUNNING
+
+    def test_an_unreachable_guest_is_not_an_adoption(self, tmp_path):
+        """A crew that cannot be asked has not told us it packed, and terminating
+        it on that silence would discard a home nothing has archived."""
+        platform = Platform(None)
+        lifecycle, store = _build(tmp_path, _running(), platform)
+        assert lifecycle.adopt_self_pack("kc-a") is None
+        assert "terminate_vm" not in platform.calls
+        assert store.get("kc-a").state == states.RUNNING
+
+    def test_a_crew_that_is_not_running_is_not_adopted(self, tmp_path):
+        platform = Platform(_guest(self_packed_etag='"guest"'))
+        lifecycle, _ = _build(tmp_path, _running(state=states.SUSPENDED), platform)
+        assert lifecycle.adopt_self_pack("kc-a") is None
+        assert platform.calls == []
+
+    def test_an_absent_record_is_not_adopted(self, tmp_path):
+        platform = Platform(_guest(self_packed_etag='"guest"'))
+        lifecycle, _ = _build(tmp_path, _running(), platform)
+        assert lifecycle.adopt_self_pack("kc-missing") is None
+
+
 class TestWallBackstop:
     def test_a_young_crew_is_not_due(self, tmp_path):
         platform = Platform(_guest())

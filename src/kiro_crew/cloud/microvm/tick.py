@@ -105,7 +105,13 @@ def run_tick(lifecycle: MicroVmLifecycle, *, now: Optional[float] = None) -> Tic
                     # suspended VM cannot run one. This is why the state table has
                     # no pack edge out of SUSPENDED.
                     lifecycle.resume(tag)
-                lifecycle.pack(tag)
+                # ADOPT first. The guest's own wall pack normally fires before this
+                # backstop does, and a guest that has packed has stopped its
+                # backend -- which the slot probe reports as busy, so packing again
+                # raises ``GatewayAlive`` on this tick and on every later one and
+                # the crew never reaches a terminal state.
+                if lifecycle.adopt_self_pack(tag) is None:
+                    lifecycle.pack(tag)
                 report.packed += 1
                 continue
             if record.state != states.RUNNING:

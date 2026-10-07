@@ -278,3 +278,113 @@ class TestAWriteRefusesAPartiallyUnreadableLedger:
         document["crews"].append({"not": "a record"})
         path.write_text(_json.dumps(document))
         assert set(CrewStore(path).load()) == {"keeper"}
+
+
+class TestTwoWritersCannotLoseACrew:
+    """The lane has two writers by design and they are in different processes.
+
+    The gateway writes this file as it serves the owner's clicks; the ``tick``
+    cron writes it on its own schedule in its own interpreter. ``publish``
+    replaces the WHOLE document, so an atomic rename makes each write indivisible
+    without making the pair of them ordered: both read the same document, each
+    adds its own change, and the second rename discards the first. What it
+    discards is a crew's row, and with it the archive ETag that is the only thing
+    that can condition the next write on that archive.
+    """
+
+    @staticmethod
+    def _cannot_be_locked(path) -> bool:
+        """Whether this file's writer lock is held by somebody.
+
+        A fresh ``open`` gets its own open file description, so POSIX ``flock``
+        counts it as a competing holder even in this process -- which is exactly
+        the property under test. ``wait=False`` makes it one attempt.
+        """
+        from kiro_crew import platform_lock_compat
+
+        with open(str(path) + ".lock", "a+") as handle:
+            try:
+                with platform_lock_compat.file_lock(handle.fileno(), exclusive=True, wait=False):
+                    return False
+            except Exception:
+                return True
+
+    def test_a_put_holds_the_lock_while_it_publishes(self, tmp_path):
+        path = tmp_path / "crews.json"
+        store = CrewStore(path)
+        held: list[bool] = []
+        original = store.publish
+
+        def publish(records):
+            held.append(self._cannot_be_locked(path))
+            original(records)
+
+        store.publish = publish  # type: ignore[method-assign]
+        store.put(CrewRecord(tag="kc-a"))
+        assert held == [True], "the publish ran without the writer lock held"
+
+    def test_an_apply_event_holds_the_lock_while_it_publishes(self, tmp_path):
+        """The transition is decided inside the lock too: the event's legality
+        depends on the state read, so deciding outside it can store a state no
+        edge of the table allowed."""
+        path = tmp_path / "crews.json"
+        store = CrewStore(path)
+        store.put(CrewRecord(tag="kc-a", state=states.RUNNING))
+        held: list[bool] = []
+        original = store.publish
+
+        def publish(records):
+            held.append(self._cannot_be_locked(path))
+            original(records)
+
+        store.publish = publish  # type: ignore[method-assign]
+        store.apply_event("kc-a", states.EVENT_SUSPENDED)
+        assert held == [True]
+
+    def test_a_delete_holds_the_lock_while_it_publishes(self, tmp_path):
+        path = tmp_path / "crews.json"
+        store = CrewStore(path)
+        store.put(CrewRecord(tag="kc-a"))
+        held: list[bool] = []
+        original = store.publish
+
+        def publish(records):
+            held.append(self._cannot_be_locked(path))
+            original(records)
+
+        store.publish = publish  # type: ignore[method-assign]
+        assert store.delete("kc-a") is True
+        assert held == [True]
+
+    def test_the_lock_is_released_when_the_write_is_refused(self, tmp_path):
+        """A refusal must not leave the file locked for the next pass: the tick
+        runs every minute and a held lock would turn one bad byte into a lane
+        that never writes again."""
+        import json as _json
+
+        from kiro_crew.cloud.microvm.record import CrewStoreUnreadable
+
+        path = tmp_path / "crews.json"
+        CrewStore(path).put(CrewRecord(tag="keeper"))
+        document = _json.loads(path.read_text())
+        document["crews"].append({"not": "a record"})
+        path.write_text(_json.dumps(document))
+        with pytest.raises(CrewStoreUnreadable):
+            CrewStore(path).put(CrewRecord(tag="newcomer"))
+        assert self._cannot_be_locked(path) is False
+
+    def test_the_lock_file_is_not_the_document(self, tmp_path):
+        """A sibling ``.lock`` rather than the record itself, because the Windows
+        path locks a byte of the file it is given and the document is replaced by
+        rename underneath it."""
+        path = tmp_path / "crews.json"
+        CrewStore(path).put(CrewRecord(tag="kc-a"))
+        assert (tmp_path / "crews.json.lock").exists()
+        assert set(CrewStore(path).load()) == {"kc-a"}
+
+    def test_a_missing_parent_directory_is_created_for_the_lock(self, tmp_path):
+        """The first write of a fresh install creates the directory, and the lock
+        is taken BEFORE the publish that would otherwise have created it."""
+        path = tmp_path / "nested" / "deeper" / "crews.json"
+        CrewStore(path).put(CrewRecord(tag="kc-a"))
+        assert set(CrewStore(path).load()) == {"kc-a"}

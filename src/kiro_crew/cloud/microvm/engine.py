@@ -43,7 +43,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from kiro_crew.cloud import connect
 from kiro_crew.cloud.aws import AWSError, checked_json
@@ -55,10 +55,15 @@ from kiro_crew.cloud.microvm.image import ImageResolver
 from kiro_crew.cloud.microvm.payload import RunHookPayload, compute_wall_leads
 from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
 
-logger = logging.getLogger(__name__)
+# The id and kind this lane publishes, DEFINED THERE and imported here -- the
+# same direction ``fargate_engine`` takes it. The descriptor that carries the id
+# to the dashboard lives in ``platform.defaults``, so a second literal here would
+# be a second spelling of the lane's identity, and the two would drift the first
+# time either was renamed. Re-exported because callers of this module already
+# read the id from it.
+from kiro_crew.platform.defaults import MICROVM_PROVISIONER_ID
 
-#: The provisioner id and kind this lane publishes.
-MICROVM_PROVISIONER_ID = "microvm"
+logger = logging.getLogger(__name__)
 
 #: How long a hybrid activation stays usable, in minutes. One hour: long enough
 #: for a slow launch, short enough that a leaked one expires before it is worth
@@ -284,6 +289,22 @@ class MicroVmLaunchEngine:
                 )
             recipe_mod.check_layout(Path(spec.bundle_dir))
 
+    @staticmethod
+    def _bundle_crew_name(spec: Any) -> str:
+        """The crew name the configured bundle declares, or ``""``.
+
+        Empty rather than a refusal: the launch itself works without the name --
+        the guest reads its own manifest -- and failing a provision over an
+        unreadable manifest would cost the owner a crew to protect a field only
+        the turn path reads. The turn path says so instead of guessing.
+        """
+        if not getattr(spec, "bundle_dir", ""):
+            return ""
+        try:
+            return recipe_mod.bundle_crew_name(Path(spec.bundle_dir))
+        except Exception:  # noqa: BLE001 - a name this launch could not read
+            return ""
+
     def provision(self, *, tag: str, size_key: str, profile: str, region: str) -> str:
         """Mint an activation, run the VM, and wait for its node to come online.
 
@@ -320,6 +341,11 @@ class MicroVmLaunchEngine:
                 generation=generation,
                 created_at=self.now(),
                 control_secret_ref=spec.control_secret_name(tag),
+                # The name the guest will serve, read from the bundle the image
+                # was built from. Recorded here because this is the only moment
+                # the control plane holds it: the turn path has an instance row
+                # and a tag, and the tag is not the name.
+                crew_name=self._bundle_crew_name(spec),
             )
         )
         # The control secret EXISTS before the VM is told to read it.

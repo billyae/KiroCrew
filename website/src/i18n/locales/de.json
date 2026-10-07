@@ -16827,7 +16827,8 @@
         "thread_label": "Unterhaltung",
         "secret_unavailable": "Die Anmeldedaten dieser Crew konnten nicht gelesen werden. Prufe, ob ihr Deploy fertig ist, und versuche es erneut.",
         "resume_failed": "Diese Crew hat geschlafen und konnte nicht geweckt werden. Versuche es erneut oder verbinde sie neu.",
-        "message_too_large": "Diese Nachricht ist zu lang. Kuerze sie und sende sie erneut."
+        "message_too_large": "Diese Nachricht ist zu lang. Kuerze sie und sende sie erneut.",
+        "name_unavailable": "Der Name dieser Crew wurde beim Start nicht gespeichert, daher kann kein Zug an sie adressiert werden. Starte sie neu oder nutze ihre eigene URL."
       }
     },
     "settingsPage": {

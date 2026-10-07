@@ -17081,7 +17081,8 @@
         "thread_label": "Conversation",
         "secret_unavailable": "Les identifiants de cette crew n'ont pas pu etre lus. Verifie que son deploiement est termine, puis reessaie.",
         "resume_failed": "Cet equipage etait en veille et n'a pas pu etre reveille. Reessaie ou reconnecte-le.",
-        "message_too_large": "Ce message est trop long. Raccourcis-le et renvoie-le."
+        "message_too_large": "Ce message est trop long. Raccourcis-le et renvoie-le.",
+        "name_unavailable": "Le nom de cette crew n'a pas ete enregistre au lancement, donc un tour ne peut pas lui etre adresse. Relance-la ou passe par son URL."
       }
     },
     "settingsPage": {

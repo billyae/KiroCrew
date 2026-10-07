@@ -27,13 +27,16 @@ know when its VM will be taken.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from kiro_crew import platform_lock_compat
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.cloud.microvm import states
 from kiro_crew.config.loader import config_dir
@@ -118,6 +121,16 @@ class CrewRecord:
     generation: int = 0
     profile: str = ""
     region: str = ""
+    #: The crew name this VM SERVES, which is not :attr:`tag`. The tag is this
+    #: launch's id, minted by the launcher; the name comes from the bundle's
+    #: manifest and is what the guest sets ``SMC_CREW_NAME`` to. A turn addresses
+    #: the crew by name, so the two are needed for different things and a turn
+    #: that sent the tag is answered with the guest's own "not served here".
+    #:
+    #: Recorded at launch rather than derived at turn time, for the reason
+    #: :attr:`control_secret_ref` is: the launch is the only party that holds the
+    #: bundle the image was built from.
+    crew_name: str = ""
     created_at: float = field(default_factory=time.time)
 
     def evolve(self, **changes: Any) -> "CrewRecord":
@@ -326,20 +339,56 @@ class CrewStore:
             )
         return self.load()
 
+    @contextmanager
+    def _writer_lock(self) -> Iterator[None]:
+        """Serialise one read-modify-write against every other process's.
+
+        :meth:`publish` replaces the whole document, so a write is only safe if
+        the read it was computed from is still current when it lands. Without
+        this lock it is not: the lane has TWO writers by design -- the gateway
+        serving the owner's clicks, and the separately scheduled ``tick`` cron in
+        its own interpreter -- and an atomic rename makes each write indivisible
+        without making the pair of them ordered. Two concurrent passes both read
+        the same document, each adds its own change, and the second rename
+        discards the first. What it discards is a crew's row, and with it the
+        archive ETag that is the only thing able to condition the next write on
+        that archive: the bytes stay in the bucket and nothing can address them.
+
+        ``platform_lock_compat.file_lock``, for the same reason
+        :func:`launch_state._writer_lock` uses it: ``kirocrew cloud`` runs on the
+        owner's own machine, Windows included, and the ``flock_compat`` shim is a
+        no-op there. The lock lives in a sibling ``.lock`` file rather than on the
+        document, because the Windows path locks a byte of the file it is given
+        and the document is replaced by rename underneath it.
+
+        A lock that cannot be taken RAISES, which is what ``file_lock`` already
+        does and is the right direction here: every caller of a write is a
+        provisioning step or a tick that reports its own failure, so a refusal
+        costs one pass and an unserialised write costs a crew's archive.
+        """
+        lock_path = self._path.with_name(self._path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.ExitStack() as stack:
+            handle = stack.enter_context(open(lock_path, "a+"))
+            stack.enter_context(platform_lock_compat.file_lock(handle.fileno(), exclusive=True))
+            yield
+
     def put(self, record: CrewRecord) -> CrewRecord:
         """Write one record, leaving every other alone. Returns what was stored."""
-        records = self.load_for_write()
-        records[record.tag] = record
-        self.publish(records)
+        with self._writer_lock():
+            records = self.load_for_write()
+            records[record.tag] = record
+            self.publish(records)
         return record
 
     def delete(self, tag: str) -> bool:
         """Remove one record. ``False`` when there was none."""
-        records = self.load_for_write()
-        if tag not in records:
-            return False
-        del records[tag]
-        self.publish(records)
+        with self._writer_lock():
+            records = self.load_for_write()
+            if tag not in records:
+                return False
+            del records[tag]
+            self.publish(records)
         return True
 
     def apply_event(self, tag: str, event: str, **changes: Any) -> CrewRecord:
@@ -353,15 +402,22 @@ class CrewStore:
 
         Raises :class:`states.IllegalTransition` for an event the table has no row
         for, which is a caller bug and must not be stored as a state.
+
+        The transition is computed INSIDE the writer lock, not only written there.
+        The event's legality depends on the state the record is in, so a read
+        outside the lock decides against a state another writer may already have
+        moved on from -- and the publish would then store a state no edge of the
+        table ever allowed.
         """
-        records = self.load_for_write()
-        current = records.get(tag)
-        next_state = states.transition(current.state if current else None, event)
-        if current is None:
-            current = CrewRecord(tag=tag)
-        records[tag] = current.evolve(state=next_state, **changes)
-        self.publish(records)
-        return records[tag]
+        with self._writer_lock():
+            records = self.load_for_write()
+            current = records.get(tag)
+            next_state = states.transition(current.state if current else None, event)
+            if current is None:
+                current = CrewRecord(tag=tag)
+            records[tag] = current.evolve(state=next_state, **changes)
+            self.publish(records)
+            return records[tag]
 
     def iter_records(self) -> Iterator[CrewRecord]:
         """Every record, for a sweep that only reads."""
