@@ -166,6 +166,7 @@ from kiro_crew.snapshot_restore import (  # noqa: F401 - facade re-exports
     _do_replace_mutations,
     _drop_derived_indexes_absent_from_bundle,
     _install_locked_document,
+    _live_path_absent,
     _lock_down_restored,
     _refuse_corrupt_source_databases,
     _refuse_dropped_entries,
@@ -174,6 +175,7 @@ from kiro_crew.snapshot_restore import (  # noqa: F401 - facade re-exports
     _refuse_unless_valid_tree_document,
     _refuse_unsafe_destination_roots,
     _remove_locked_document,
+    _replace_omissions,
     _restore_everything_from_rollback,
     _restore_locked_document,
     _save_locked_document_to,
@@ -273,64 +275,6 @@ def _warn_if_transcripts_left_behind(mc: Path, components: list[str] | None) -> 
         f"sessions/ (the dashboard's chats), so {mc / 'sessions'} is left as it is and chats "
         "from the source machine will not appear."
     )
-
-
-def _replace_omissions(snap: Path, components: list[str] | None) -> list[str]:
-    """The manifest's recorded omissions that ``--mode replace`` would turn into deletions.
-
-    Snapshot tolerates an entry it could not read by leaving it out and naming it in
-    ``MANIFEST.json``'s ``skipped`` list. Replace clears a component's live tree before
-    installing the bundle's copy, so a file the bundle omitted leaves the live data home
-    and survives only in the ``pre-restore-<ts>/`` rollback directory. This function is
-    the reader that acts on the declaration.
-
-    Asked as a CLASS through :func:`pinned_fs.omits_wanted_data`, the same predicate the
-    snapshot's prune guard uses: a symlink or non-regular entry is screened by design and
-    is not something the bundle lacks, while every other reason -- including one this
-    build has never seen -- counts. Only omissions under a component being restored are
-    returned: an omitted ``skills/`` file is no reason to refuse ``--components memory``.
-    A path no component claims is kept rather than dropped, because "could not place it"
-    must not read as "safe to clear". A ``skipped`` that is not a list, or an entry that
-    is not an object, is unreadable rather than empty, so it counts as an omission too.
-    """
-    mf = snap / "MANIFEST.json"
-    if not mf.is_file():
-        return []
-    try:
-        manifest = json.loads(mf.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        # `_manifest_components` has already refused an unparseable manifest by now.
-        return []
-    if not isinstance(manifest, dict):
-        return []
-    skipped = manifest.get("skipped")
-    if skipped is None:
-        return []
-    if not isinstance(skipped, list):
-        return ["(MANIFEST.json 'skipped' is not a list)"]
-
-    wanted = list(COMPONENTS) if components is None else components
-    restored = [(set(s.files), set(s.trees)) for n, s in COMPONENTS.items() if n in wanted]
-    every = [(set(s.files), set(s.trees)) for s in COMPONENTS.values()]
-
-    def _claimed(rel: str, by: list[tuple[set[str], set[str]]]) -> bool:
-        return any(
-            rel in files or any(rel == t or rel.startswith(t + "/") for t in trees)
-            for files, trees in by
-        )
-
-    found: list[str] = []
-    for entry in skipped:
-        if not isinstance(entry, dict):
-            found.append("(unreadable 'skipped' entry)")
-            continue
-        if not pinned_fs.omits_wanted_data(str(entry.get("reason", ""))):
-            continue
-        # Recorded with the snapshot host's separator, so a Windows bundle says `skills\x`.
-        rel = str(entry.get("path", "")).replace("\\", "/").strip("/")
-        if _claimed(rel, restored) or not _claimed(rel, every):
-            found.append(rel or "(no path recorded)")
-    return found
 
 
 def _report_unredacted_upload() -> None:
@@ -1997,7 +1941,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         # run would report success. Merge clears nothing and is unaffected. Checked before
         # the dry run so a preview gives the same answer the real run would.
         if mode == "replace":
-            omitted = _replace_omissions(snap, components)
+            omitted = _replace_omissions(snap, components, mc)
             if omitted and not allow_omissions:
                 shown = ", ".join(_safe_name(p) for p in omitted[:3])
                 more = f", +{len(omitted) - 3} more" if len(omitted) > 3 else ""

@@ -291,8 +291,12 @@ the live data home and survive only in `pre-restore-<ts>/`. A replace whose sele
 components cover any omission that `pinned_fs.omits_wanted_data` classes as missing data
 (every reason except `symlink` and `not_regular`, an unknown reason included) is refused
 with `state_restore_rejected reason=bundle_has_omissions`, under `--dry-run` too, unless
-`--allow-omissions` is given. An omitted path no component claims, or a `skipped` field
-that is not a list of objects, counts as an omission. Merge clears nothing and does not
+`--allow-omissions` is given. An omitted path no component claims, an omitted directory
+that is an ancestor of a restored tree, or a `skipped` field that is not a list of objects,
+counts as an omission. An omission with nothing at that path in the live data home is
+ignored, since replace has nothing there to remove; a path that cannot be placed under
+the data home (empty, absolute, drive-qualified or containing `..`) is never treated as
+absent. Merge clears nothing and does not
 check. With the flag, replace keeps its clear-then-install meaning and prints how many
 omitted paths it may remove.
 

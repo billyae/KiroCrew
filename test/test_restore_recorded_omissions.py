@@ -65,9 +65,7 @@ def _snapshot_with_victim_denied(home, out) -> object:
         mp.setattr(pinned_fs, "supports_pinned_tree_walk", lambda: PINNED_TREE_WALK)
         for key in real:
             mp.setattr(os, key, _deny(key))
-        rc = snap.snapshot_main(
-            [str(out), "--components", "skills", *unpinnable_argv()]
-        )
+        rc = snap.snapshot_main([str(out), "--components", "skills", *unpinnable_argv()])
     assert rc == 0
     (tarball,) = sorted(out.glob("kirocrew-*.tar.gz"))
     return tarball
@@ -83,9 +81,10 @@ def _manifest(tarball) -> dict:
 def bundle(home, tmp_path):
     tarball = _snapshot_with_victim_denied(home, tmp_path / "out")
     # The premise of the issue, asserted so the test fails loudly if snapshot stops
-    # recording the omission rather than passing for the wrong reason.
+    # recording the omission rather than passing for the wrong reason. The path is
+    # recorded with the snapshot host's own separator.
     assert _manifest(tarball)["skipped"] == [
-        {"reason": "unreadable_entry", "path": f"skills/my-skill/{VICTIM}"}
+        {"reason": "unreadable_entry", "path": os.path.join("skills", "my-skill", VICTIM)}
     ]
     return tarball
 
@@ -103,9 +102,7 @@ class TestReplaceRefusesABundleWithRecordedOmissions:
         assert "omits 1 entry" in out
         assert f"skills/my-skill/{VICTIM}" in out
         assert "--allow-omissions" in out
-        assert not list(home.glob("pre-restore-*")), (
-            "a refusal must not start a rollback set"
-        )
+        assert not list(home.glob("pre-restore-*")), "a refusal must not start a rollback set"
 
     def test_dry_run_gives_the_same_answer(self, home, bundle, capsys):
         assert _restore(bundle, "--mode", "replace", "--dry-run") == 1
@@ -120,6 +117,16 @@ class TestReplaceRefusesABundleWithRecordedOmissions:
         (rollback,) = list(home.glob("pre-restore-*"))
         assert (rollback / "skills" / "my-skill" / VICTIM).read_text() == "only copy\n"
         assert "--allow-omissions: 1 omitted path(s)" in out
+
+    def test_nothing_live_at_the_omitted_path_is_not_refused(self, home, bundle):
+        # A recovery restore onto a home that lacks the file: replace removes nothing.
+        (home / "skills" / "my-skill" / VICTIM).unlink()
+        assert _restore(bundle, "--mode", "replace") == 0
+
+    @pytest.mark.parametrize("path", ["", "../outside.md", "/etc/x", "C:/x"])
+    def test_a_path_that_cannot_be_placed_is_never_assumed_absent(self, bundle, path):
+        _rewrite_skipped(bundle, [{"reason": "unreadable_entry", "path": path}])
+        assert _restore(bundle, "--mode", "replace", "--dry-run") == 1
 
     def test_merge_is_unaffected(self, home, bundle):
         assert _restore(bundle, "--mode", "merge") == 0
@@ -176,6 +183,54 @@ class TestWhichOmissionsCount:
         ],
     )
     def test_skills_replace(self, home, bundle, skipped, refused):
+        # Each named path exists live, so only the classification decides.
+        for entry in skipped if isinstance(skipped, list) else ():
+            if isinstance(entry, dict):
+                live = home / entry["path"].replace("\\", "/")
+                live.parent.mkdir(parents=True, exist_ok=True)
+                live.write_text("live\n")
         _rewrite_skipped(bundle, skipped)
         rc = _restore(bundle, "--mode", "replace", "--dry-run")
         assert rc == (1 if refused else 0)
+
+
+class TestAnOmittedAncestorDirectoryCounts:
+    """An omitted directory above a restored tree is recorded under the ancestor's path.
+
+    A backup selecting ``memory`` and ``workspace`` stages ``workspace/memory`` and
+    ``workspace/knowledge`` through ``workspace``, so an unreadable ``workspace`` is one
+    ``skipped`` entry for ``workspace`` -- a path only the unrestored ``workspace``
+    component claims. ``--components memory`` replace still clears both memory subtrees.
+    """
+
+    @pytest.fixture
+    def memory_bundle(self, home, tmp_path):
+        out = tmp_path / "out-mem"
+        assert snap.snapshot_main([str(out), "--components", "memory", *unpinnable_argv()]) == 0
+        (tarball,) = sorted(out.glob("kirocrew-*.tar.gz"))
+        return tarball
+
+    @pytest.mark.parametrize(
+        ("path", "refused"),
+        [
+            ("workspace", True),
+            ("workspace/", True),
+            # A sibling of the memory subtrees, not an ancestor: memory replace leaves it.
+            ("workspace/notes.md", False),
+            ("workspace/memoryx", False),
+        ],
+    )
+    def test_memory_replace(self, memory_bundle, path, refused):
+        _rewrite_skipped(memory_bundle, [{"reason": "unreadable_entry", "path": path}])
+        rc = _restore(memory_bundle, "--mode", "replace", "--components", "memory", "--dry-run")
+        assert rc == (1 if refused else 0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a backslash is a path separator on Windows")
+def test_a_posix_filename_with_a_literal_backslash_still_counts(home, bundle):
+    """``a\\b.md`` is one POSIX filename; normalising it to ``a/b.md`` must not hide it."""
+    name = "a\\b.md"
+    (home / "skills" / "my-skill" / name).write_text("live\n")
+    assert not (home / "skills" / "my-skill" / "a").exists()
+    _rewrite_skipped(bundle, [{"reason": "unreadable_entry", "path": f"skills/my-skill/{name}"}])
+    assert _restore(bundle, "--mode", "replace", "--dry-run") == 1
