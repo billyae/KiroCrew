@@ -790,6 +790,7 @@ def test_route_forwards_folder_id_and_fence_to_the_core(monkeypatch):
     monkeypatch.setattr(handlers_sc, "_require_internal", _none_async())
     monkeypatch.setattr(handlers_sc, "_read_session_key", lambda request: "dashboard:chat-1")
     monkeypatch.setattr(handlers_sc, "_carried_fence", lambda request: True)
+    monkeypatch.setattr(handlers_sc, "_carried_member", lambda request: True)
 
     async def _body(request):
         return {"target": "chat-2", "folder_id": "f1"}
@@ -806,6 +807,7 @@ def test_route_forwards_folder_id_and_fence_to_the_core(monkeypatch):
         "target": "chat-2",
         "folder_id": "f1",
         "caller_fenced": True,
+        "caller_member_admitted": True,
     }
 
 

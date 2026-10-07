@@ -761,31 +761,104 @@ def captain_caller(state: "DashboardState", caller_key: str) -> bool:
         return False
     if getattr(slot, "memory_mode", "persistent") != "persistent":
         return False
-    if not _runs_captain_template(str(getattr(slot, "agent", "") or "")):
+    from kiro_crew.members import is_member_session_key
+
+    # A member DM slot survives its config entry's deletion with its key and
+    # execution identity intact; the bare-name fallback must not then hand it
+    # the exemption (GPT F2). The signal is the KEY, which needs no config read
+    # on this synchronous gate. A chat-slot member named like the captain with
+    # no entry is indistinguishable from a plain captain tab, which legitimately
+    # IS a captain, so only the DM-slot key fails the fallback closed here.
+    slot_is_member_backed = is_member_session_key(caller_key)
+    if not _runs_captain_template(
+        str(getattr(slot, "agent", "") or ""),
+        slot_is_member_backed=slot_is_member_backed,
+    ):
         return False
     if _channel_link_of(slot) or _has_channel_mirror(state, slot):
         return False
     return crew_captain_enabled() and session_control_enabled()
 
 
-def _runs_captain_template(agent_name: str) -> bool:
+def _carried_captain_lapsed(
+    state: "DashboardState", caller_key: str, *, member_admitted: bool = False
+) -> bool:
+    """Whether a carried captain exemption for *caller_key* has lapsed.
+
+    ``True`` when :func:`captain_caller` answers no AND the caller is one the
+    fence binds once the captain exemption is gone. This holds whatever stopped
+    the caller qualifying -- a switch turned off, OR the operator rebinding the
+    caller's ``kiro_agent`` away from the captain template mid-wait: both drop
+    ``captain_caller`` to ``False``, and the fence must then re-bind a caller it
+    would otherwise bind. We deliberately do NOT short-circuit on a template
+    mismatch, because that mismatch is exactly one of the ways a carried
+    exemption lapses.
+
+    *member_admitted* is the HTTP gate's VERIFIED member admission, carried
+    beside the captain exemption rather than re-derived here. When it is set, a
+    lapsed captain re-fences unconditionally: the admission already proved the
+    member on the verified scope, so dropping the member's config entry during an
+    adopt wait cannot reopen the foreign-reach window -- the record is not
+    consulted. When it is NOT set (an internally-computed carried verdict, e.g.
+    ``close_target``'s up-front pass for a non-member), the fence is read the old
+    way, from :func:`_creator_fenced_ignoring_captain`, so a plain owner tab that
+    was never fenced is not re-fenced on lapse.
+
+    ``False`` for a caller the fence never bound: an owner / Global-V1 tab or a
+    person's own plain tab running the captain template. Any error answers
+    ``True``, so a failed re-read restores the fence.
+    """
+    try:
+        if captain_caller(state, caller_key):
+            return False
+        if member_admitted:
+            return True
+        return _creator_fenced_ignoring_captain(state, caller_key)
+    except Exception:
+        return True
+
+
+def _runs_captain_template(agent_name: str, *, slot_is_member_backed: bool = False) -> bool:
     """Whether a slot naming *agent_name* runs the ``kirocrew-captain`` template.
 
     A plain tab stores the template name itself. A crew member's slot stores
     the MEMBER's name, so the template is read off that member's config entry
-    (``kiro_agent``). An unreadable config answers ``False``.
+    (``kiro_agent``). The config entry is read FIRST and wins: a member may be
+    NAMED ``kirocrew-captain`` while bound to another template, and a bare name
+    match would hand it the exemption without the captain template. An entry
+    that is a member (``member_id``) or names a template (``kiro_agent``) answers
+    from its ``kiro_agent`` alone; only a name with no such entry is the template
+    name itself. An unreadable config answers ``False``.
+
+    ``slot_is_member_backed`` fails the bare-name fallback CLOSED. A member slot
+    survives the deletion of its config entry -- its DM slot stays live with its
+    execution identity intact -- and without this a member NAMED
+    ``kirocrew-captain`` but bound to another template (e.g. ``kirocrew-worker``)
+    would be handed captain authority the moment its entry is dropped, because
+    the fallback matches the bare name. A member-backed slot therefore requires a
+    POSITIVE captain-template binding in config; the bare-name fallback is
+    reserved for an actual template slot, which carries no member identity.
     """
     from kiro_crew.agent_files import CAPTAIN_AGENT_NAME
 
     if not agent_name:
         return False
-    if agent_name == CAPTAIN_AGENT_NAME:
-        return True
     try:
         entry = KiroCrewConfig.load().agents.get(agent_name)
     except Exception:
         return False
-    return getattr(entry, "kiro_agent", "") == CAPTAIN_AGENT_NAME
+    if entry is not None:
+        template = str(getattr(entry, "kiro_agent", "") or "")
+        if template or str(getattr(entry, "member_id", "") or ""):
+            return template == CAPTAIN_AGENT_NAME
+    # No config entry. A member-backed slot keeps its live DM slot and execution
+    # identity after its entry is deleted, so it must NOT inherit the exemption
+    # from a bare-name match -- that is how a member named ``kirocrew-captain``
+    # but bound to another template would gain captain authority on deletion.
+    # Only an actual template slot (no member identity) may answer from the name.
+    if slot_is_member_backed:
+        return False
+    return agent_name == CAPTAIN_AGENT_NAME
 
 
 def member_admitted_to_scoped_surface(session_key: str, store: str) -> bool:
@@ -3393,6 +3466,7 @@ async def fork_session(
     folder_id: str = "",
     at_message_index: int | None = None,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Open a new session that CARRIES a transcript: the dashboard's Fork, for an agent.
 
@@ -3484,6 +3558,7 @@ async def fork_session(
             target=source_ref,
             operation="fork",
             precomputed_ownership_fenced=caller_fenced,
+            precomputed_member_admitted=caller_member_admitted,
         )
         # A fork copies the source's memory binding into a child the CALLER
         # owns. A member captain's reach is for steering and reading, not for
@@ -3623,6 +3698,7 @@ async def fork_session(
                 target=source_ref,
                 operation="fork",
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
                 skip_enabled_check=True,
             )
             if readmitted is not source_slot:
@@ -4117,6 +4193,7 @@ def authorize_target(
     operation: str,
     skip_enabled_check: bool = False,
     precomputed_ownership_fenced: bool | None = None,
+    precomputed_member_admitted: bool = False,
     allow_self: bool = False,
 ) -> "_ChatSlot":
     """Resolve *target* and decide whether *caller* may act on it.
@@ -4211,6 +4288,22 @@ def authorize_target(
         if precomputed_ownership_fenced is None
         else precomputed_ownership_fenced
     )
+    if (
+        precomputed_ownership_fenced is False
+        and not skip_enabled_check
+        and _carried_captain_lapsed(state, caller_key, member_admitted=precomputed_member_admitted)
+    ):
+        # A carried ``False`` for a slot running the captain template is the
+        # HTTP gate's captain admission, made once per request. A verb that waits
+        # (``adopt_target``'s tree lock) can outlive it: the operator turns
+        # ``agent.crew_captain`` off, or the slot stops qualifying, while the
+        # request is queued. Re-read the captain verdict here so a revoked
+        # exemption restores the fence at the final authorization. Only the
+        # member verdict stays sticky; the captain verdict never does.
+        # ``skip_enabled_check`` is the no-suspension close re-check, which must
+        # not read config; the switch read it skips is not a containment boundary
+        # there for the same reason ``session_control_enabled()`` is not.
+        ownership_fenced = True
     # A caller addressing ITSELF is not reaching a peer, so the fence has nothing to
     # protect and is waived -- reachable only under ``allow_self``, since the
     # self-target refusal above denies this case for every other verb. Without the
@@ -4483,6 +4576,7 @@ async def adopt_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> "dict[str, Any]":
     """Take *target* over, so it hangs under the CALLING session in the tree.
 
@@ -4526,6 +4620,7 @@ async def adopt_target(
         target=target,
         operation="adopt",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     with _audit_denials(
         caller_session_key=caller_session_key, operation="adopt", slot_key=slot.key
@@ -4604,6 +4699,7 @@ async def adopt_target(
                 target=target,
                 operation="adopt",
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
             )
             target_sid = _live_sid_of(state, slot.key)
             if not crew_log_emit.enabled() or not target_sid:
@@ -4660,6 +4756,7 @@ async def release_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> "dict[str, Any]":
     """Let *target* go, so it stands on its own in the tree again.
 
@@ -4689,6 +4786,7 @@ async def release_target(
         target=target,
         operation="release",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
         allow_self=True,
     )
     with _audit_denials(
@@ -4746,6 +4844,7 @@ async def release_target(
                 target=target,
                 operation="release",
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
                 allow_self=True,
             )
             releasing_self = slot.key == caller_key
@@ -5045,6 +5144,7 @@ async def stop_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Stop *target*'s in-flight turn, via the same path as the Stop button.
 
@@ -5111,6 +5211,7 @@ async def stop_target(
         target=target,
         operation="stop",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     # Both calls below are SYNCHRONOUS, which is what lets them sit here at all:
     # the rule the comment above states is that nothing may SUSPEND between the
@@ -5151,6 +5252,7 @@ async def end_wait_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Wake *target* from the ``wait`` tool early, keeping its turn.
 
@@ -5183,6 +5285,7 @@ async def end_wait_target(
         target=target,
         operation="end_wait",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     caller_key = caller_slot_key(state, caller_session_key)
     if _created_by_other(slot, caller_key):
@@ -5228,6 +5331,7 @@ async def set_model_target(
     target: str,
     model: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Record *model* as *target*'s pending pick, applied when its next turn starts.
 
@@ -5315,6 +5419,7 @@ async def set_model_target(
         target=target,
         operation="set_model",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     slot_key = slot.key
     # The model check and the alias correction both key on the TARGET's backend,
@@ -5374,6 +5479,7 @@ async def set_model_target(
             operation="set_model",
             skip_enabled_check=True,
             precomputed_ownership_fenced=caller_fenced,
+            precomputed_member_admitted=caller_member_admitted,
         )
         if live is not slot:
             raise SessionControlError(
@@ -5393,6 +5499,7 @@ async def set_model_target(
             caller_session_key=caller_session_key,
             caller_tab_id=caller_tab_id,
             caller_fenced=caller_fenced,
+            caller_member_admitted=caller_member_admitted,
             pick_gen=slot._model_pick_gen,
         )
 
@@ -5421,6 +5528,7 @@ class PendingModelPick:
     caller_session_key: str
     caller_tab_id: str
     caller_fenced: bool
+    caller_member_admitted: bool
     pick_gen: int
 
 
@@ -5526,6 +5634,7 @@ def apply_pending_model_pick(state: "DashboardState", slot: "_ChatSlot") -> bool
             target=slot.key,
             operation="set_model",
             precomputed_ownership_fenced=fenced,
+            precomputed_member_admitted=pick.caller_member_admitted,
         )
     except SessionControlError as exc:
         _audit(
@@ -5620,6 +5729,7 @@ async def reload_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Relaunch *target*'s agent process, as the tab menu's Reload session does.
 
@@ -5674,6 +5784,7 @@ async def reload_target(
             operation="reload",
             skip_enabled_check=not first,
             precomputed_ownership_fenced=caller_fenced,
+            precomputed_member_admitted=caller_member_admitted,
         )
         with _audit_denials(
             caller_session_key=caller_session_key, operation="reload", slot_key=found.key
@@ -5825,6 +5936,7 @@ async def close_target(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Close *target*, the same archival the tab ✕ performs.
 
@@ -5871,6 +5983,7 @@ async def close_target(
         target=target,
         operation="close",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     slot_key = slot.key
     # Deferred for the same import cycle `stop_target` documents.
@@ -5906,6 +6019,7 @@ async def close_target(
                 operation="close",
                 skip_enabled_check=True,
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
             )
         except SessionControlError as exc:
             # A stale-authorization refusal (mirrored/linked/workspace/caller-gone)
@@ -6173,6 +6287,7 @@ async def revive_session(
     target: str,
     folder_id: str = "",
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Bring the ARCHIVED session *target* back into the live sidebar.
 
@@ -6236,6 +6351,20 @@ async def revive_session(
         if caller_fenced is not None
         else await asyncio.to_thread(_caller_is_ownership_fenced, state, caller_key)
     )
+    if caller_fenced is False and await asyncio.to_thread(
+        _carried_captain_lapsed, state, caller_key, member_admitted=caller_member_admitted
+    ):
+        # Same captain-lapse re-check ``authorize_target`` runs. A carried
+        # ``False`` is the HTTP gate's captain admission, made once per request;
+        # the revive path does NOT flow through ``authorize_target`` for an
+        # archived target (that gate is reached only for a target that turns out
+        # LIVE, in ``_live_refusal``), so without this the exemption would be
+        # honoured for the whole revive even after the operator turned
+        # ``agent.crew_captain`` off or rebound the slot's template. Re-reading it
+        # here restores the member fence before a foreign archive can be reopened.
+        # Off the loop: it reads the captain switches. Only the captain verdict is
+        # re-read; the carried member admission stays sticky.
+        ownership_fenced = True
 
     async def _live_refusal(live_key: str) -> SessionControlError:
         # A target that turns out to be LIVE (before the scan, during it, or
@@ -6713,6 +6842,7 @@ async def send_to_target(
     message: str,
     steer: bool = False,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
     via: str = "session_send",
     _delivery_progress: "_DeliveryProgress | None" = None,
 ) -> dict[str, Any]:
@@ -6805,6 +6935,7 @@ async def send_to_target(
         target=target,
         operation="send",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
 
     # A crew-bound target executes its turns on the peer, not here. The delivery
@@ -6970,6 +7101,7 @@ async def send_to_target(
                 target=target,
                 operation="send",
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
             )
             if regated is not slot:
                 # Object identity, for the reason the in-frame arm gives: a target
@@ -7137,6 +7269,7 @@ async def send_to_target(
                 target=target,
                 operation="send",
                 precomputed_ownership_fenced=caller_fenced,
+                precomputed_member_admitted=caller_member_admitted,
             )
             if regated is not slot:
                 # Object identity, not ``regated.key != slot.key``. The delivery
@@ -7304,6 +7437,7 @@ async def broadcast_to_targets(
     mode: str,
     targets: "list[str] | None" = None,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Deliver *message* to several sessions at once, one at a time.
 
@@ -7512,6 +7646,7 @@ async def broadcast_to_targets(
                     message=body,
                     steer=(mode == "steer"),
                     caller_fenced=caller_fenced,
+                    caller_member_admitted=caller_member_admitted,
                     via=BROADCAST_VIA,
                     _delivery_progress=delivery_progress,
                 ),
@@ -7788,6 +7923,7 @@ async def created_session_status(
     *,
     caller_session_key: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Every session this caller stood up, and what each one is doing now.
 
@@ -8009,6 +8145,7 @@ def read_messages(
     limit: int = DEFAULT_READ_MESSAGES,
     since: int | None = None,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Read *target*'s transcript tail plus enough state to poll it.
 
@@ -8028,6 +8165,7 @@ def read_messages(
         target=target,
         operation="read",
         precomputed_ownership_fenced=caller_fenced,
+        precomputed_member_admitted=caller_member_admitted,
     )
     # The reader's own audience was recorded by the caller-side gate inside
     # ``authorize_target`` (:func:`record_audience_admission`), so a mirror gained
@@ -8229,6 +8367,7 @@ async def read_summary(
     caller_session_key: str,
     target: str,
     caller_fenced: bool | None = None,
+    caller_member_admitted: bool = False,
 ) -> dict[str, Any]:
     """Return *target*'s cached intent summary, the one the side panel shows.
 
@@ -8258,6 +8397,7 @@ async def read_summary(
             operation="summary",
             skip_enabled_check=recheck,
             precomputed_ownership_fenced=caller_fenced,
+            precomputed_member_admitted=caller_member_admitted,
         )
 
     slot = _authorize(recheck=False)

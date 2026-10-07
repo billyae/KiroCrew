@@ -1237,7 +1237,7 @@
       "sensitive": false,
       "tags": [],
       "label": "Crew Captain",
-      "help": "Let a session running the kirocrew-captain agent control any session in its workspace, including conductors that other sessions created. Every other agent-driven caller (a crew member, a conductor or worker another session opened, a scheduled run, a channel session) still reaches only the sessions it created itself. A captain counts only when you opened its tab yourself: a captain that an agent created, or one linked or mirrored to a channel, is fenced like any other agent session. Needs Session Control on as well. Turn this off to put captains back under the creator fence.",
+      "help": "Lets a crew-member session you open with the kirocrew-captain agent message and read the other conductors in its workspace. Turn it off and captains reach only sessions they created; requires Session Control.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": true

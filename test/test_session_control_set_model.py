@@ -511,6 +511,7 @@ def test_a_caller_fenced_at_call_time_stays_fenced(tmp_path, monkeypatch):
         caller_session_key=pick.caller_session_key,
         caller_tab_id=pick.caller_tab_id,
         caller_fenced=True,
+        caller_member_admitted=pick.caller_member_admitted,
         pick_gen=pick.pick_gen,
     )
     monkeypatch.setattr(sc, "_caller_is_ownership_fenced", lambda _state, _key: False)

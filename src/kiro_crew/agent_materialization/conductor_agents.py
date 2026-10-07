@@ -822,10 +822,8 @@ def _install_captain_agent(*, clean: bool = False) -> bool:
     config = _conductor_spec(
         name=_CAPTAIN_AGENT_NAME,
         description=(
-            "Crew captain: a goal conductor that can also reach and steer "
-            "conductors other sessions created, anywhere in its workspace. "
-            "Only a captain you opened yourself has that reach; a captain an "
-            "agent created is fenced like any other session."
+            "Coordinates conductors other sessions opened, from one session you "
+            "started. Asks before it sends or stops, and stays in its workspace."
         ),
         filename=_CAPTAIN_AGENT_FILENAME,
         source="_install_captain_agent",

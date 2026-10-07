@@ -808,11 +808,30 @@ def to_client_custom_agent(
             out["tools"] = [*tools, "@kirocrew-dashboard"]
         # circular import: agent imports the config loader, which sits below
         # this module; resolved at call time like the other heavy seams here.
-        from kiro_crew.agent import _MEMBER_DASHBOARD_GRANTS
+        from kiro_crew.agent import _MEMBER_DASHBOARD_GRANTS, _MEMBER_CAPTAIN_WITHHELD_GRANTS
+        from kiro_crew.agent_files import CAPTAIN_AGENT_NAME
+
+        # A captain member lifts the creator fence (``captain_caller``), so the
+        # ``session_send``/``broadcast``/``stop`` verbs that are approval-free for
+        # an ordinary member -- safe only because that fence bounded them to its
+        # own sessions -- would otherwise reach foreign same-workspace sessions
+        # UNATTENDED on KAS, where there is no hook slot and no approval prompt.
+        # The captain's picker description promises it "asks before it sends or
+        # stops", so withhold exactly those verbs from its approval-free surface
+        # here: the captain keeps the read/coordinate grants and still issues
+        # send/broadcast/stop, but each one now routes through the approval path
+        # instead of auto-approving. The spec's ``name`` is the config-free signal
+        # (the captain spec sets it to ``kirocrew-captain``).
+        is_captain_member = spec.get("name") == CAPTAIN_AGENT_NAME
+        granted = (
+            tuple(g for g in _MEMBER_DASHBOARD_GRANTS if g not in _MEMBER_CAPTAIN_WITHHELD_GRANTS)
+            if is_captain_member
+            else _MEMBER_DASHBOARD_GRANTS
+        )
 
         base_allowed = allowed_tools_input if isinstance(allowed_tools_input, list) else []
         merged = list(base_allowed)
-        merged.extend(g for g in _MEMBER_DASHBOARD_GRANTS if g not in merged)
+        merged.extend(g for g in granted if g not in merged)
         allowed_tools_input = merged
 
     if crew_panel:

@@ -54,6 +54,21 @@ def _carried_fence(request: web.Request) -> bool | None:
     return request.get(_CAPTAIN_ADMITTED) is not True
 
 
+def _carried_member(request: web.Request) -> bool:
+    """Whether this request's admission settled the caller AS A VERIFIED MEMBER.
+
+    Carried BESIDE :func:`_carried_fence` so the captain-lapse re-check in
+    ``session_control.py`` can restore the member fence without re-deriving
+    membership from the mutable config record. ``True`` whenever the gate set
+    ``_MEMBER_ADMITTED`` on the verified scope -- for a member admitted as a
+    captain (``_carried_fence`` returns ``False``) this is what tells the lapse
+    re-check the carried ``False`` belongs to a member, so dropping the member's
+    config entry mid-request cannot reopen a foreign-reach window. ``False`` for
+    an owner / Global-V1 caller the gate did not admit as a member.
+    """
+    return request.get(_MEMBER_ADMITTED) is True
+
+
 async def _private_caller_refusal(request: web.Request) -> web.Response | None:
     """The execution-scope gate in front of the session-control routes.
 
@@ -323,6 +338,7 @@ async def api_session_control_fork(request: web.Request) -> web.Response:
             folder_id=str(body.get("folder_id") or ""),
             at_message_index=at_index,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -345,6 +361,7 @@ async def api_session_control_stop(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -365,6 +382,7 @@ async def api_session_control_end_wait(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -389,6 +407,7 @@ async def api_session_control_set_model(request: web.Request) -> web.Response:
             target=_target(body),
             model=model,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -409,6 +428,7 @@ async def api_session_control_reload(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -431,6 +451,7 @@ async def api_session_control_close(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -453,6 +474,7 @@ async def api_session_control_revive(request: web.Request) -> web.Response:
             target=_target(body),
             folder_id=str(body.get("folder_id") or ""),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -485,6 +507,7 @@ async def api_session_control_send(request: web.Request) -> web.Response:
             message=message,
             steer=steer,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -559,6 +582,7 @@ async def api_session_control_broadcast(request: web.Request) -> web.Response:
             mode=mode,
             targets=targets,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -580,6 +604,7 @@ async def api_session_control_status(request: web.Request) -> web.Response:
             state,
             caller_session_key=_read_session_key(request),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -599,6 +624,7 @@ async def api_session_control_adopt(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -618,6 +644,7 @@ async def api_session_control_release(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=_target(body),
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -654,6 +681,7 @@ async def api_session_control_read(request: web.Request) -> web.Response:
             limit=limit,
             since=since,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
@@ -678,6 +706,7 @@ async def api_session_control_summary(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             target=target,
             caller_fenced=_carried_fence(request),
+            caller_member_admitted=_carried_member(request),
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)

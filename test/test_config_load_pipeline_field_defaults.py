@@ -44,6 +44,7 @@ _READ_STAGE_DEPARTURES = {
     ("agent", "session_control"): False,
     ("agent", "member_dispatch"): False,
     ("agent", "crew_panel"): False,
+    ("agent", "crew_captain"): False,
     ("skills", "project_skills_enabled"): False,
     # Resolved by the loader's own degradation rule before the enum check runs.
     ("stt", "provider"): "off",

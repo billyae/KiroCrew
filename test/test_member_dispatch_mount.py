@@ -356,6 +356,50 @@ class TestKasMemberProjection:
         assert "session_broadcast" in rendered
         assert "session_stop" in rendered
 
+    def test_captain_member_withholds_the_approval_free_write_verbs(self):
+        """A captain member lifts the creator fence, so ``session_send`` /
+        ``session_broadcast`` / ``session_stop`` must NOT ride the approval-free
+        member surface on KAS -- each routes through approval instead, matching
+        the captain's promise that it asks before it sends or stops. Every other
+        member grant stays."""
+        from kiro_crew.agent import (
+            _MEMBER_CAPTAIN_WITHHELD_GRANTS,
+            _MEMBER_DASHBOARD_GRANTS,
+        )
+        from kiro_crew.agent_files import CAPTAIN_AGENT_NAME
+
+        captain_spec = {
+            "name": CAPTAIN_AGENT_NAME,
+            "tools": ["@kirocrew-core"],
+            "allowedTools": ["@kirocrew-core"],
+        }
+        out = to_client_custom_agent(CAPTAIN_AGENT_NAME, captain_spec, "p", member_dispatch=True)
+        rendered = str(out.get("permissions") or {})
+        # The dashboard server is still granted (the captain coordinates).
+        assert "@kirocrew-dashboard" in out["tools"]
+        # The three write verbs are withheld from the approval-free surface.
+        for grant in _MEMBER_CAPTAIN_WITHHELD_GRANTS:
+            verb = grant.rsplit("/", 1)[-1]
+            assert verb not in rendered, (verb, rendered)
+        # Every OTHER member grant survives (read/coordinate verbs stay).
+        kept = [g for g in _MEMBER_DASHBOARD_GRANTS if g not in _MEMBER_CAPTAIN_WITHHELD_GRANTS]
+        assert kept, "expected the captain to keep at least one member grant"
+        for grant in kept:
+            verb = grant.rsplit("/", 1)[-1]
+            assert verb in rendered, (verb, rendered)
+
+    def test_non_captain_member_keeps_the_write_verbs(self):
+        """A guard for the above: an ordinary (non-captain) member still gets the
+        approval-free write verbs, so the withholding is captain-specific."""
+        from kiro_crew.agent import _MEMBER_CAPTAIN_WITHHELD_GRANTS
+
+        spec = {"name": "ops-lead", "tools": ["@kirocrew-core"], "allowedTools": ["@kirocrew-core"]}
+        out = to_client_custom_agent("ops-lead", spec, "p", member_dispatch=True)
+        rendered = str(out.get("permissions") or {})
+        for grant in _MEMBER_CAPTAIN_WITHHELD_GRANTS:
+            verb = grant.rsplit("/", 1)[-1]
+            assert verb in rendered, (verb, rendered)
+
     def test_spec_is_not_mutated(self):
         spec = {"tools": ["@kirocrew-core"], "allowedTools": ["@kirocrew-core"]}
         to_client_custom_agent("a", spec, "p", member_dispatch=True)

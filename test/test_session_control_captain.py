@@ -126,10 +126,42 @@ class TestCaptainCaller:
             assert sc.captain_caller(state, CAPTAIN) is True
             assert sc.captain_caller(state, "chat-8-lead") is False
 
+    def test_member_named_like_the_captain_but_bound_elsewhere_is_not(self):
+        # The config entry wins over the name: a member NAMED kirocrew-captain
+        # that runs the worker template must not get the exemption.
+        cfg = SimpleNamespace(
+            agents={
+                CAPTAIN_AGENT_NAME: SimpleNamespace(kiro_agent="kirocrew-worker", member_id="m-1"),
+            }
+        )
+        with patch.object(sc.KiroCrewConfig, "load", return_value=cfg):
+            slot = _slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME, memory_store="member-m-1")
+            assert sc.captain_caller(_State(slot), CAPTAIN) is False
+
+    def test_member_named_like_the_captain_with_no_template_is_not(self):
+        cfg = SimpleNamespace(
+            agents={CAPTAIN_AGENT_NAME: SimpleNamespace(kiro_agent="", member_id="m-1")}
+        )
+        with patch.object(sc.KiroCrewConfig, "load", return_value=cfg):
+            slot = _slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME, memory_store="member-m-1")
+            assert sc.captain_caller(_State(slot), CAPTAIN) is False
+
     def test_unreadable_config_is_not_a_captain_by_member_name(self):
         with patch.object(sc.KiroCrewConfig, "load", side_effect=RuntimeError("boom")):
             state = _State(_slot(CAPTAIN, agent_name="ops-captain"))
             assert sc.captain_caller(state, CAPTAIN) is False
+
+    def test_member_dm_slot_named_captain_with_deleted_entry_is_not(self):
+        # A member DM slot keeps its live key and execution identity after its
+        # config entry is deleted. Its agent name is the captain's, but with no
+        # entry the bare-name fallback must fail CLOSED for a member-backed key:
+        # a member bound to another template could otherwise be handed captain
+        # authority the instant its entry is dropped.
+        key = DM_SLOT_KEY_PREFIX + CAPTAIN_AGENT_NAME
+        cfg = SimpleNamespace(agents={})  # entry deleted
+        with patch.object(sc.KiroCrewConfig, "load", return_value=cfg):
+            slot = _slot(key, agent_name=CAPTAIN_AGENT_NAME, memory_store="member-m-1")
+            assert sc.captain_caller(_State(slot), key) is False
 
 
 class TestCaptainSwitches:
@@ -168,7 +200,7 @@ class TestCaptainSwitches:
 # ── the fence ───────────────────────────────────────────────────────────────
 
 
-def _authorize(state, caller_key, target_key, *, precomputed=None):
+def _authorize(state, caller_key, target_key, *, precomputed=None, member_admitted=False):
     with (
         patch.object(sc, "caller_slot_key", return_value=caller_key),
         patch.object(sc, "member_dispatch_enabled", return_value=True),
@@ -180,6 +212,7 @@ def _authorize(state, caller_key, target_key, *, precomputed=None):
             target=target_key,
             operation="send",
             precomputed_ownership_fenced=precomputed,
+            precomputed_member_admitted=member_admitted,
         )
 
 
@@ -227,6 +260,135 @@ class TestCaptainReach:
         child = _slot("chat-7-child", agent_name=CAPTAIN_AGENT_NAME, created_by=CAPTAIN)
         state = _State(_slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME), child)
         assert sc._caller_is_ownership_fenced(state, "chat-7-child") is True
+
+
+class TestCarriedCaptainRevalidated:
+    """A carried captain admission is re-read at every authorization.
+
+    The HTTP gate decides captain status once per request. A verb that waits on
+    a lock (``adopt_target``) re-authorizes later, and the switch may have been
+    turned off in between: the carried ``False`` must not outlive it.
+    """
+
+    def _state(self, *, member: bool = True):
+        store = "member-x-1" if member else ""
+        captain = _slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME, memory_store=store)
+        conductor = _slot("chat-2-cond", created_by="chat-3-other-lead")
+        return _State(captain, conductor)
+
+    def _with(self, captain_on: bool):
+        return (
+            patch.object(sc, "crew_captain_enabled", return_value=captain_on),
+            patch.object(sc, "session_control_enabled", return_value=True),
+            patch.object(sc, "_has_channel_mirror", return_value=False),
+            patch.object(sc, "_store_is_member_owned", return_value=True),
+        )
+
+    def test_carried_captain_still_on_passes(self):
+        a, b, c, d = self._with(True)
+        with a, b, c, d:
+            state = self._state()
+            _passes_the_fence(lambda: _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False))
+
+    def test_carried_captain_revoked_is_fenced(self):
+        a, b, c, d = self._with(False)
+        with a, b, c, d:
+            state = self._state()
+            with pytest.raises(sc.SessionControlError) as exc_info:
+                _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False)
+        assert exc_info.value.code == "not_creator"
+
+    def test_template_rebound_away_is_fenced_even_with_switches_on(self):
+        # The operator rebinds the member's ``kiro_agent`` away from the captain
+        # template during the adoption lock-wait. The switches are still on, so a
+        # switch-only re-read would miss it; ``captain_caller`` drops to ``False``
+        # because the slot does not run the captain template, and the carried
+        # ``False`` must not survive — the now-fenced member must be re-fenced.
+        a, b, c, d = self._with(True)
+        with a, b, c, d, patch.object(sc, "captain_caller", return_value=False):
+            state = self._state()
+            with pytest.raises(sc.SessionControlError) as exc_info:
+                _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False)
+        assert exc_info.value.code == "not_creator"
+
+    def test_failed_reread_is_fenced(self):
+        a, b, c, d = self._with(True)
+        with a, b, c, d, patch.object(sc, "captain_caller", side_effect=RuntimeError("boom")):
+            state = self._state()
+            with pytest.raises(sc.SessionControlError) as exc_info:
+                _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False)
+        assert exc_info.value.code == "not_creator"
+
+    def test_plain_tab_captain_with_switch_off_stays_unfenced(self):
+        # A person's own non-member tab was never fenced, so losing the
+        # exemption changes nothing for it.
+        a, b, c, d = self._with(False)
+        with a, b, c, patch.object(sc, "_store_is_member_owned", return_value=False):
+            state = self._state(member=False)
+            _passes_the_fence(lambda: _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False))
+
+    def test_member_record_dropped_mid_wait_is_still_fenced(self):
+        # The operator un-assigns the member (drops its config entry) during the
+        # adopt wait, so ``_store_is_member_owned`` now answers ``False``. The HTTP
+        # gate carried the VERIFIED member admission beside the captain exemption
+        # (``member_admitted=True``); the lapse re-check restores the fence from
+        # that carried proof rather than re-deriving membership from the dropped
+        # record, so the foreign reach is not reopened. Captain switch off so the
+        # exemption lapses.
+        a, b, c, _ = self._with(False)
+        with a, b, c, patch.object(sc, "_store_is_member_owned", return_value=False):
+            state = self._state()
+            with pytest.raises(sc.SessionControlError) as exc_info:
+                _authorize(state, CAPTAIN, "chat-2-cond", precomputed=False, member_admitted=True)
+        assert exc_info.value.code == "not_creator"
+
+
+# ── the captain-lapse re-check honours the carried member admission ──────────
+
+
+class TestCarriedCaptainLapsed:
+    """``_carried_captain_lapsed`` restores the fence without a mutable read.
+
+    Removing the member record during an adopt wait must NOT let a lapsed captain
+    keep foreign reach. With the carried member admission the re-check re-fences
+    unconditionally; without it, it reads the fence the old way so a plain owner
+    tab is not re-fenced.
+    """
+
+    def _with(self, captain_on):
+        return (
+            patch.object(sc, "crew_captain_enabled", return_value=captain_on),
+            patch.object(sc, "session_control_enabled", return_value=True),
+            patch.object(sc, "_has_channel_mirror", return_value=False),
+        )
+
+    def test_carried_member_relapses_even_when_store_record_gone(self):
+        slot = _slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME, memory_store="member-x-1")
+        state = _State(slot)
+        a, b, c = self._with(False)  # captain switch off -> exemption lapsed
+        with a, b, c, patch.object(sc, "_store_is_member_owned", return_value=False):
+            assert sc._carried_captain_lapsed(state, CAPTAIN, member_admitted=True) is True
+
+    def test_no_carried_member_falls_back_to_record_read(self):
+        # Internally-computed carried False (not an HTTP member admission): the
+        # old fence read applies, so a plain owner tab does not relapse.
+        slot = _slot("chat-1-plain", agent_name=CAPTAIN_AGENT_NAME)
+        state = _State(slot)
+        a, b, c = self._with(False)
+        with a, b, c, patch.object(sc, "_store_is_member_owned", return_value=False):
+            assert sc._carried_captain_lapsed(state, "chat-1-plain") is False
+
+    def test_still_a_captain_does_not_relapse(self):
+        slot = _slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME, memory_store="member-x-1")
+        state = _State(slot)
+        a, b, c = self._with(True)
+        with a, b, c, patch.object(sc, "_store_is_member_owned", return_value=True):
+            assert sc._carried_captain_lapsed(state, CAPTAIN, member_admitted=True) is False
+
+    def test_error_relapses(self):
+        state = _State(_slot(CAPTAIN, agent_name=CAPTAIN_AGENT_NAME))
+        with patch.object(sc, "captain_caller", side_effect=RuntimeError("boom")):
+            assert sc._carried_captain_lapsed(state, CAPTAIN) is True
 
 
 # ── the HTTP gate's carried verdict ─────────────────────────────────────────

@@ -4719,6 +4719,21 @@ _MEMBER_DASHBOARD_GRANTS: tuple[str, ...] = _CONDUCTOR_DASHBOARD_GRANTS + (
 )
 
 
+#: The member dashboard write verbs withheld from a CAPTAIN member's
+#: approval-free KAS surface (``kas_agents.to_client_custom_agent``). A captain
+#: lifts the creator fence, so these verbs -- safe approval-free for an ordinary
+#: member only because that fence bounded them to its own sessions -- would
+#: otherwise reach foreign same-workspace sessions unattended on KAS. Withholding
+#: them routes each through the approval path, matching the captain's promise
+#: that it "asks before it sends or stops". The captain keeps every other member
+#: grant; only these three change from auto-approve to ask.
+_MEMBER_CAPTAIN_WITHHELD_GRANTS: tuple[str, ...] = (
+    "@kirocrew-dashboard/session_send",
+    "@kirocrew-dashboard/session_broadcast",
+    "@kirocrew-dashboard/session_stop",
+)
+
+
 #: The panel verbs a CREW MEMBER's DM session may call without an approval
 #: prompt. BOTH of them, which is the whole surface ``kirocrew-panel`` exposes.
 #:
