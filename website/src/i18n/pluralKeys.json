@@ -271,5 +271,10 @@
   "pages.chatSidebar.close_session_tree_hint",
   "hooks.useCloseSessionTree.title_including_self",
   "pages.chatSidebar.close_blocked",
-  "pages.chatSidebar.close_blocked_short"
+  "pages.chatSidebar.close_blocked_short",
+  "components.projectMcpTrust.servers_omitted",
+  "components.projectMcpTrust.args_omitted",
+  "components.projectMcpTrust.hooks_omitted",
+  "components.projectMcpTrustNotice.servers_phrase",
+  "components.projectMcpTrustNotice.hooks_phrase"
 ]

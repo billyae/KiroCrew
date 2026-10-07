@@ -1499,6 +1499,19 @@ ACP_BACKENDS_MARKDOWN_AGENT_SPECS = frozenset({ACP_BACKEND_KAS})
 ACP_BACKENDS_USER_LEVEL_AGENT_SPECS_ONLY = frozenset({ACP_BACKEND_KAS})
 
 
+def has_spec_mirror(backend: str) -> bool:
+    """Whether *backend*'s session MCP array is projected from the agent spec.
+
+    The mirrored hosts -- the ones whose ``session/new`` array a project spec can
+    supply. The application-side spelling of ``providers.mirrors.registry.has_mirror``,
+    so a caller outside the ACP layer asks the registry itself rather than keeping a
+    second list. Deferred import for the reason :func:`overlay_project_scope` gives.
+    """
+    from kiro_crew.providers.mirrors.registry import has_mirror
+
+    return has_mirror(backend)
+
+
 def overlay_project_scope(backend: str, work_dir: Any) -> dict[str, Any]:
     """The overlay-lookup scope keywords for *backend*'s session.
 
