@@ -122,9 +122,18 @@ const isHandBack = (it: TurnItem) =>
  * of agent intent may exempt a message from it. The marker is an HTML comment,
  * so the rendered message shows nothing extra (rehypeRaw emits a comment node,
  * which the react renderer skips).
+ *
+ * DUAL-READ (#8059): the backend now lifts the trailing control-tag block into
+ * `meta.keep_visible` at ingestion (state.append) and persists content WITHOUT
+ * the tag, so a freshly written row carries the intent in meta. Rows written
+ * before that lift still have the marker in content and no meta, so the
+ * in-content recognizer stays as the fallback — same shape as isCrewReply's
+ * `meta.crew_reply ?? legacy class` compat. The two cannot disagree for one
+ * row: a row has the tag in exactly one place.
  */
 const isKeepVisible = (it: TurnItem) =>
-  it.kind === 'single' && isConclusion(it) && hasKeepVisibleMarker(it.msg.content)
+  it.kind === 'single' && isConclusion(it) &&
+  (it.msg.meta?.keep_visible === true || hasKeepVisibleMarker(it.msg.content))
 
 /**
  * READ-ONLY COMPAT for transcripts written by the retired Crew Mode: a

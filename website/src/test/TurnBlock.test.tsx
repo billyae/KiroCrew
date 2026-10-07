@@ -148,7 +148,33 @@ describe('TurnBlock — file role visibility', () => {
     expect(container.querySelector('[data-testid="item-2"]')).not.toBeNull()
   })
 
-  it('unmarked mid-turn report folds into the collapse pane (control for #7948)', () => {
+  it('meta.keep_visible marked report stays visible with stripped content (#8059 dual-read)', () => {
+    // A row written AFTER the ingestion-point lift (#8059): the backend lifted
+    // the trailing tag into meta.keep_visible and persisted content WITHOUT the
+    // marker. The exemption must fire from meta, not the (now absent) in-content
+    // tag.
+    const report =
+      'Fleet synthesis: 44/44 runs banked, all routing gates PASS, medians in the artifact. '.repeat(3)
+    const items: TurnItem[] = [
+      { kind: 'single', msg: { role: 'assistant', content: report, ts: '1', meta: { keep_visible: true } }, idx: 0 },
+      { kind: 'single', msg: { role: 'tool', content: '🔧 Running: autonudge_stop', ts: '2' }, idx: 1 },
+      { kind: 'single', msg: { role: 'assistant', content: 'Loop stopped.', ts: '3' }, idx: 2 },
+    ]
+    const turn = makeTurn(items)
+    const { container } = render(
+      <TurnBlock
+        turn={turn}
+        renderItem={(it, i) => <div data-testid={`item-${i}`} data-role={it.kind === 'single' ? it.msg.role : 'group'}>{it.kind === 'single' ? it.msg.content : 'group'}</div>}
+        collapseAll={true}
+      />
+    )
+    const reportItem = container.querySelector('[data-testid="item-0"]')
+    expect(reportItem).not.toBeNull()
+    expect(reportItem?.closest('[style*="overflow"]')).toBeNull()
+    expect(container.querySelector('[data-testid="item-2"]')).not.toBeNull()
+  })
+
+  it('an UNMARKED report mid-turn stays collapsed in collapseAll mode', () => {
     const report =
       'Fleet synthesis: 44/44 runs banked, all routing gates PASS, medians in the artifact. '.repeat(3)
     const items: TurnItem[] = [

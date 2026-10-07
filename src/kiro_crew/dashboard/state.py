@@ -45,6 +45,7 @@ from kiro_crew.constants import (  # noqa: F401 -- DENY_CAUSE_* / STEER_NOTICE_B
     STEER_NOTICE_BOUND_SECS,
     SUBAGENT_BATCH_COMPLETION_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
+    lift_control_tags_to_meta,
 )
 from kiro_crew.dashboard.chat_compaction_notice import deliver_channel_compaction_notice
 from kiro_crew.dashboard.chat_tag_grants import seed_default_grants, seed_status_identity_rows
@@ -4682,6 +4683,38 @@ class _ChatSlot:
         meta: dict | None = None,
         mint_mid: bool = True,
     ) -> dict[str, Any]:
+        # INGESTION-POINT CONTROL-TAG LIFT. ``append`` is the single chokepoint
+        # every persisted assistant row passes through -- the dashboard runner,
+        # the Slack gateway's heartbeat delivery, and the side panel all reach
+        # the transcript here. Lift the trailing control-tag block
+        # (``<!-- keep-visible -->`` and its ``plan_task_id`` sibling) out of
+        # CONTENT into META once, and store content stripped of the whole block,
+        # so a persisted assistant row holds the signal as metadata instead of
+        # inside its text. A ``deliver`` tail is STRIPPED from content by the
+        # same shared grammar but is NOT lifted into meta: it is a HEARTBEAT.md
+        # file-format tag with no persisted reader, so a ``meta["deliver"]`` key
+        # would have no consumer. The strip is idempotent (the stripped content
+        # carries no trailing tag, so a second pass is a no-op) and tail-anchored
+        # + fence-guarded by the shared grammar, so a tag quoted in prose or code
+        # is untouched. Only assistant rows carry these tags; other roles pass
+        # through unchanged. A legacy row replayed from disk still has its tags
+        # in content and no meta -- the frontend recognizers read in-content
+        # tags as a permanent fallback (dual-read), so a transcript persisted
+        # without the lift still renders correctly.
+        if role == "assistant" and content:
+            stripped, lifted_meta = lift_control_tags_to_meta(content)
+            # ``stripped`` differs from ``content`` whenever the shared grammar
+            # recognized a trailing tag block -- including a ``deliver``-only
+            # tail that yields empty ``lifted_meta``. Store the stripped form in
+            # either case so the tag never persists in content.
+            content = stripped
+            if lifted_meta:
+                merged = dict(meta) if meta else {}
+                # Caller-supplied meta wins over a lifted key: a replay or an
+                # explicit meta the writer set is authoritative over a re-parse.
+                for k, v in lifted_meta.items():
+                    merged.setdefault(k, v)
+                meta = merged
         # A LIVE user row retires every unanswered STATELESS question: that row
         # IS the next message the card's answer was contracted to arrive as.
         # Retiring here rather than at the composer covers every entrance —

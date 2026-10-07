@@ -1148,6 +1148,66 @@ def strip_control_comments(text: str, *, hide_partial: bool = False) -> str:
     return text[: m.start()]
 
 
+# Per-family extractors for :func:`lift_control_tags_to_meta`. They read the
+# tag BODY (``keep-visible`` / ``plan_task_id:<v>``) off a single
+# already-recognized tag line -- the strip grammar above has already decided
+# the line IS a control tag at the message tail and outside any open fence, so
+# these only name which family it is and pull its value. Spelled from the same
+# literals as ``_CONTROL_TAG_BODY`` so they cannot recognize a tag the strip
+# would leave behind (or miss one it removes). ``deliver`` is intentionally
+# absent: it is a HEARTBEAT.md file-format suffix, never a persisted-message
+# consumer, so lifting it would write a meta key no reader consults -- the
+# strip still removes a ``deliver`` tail from content via the grammar above.
+_KEEP_VISIBLE_TAG_RE = re.compile(r"<!--\s{0,16}keep-visible\s{0,16}-->", re.IGNORECASE)
+_VALUE_TAG_RE = re.compile(r"<!--\s{0,16}(plan_task_id):([^>\n]{0,256})-->", re.IGNORECASE)
+
+
+def lift_control_tags_to_meta(text: str) -> tuple[str, dict[str, object]]:
+    """Split the trailing control-tag block off *text*, returning
+    ``(content_without_tags, meta)``.
+
+    The ingestion-point counterpart to :func:`strip_control_comments`: where
+    the strip DISCARDS the tail for a plain-text projection, this LIFTS it into
+    structured metadata so the tag's intent is persisted beside the message
+    instead of embedded in its content. The returned ``meta`` carries at most:
+
+    * ``keep_visible: True`` -- a ``<!-- keep-visible -->`` line was present
+      (the collapse-all exemption, read by the dashboard TurnBlock).
+    * ``plan_task_id: <id>`` -- the task-planner Apply-to-Tasks anchor
+      (``<!-- plan_task_id:<id> -->``), last occurrence wins.
+
+    A ``<!-- deliver:<route> -->`` tail is still STRIPPED from content by the
+    grammar, but is NOT lifted into meta: heartbeat routing reads ``deliver``
+    from the HEARTBEAT.md file format, never from a persisted message, so a
+    ``meta["deliver"]`` key would have no reader.
+
+    The SAME tail-anchored, fence-guarded grammar as the strip decides what the
+    tag block is: an empty ``meta`` and ``text`` returned unchanged whenever the
+    strip would not remove anything (no trailing tag, or a tail inside an
+    unterminated fence). ``content_without_tags`` is byte-identical to
+    ``strip_control_comments(text)``, so a consumer that lifts does not also
+    need to strip.
+
+    One linear pass over the matched tail; a ``False`` match (no trailing tag)
+    does constant work, like the strip.
+    """
+    m = _TRAILING_CONTROL_LINES_RE.search(text)
+    if m is None or _in_open_fence(text, m.start()):
+        return text, {}
+    block = text[m.start() :]
+    meta: dict[str, object] = {}
+    if _KEEP_VISIBLE_TAG_RE.search(block) is not None:
+        meta["keep_visible"] = True
+    for vm in _VALUE_TAG_RE.finditer(block):
+        family = vm.group(1).lower()
+        value = vm.group(2).strip()
+        # plan_task_id carries a value; the last occurrence of the family in the
+        # stacked block wins, matching how a reader scanning the content tail
+        # would see the final tag of that family.
+        meta[family] = value
+    return text[: m.start()], meta
+
+
 #: Prefix closures of the marker grammars, for
 #: :func:`split_trailing_protocol_suffix`'s unfinished-marker probe: a tail is
 #: a STILL-STREAMING marker only when every byte it holds so far could extend

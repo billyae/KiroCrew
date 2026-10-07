@@ -1789,6 +1789,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const activePoppedOut = !!activeSlot && isSlotPoppedOut(activeSlot)
   const planTaskId = useMemo(() => {
     for (const m of messages) {
+      // DUAL-READ (#8059): the backend now lifts the trailing
+      // `<!-- plan_task_id:<id> -->` tag into `meta.plan_task_id` at ingestion
+      // and persists content without it. Prefer the meta; fall back to the
+      // in-content tag for rows written before that lift (legacy transcripts).
+      const metaId = (m.meta as Record<string, unknown> | undefined)?.plan_task_id
+      if (typeof metaId === 'string' && metaId) return metaId
       const match = m.content?.match(/<!-- plan_task_id:(\S+) -->/)
       if (match) return match[1]
     }
