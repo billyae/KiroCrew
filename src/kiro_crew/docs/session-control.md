@@ -222,10 +222,12 @@ Takes no arguments. The roster of sessions you stood up, and what each is doing.
 | `working` | A turn is in flight | Wait |
 | `queued` | Idle, messages waiting to run | Wait; a steer would land on nothing |
 | `idle` | Open and doing nothing | This is the one that needs a decision |
-| `gone` | The crew log has it, the dashboard does not | Re-dispatch or drop it |
+| `closed` | The crew log has it, the dashboard does not, and its last life ended by a deliberate tab close (carries `closed_at`) | It finished and closed its tab; nothing to re-dispatch |
+| `lost` | The crew log has it, the dashboard does not, and it did not close cleanly — a turn was open, a process recycle or destroy tore it down, or its lifecycle could not be read | Re-dispatch it |
 | `unknown` | History has its birth metadata, but no live slot or crew-log edge exists | Inspect or re-dispatch without assuming it finished or was lost |
 
-`gone` and `unknown` are why this tool exists rather than reading sessions one at
+`closed`, `lost` and `unknown` are why this tool exists rather than reading
+sessions one at
 a time. Live slots forget a session the moment it is closed or lost with the
 process that ran it. The crew log preserves a gateway-attested edge after a
 session starts its first turn. History metadata fills the earlier window because
@@ -246,10 +248,10 @@ app-scoped, ephemeral, or moved to another workspace. Rows carry titles, and a
 linked session's title is derived from a conversation other people are in.
 
 The containment covers LIVE rows. A session the attested tree recorded still
-leaves its titleless `gone` row once its slot is gone, which carries no title and
-no live state — it says only that a session on your own tree is not live. That
-tree follows the CURRENT parent edge, so it covers a session you adopted as well
-as one you created.
+leaves its titleless `closed`/`lost` row once its slot is gone, which carries no
+title and no live state — it says only that a session on your own tree is not
+live, and whether it finished or was lost. That tree follows the CURRENT parent
+edge, so it covers a session you adopted as well as one you created.
 
 The two quality fields describe the durable sources independently:
 

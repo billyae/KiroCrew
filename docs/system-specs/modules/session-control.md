@@ -147,12 +147,20 @@ that edge can exist, but is a weaker, agent-editable source. The union is the
 answer, and every row names the sources that placed it (`crew_log`, `history`,
 `live`, joined with `+`).
 
-The row's `status` separates `working` / `queued` / `idle` / `gone` /
-`unknown`. A tree-backed row absent from the dashboard is `gone`, preserving the
-existing meaning. A history-only row is `unknown`: its metadata proves the
-session was created, but does not claim whether it finished or was lost. This
-does not add another completed-versus-lost conflation to `gone` (tracked in issue
-#14213). The persisted field is already read by the member ownership boundary in
+The row's `status` separates `working` / `queued` / `idle` / `closed` / `lost` /
+`unknown`. A tree-backed row absent from the dashboard is `closed` or `lost`: the
+roster records that a session the dashboard no longer holds still existed, and
+its folded lifecycle says which fate it met. `closed` (carrying `closed_at`) is
+the DELIBERATE tab close -- the worker finished and its tab was closed
+(`remove` -> `END_REASON_REMOVED`); nothing is there to re-dispatch. `lost` is
+the fail-safe default: a session gone with a turn still open, or whose only close
+edge came from a process recycle (`reset`) or a `destroy`, or whose fold could
+not be read -- the state a patrol re-dispatches. A history-only row is `unknown`:
+its metadata proves the session was created, but does not claim whether it
+finished or was lost. Splitting `closed` from `lost` is what resolves the
+completed-versus-lost conflation #14213 named; the split reads the lifecycle the
+status fold already projects, adding no new crew-log vocabulary. The persisted
+field is already read by the member ownership boundary in
 session-control authorization, so using it for an informational roster row asks
 no more trust of it than the existing fence. It does not become crew-log lineage,
 and its distinct `source` keeps that visible.
