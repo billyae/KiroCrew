@@ -8,8 +8,9 @@
  * While no thread is open the page shows the full roster. Once a thread opens,
  * the roster folds into `CrewmateSwitcher` in the header and the conversation
  * receives that width. The centred identity pill opens `CrewProfilePanel`: an
- * in-flow 34% column while SidePanel is closed, or a rounded hover card centred
- * over the remaining thread width while SidePanel is open or on a phone. The
+ * in-flow 34% column while SidePanel is closed, or a rounded hover card floating
+ * at the right edge of the remaining thread width while SidePanel is open or on
+ * a phone. The
  * shared avatar moves between pill and card.
  *
  * The chat SidePanel has two standing entries here: the crewmate's generated
@@ -908,8 +909,8 @@ export default function MembersPage() {
   // state machine lives in useCrewEditor; CrewEditorDialog renders it. The
   // identity pill in the thread header sets `editingCrew`, which drives the hook.
   const [editingCrew, setEditingCrew] = useState('')
-  // The profile card (crewmate-panel IA): a floating hover card centred over the
-  // thread, which tab it opened on. Every explicit open gets a nonce so asking
+  // The profile card (crewmate-panel IA): a hover card docked or floating at the
+  // thread's right edge, which tab it opened on. Every explicit open gets a nonce so asking
   // for the same initial tab again still resets a card the user navigated within.
   // The header pill hides while the card is up and the side panel is not (the
   // card's head names the crewmate then).
@@ -4269,10 +4270,10 @@ export default function MembersPage() {
           // side panel and viewport: with the panel hidden on a non-phone viewport,
           // the card takes its own column and the thread gives up the width (the
           // pill is hidden then, the card's head names the crewmate); with the panel
-          // open or on a phone, the card floats centred over the DM column (its
-          // containing block, which is exactly the chat width the side panel leaves),
-          // and a click outside it closes it. No scrim: the thread stays readable
-          // beside it.
+          // open or on a phone, the card floats over the DM column (its containing
+          // block, which is exactly the chat width the side panel leaves), anchored
+          // to its right edge so it lands where the docked column would and leaves
+          // the middle of the thread readable. A click outside it closes it. No scrim.
           const profileDocked = !!profilePanel && profile?.placement === 'column'
           // The column reveals on the chat page's width axis (so the thread
           // narrows instead of jumping), while the face slides over from the pill.
@@ -4295,7 +4296,7 @@ export default function MembersPage() {
           )
           const profileSurface = profileDocked ? dockedSurface : profilePanel && threadColumnRef.current ? createPortal(
             <div
-              className="absolute inset-0 z-30 flex justify-center px-2"
+              className="absolute inset-0 z-30 flex justify-end px-2"
               role="presentation"
               onClick={(e) => { if (e.target === e.currentTarget) requestCloseProfile() }}
               data-testid="crew-profile-modal"

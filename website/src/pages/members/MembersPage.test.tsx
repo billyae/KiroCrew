@@ -1134,7 +1134,10 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     await screen.findByTestId('side-panel-root')
     fireEvent.click(await screen.findByTestId('member-identity-pill'))
 
-    expect(await screen.findByTestId('crew-profile-modal')).toBeInTheDocument()
+    const floating = await screen.findByTestId('crew-profile-modal')
+    // Right-anchored so the card lands where the docked column would, not over the middle of the thread.
+    expect(floating).toHaveClass('justify-end')
+    expect(floating).not.toHaveClass('justify-center')
     expect(screen.getByTestId('side-panel-root')).toBeInTheDocument()
     expect(screen.getByTestId('member-identity-pill')).toBeInTheDocument()
   })

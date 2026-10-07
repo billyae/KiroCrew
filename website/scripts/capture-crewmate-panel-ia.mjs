@@ -252,7 +252,7 @@ const visibleWords = (page) => rail(page).evaluate(el => [...el.querySelectorAll
   await page.getByTestId('side-panel-leading-tab-crew-dashboard').click()
   await page.waitForTimeout(600)
 
-  // 10: pill again → the card floats over the thread, beside the open panel.
+  // 10: pill again → the card floats at the thread's right edge, beside the open panel.
   await pill.click()
   await card.waitFor({ state: 'visible', timeout: 10000 })
   await page.waitForTimeout(600)
@@ -264,7 +264,7 @@ const visibleWords = (page) => rail(page).evaluate(el => [...el.querySelectorAll
   const tb = await page.getByTestId('crew-profile-modal').boundingBox()
   const leftGap = cb2.x - tb.x
   const rightGap = (tb.x + tb.width) - (cb2.x + cb2.width)
-  check(`the floating card is centred in the chat width (gaps ${Math.round(leftGap)} / ${Math.round(rightGap)})`, Math.abs(leftGap - rightGap) <= 4)
+  check(`the floating card sits at the chat's right edge (gaps ${Math.round(leftGap)} / ${Math.round(rightGap)})`, rightGap <= 12 && leftGap > rightGap)
   await page.screenshot({ path: join(OUT, '10-panel-and-profile-both-open-light.png') })
   await page.getByTestId('crew-profile-close').click()
   await page.waitForTimeout(400)
