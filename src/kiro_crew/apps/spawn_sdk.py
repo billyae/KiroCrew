@@ -58,7 +58,19 @@ SpawnImpl = Callable[[str, str, bool, str, str], Awaitable[str]]
 
 
 class SpawnError(RuntimeError):
-    """The host declined or could not start the requested agent."""
+    """The host declined or could not start the requested agent.
+
+    ``declined`` separates the two: ``True`` is a HOST-PRESSURE decline (an empty
+    spawn id — the admission gate had no capacity), which a caller may treat as a
+    back-off signal. ``False`` is a programming or impl fault (empty task, empty
+    agent, a normalised impl exception) that no amount of waiting fixes. A caller
+    that backs off on the whole exception type would pause on faults too, so the
+    flag is the signal to gate on — not ``isinstance``.
+    """
+
+    def __init__(self, *args: object, declined: bool = False) -> None:
+        super().__init__(*args)
+        self.declined = declined
 
 
 #: Optional probe the gateway injects alongside the impl:
@@ -126,7 +138,8 @@ class SpawnSDK:
         if not spawn_id:
             raise SpawnError(
                 f"host declined the spawn for app {self._app_name!r} "
-                f"(agent={agent or 'default'!r})"
+                f"(agent={agent or 'default'!r})",
+                declined=True,
             )
         logger.info(
             "App %s spawned background agent %s (id=%s, silent=%s)",
