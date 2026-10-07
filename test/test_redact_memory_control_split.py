@@ -113,6 +113,29 @@ def _split_credential(separator: bytes | str) -> str:
     return f"{prefix}{text}{suffix}"
 
 
+def test_end_to_end_control_split_credential_is_redacted_through_the_scrub_path() -> None:
+    """A control-split credential routed through the real scrub path comes out redacted,
+    while the surrounding note -- including payload bytes that do not bridge the secret --
+    is preserved. This pins that ``_scrub_text`` (which ``_redact_memory_field`` calls)
+    now routes through ``redact_control_split``: the wrapper has a production caller.
+
+    The field holds ordinary prose, a benign escape sequence whose payload must survive,
+    and -- separately -- a credential split by an invisible character, which the stored-
+    text and normalised scans would miss but the wrapper catches.
+    """
+    benign = "status \x1b[1mBOLD-NOTE\x1b[0m ok"  # a real SGR sequence, no credential
+    split = f"key {CREDENTIAL[:4]}\u200b{CREDENTIAL[4:]} end"  # zero-width-split credential
+    out = _redact_memory_field(f"{benign} :: {split}")
+
+    # The credential is gone and cannot be reassembled.
+    assert CREDENTIAL not in out
+    assert "IOSFODNN7EXAMPLE" not in out
+    assert "[REDACTED: credential]" in out
+    # The benign sequence's printable payload survived (it bridges no credential).
+    assert "BOLD-NOTE" in out
+    assert "status" in out and "ok" in out and "key" in out and "end" in out
+
+
 #: A value shaped like a Discord bot token, built from repeated characters so the file
 #: holds no credential-shaped literal. Its pattern is guarded by a negative lookbehind
 #: for a non-word character, which makes it the case where normalising alone is not
@@ -199,17 +222,41 @@ def test_the_credential_is_never_recoverable_from_the_output(separator: bytes | 
 
 
 @pytest.mark.parametrize("separator", PAYLOAD_SEPARATORS)
-def test_a_sequence_payload_survives_as_text(separator: bytes) -> None:
-    """A sequence's printable bytes are content, so they are kept rather than deleted.
+def test_a_sequence_split_credential_is_redacted(separator: bytes) -> None:
+    """A credential split by a terminal escape SEQUENCE is redacted, fail-safe.
 
-    Consuming them would mean deleting however much visible text sits between an
-    introducer and the next terminator, which loses a user's stored note instead of
-    sanitising it. The token stays split around the payload, and safely so: the bytes
-    that would have told a terminal to hide it are gone.
+    A sequence's printable payload is content and is kept whenever the sequence does not
+    bridge a credential (see
+    :func:`test_a_no_credential_sequence_keeps_its_payload` and
+    :func:`test_visible_text_between_an_introducer_and_a_terminator_is_kept`). But when the
+    bytes on either side of the sequence reassemble into a credential the redactor matches,
+    the fail-safe choice is to remove the whole secret -- the few payload bytes that sit
+    between its two halves go with it, rather than being left dangling where a terminal or
+    a byte-stripping consumer would splice the key back together.
     """
     redacted = _redact_memory_field(f"never commit {_split_credential(separator)}")
-    printable = [ch for ch in separator.decode("latin-1") if ch not in INVISIBLE_CHARACTERS]
 
+    assert "[REDACTED: credential]" in redacted
+    assert "IOSFODNN7EXAMPLE" not in redacted
+    assert CREDENTIAL not in redacted
+
+
+@pytest.mark.parametrize("separator", PAYLOAD_SEPARATORS)
+def test_a_no_credential_sequence_keeps_its_payload(separator: bytes) -> None:
+    """A sequence that does NOT bridge a credential keeps its printable payload exactly.
+
+    The control-split wrapper only ever consumes the bytes between two halves when they
+    reassemble into a MATCHED credential. Ordinary text bracketed by, or carrying, an
+    escape sequence loses only the control bytes a terminal would act on -- every
+    printable payload byte survives.
+    """
+    text = separator.decode("latin-1")
+    printable = [ch for ch in text if ch not in INVISIBLE_CHARACTERS]
+    stored = f"note: before {text} after and a tag {text} end"
+
+    redacted = _redact_memory_field(stored)
+
+    assert "[REDACTED" not in redacted  # nothing credential-shaped here
     for character in printable:
         assert character in redacted
 

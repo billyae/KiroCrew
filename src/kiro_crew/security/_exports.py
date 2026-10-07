@@ -545,6 +545,7 @@ EXPORTED_NAMES: tuple[str, ...] = (
     "re",
     "redact",
     "redact_and_truncate",
+    "redact_control_split",
     "redact_credentials",
     "redact_exfiltration_urls",
     "redact_exfiltration_urls_with_records",

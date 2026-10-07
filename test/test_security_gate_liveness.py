@@ -164,6 +164,13 @@ def _url_payload_command(n: int) -> str:
 #: holds the canonical spelling and is off the event loop, so the anchors resolve
 #: inline. No new entry point, no target, no matching rule and no threshold moved.
 #:
+#: Raised again for the control-split redaction wrapper: the batch redactors decide on
+#: un-normalised text, so a control or invisible character spliced mid-token evades
+#: them. ``redact_control_split`` scans normalised copies, maps the redaction spans
+#: back onto the original bytes, and redacts in place, adding the wrapper and its span
+#: helpers to ``__init__.py``, ``exfil.py`` and ``redaction.py``. This is security
+#: control logic, not machinery.
+#:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
 #: added here fails this gate and has to be re-pinned deliberately, with its reason
@@ -194,7 +201,14 @@ def _url_payload_command(n: int) -> str:
 #: helper strips a local-drive namespace prefix and a default-stream suffix, and
 #: ``_candidate_forms`` resolves the folded spelling while keeping the raw one as a
 #: candidate. No target, no matching rule and no threshold moved.
-_PACKAGE_LINE_BUDGET = 28_572
+#:
+#: Raised again, from 28,572, for the control-split redaction wrapper this branch adds
+#: to ``__init__.py`` (the wrapper, its span map-back and merge/splice helpers, and the
+#: readings that mirror the renderer's whole-sequence, invisible, lone-surrogate and
+#: lone-C1 removal), ``terminal_safe`` (the span-mapping copies, their index map and the
+#: C1-lone escape variant) and the ``*_redaction_spans`` helpers in ``exfil.py`` and
+#: ``redaction.py``. Re-MEASURED off the tree, not summed from the delta.
+_PACKAGE_LINE_BUDGET = 28_846
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

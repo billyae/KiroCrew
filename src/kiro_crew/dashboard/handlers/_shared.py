@@ -48,7 +48,12 @@ from kiro_crew.messaging.link import is_channel_session_key
 from kiro_crew.messaging.privacy_mode import hydrate as _hydrate_conv_flags
 from kiro_crew.messaging.privacy_mode import is_incognito as is_thread_incognito
 from kiro_crew.messaging.privacy_mode import is_temporary as is_thread_temporary
-from kiro_crew.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
+from kiro_crew.security import (
+    is_sensitive_path,
+    redact_control_split,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
 from kiro_crew.skill_trust import is_project_trusted as _is_project_trusted
 from kiro_crew.skills import _trusted_skill_roots, _with_canonical_globs, skills_dir
 from kiro_crew.terminal_safe import normalize_for_scanning, strip_control_characters
@@ -87,9 +92,19 @@ def _scrub_text(val: str) -> str:
     Scanning the text as stored first is not redundant with scanning that copy. Removing
     an invisible character can destroy a boundary a pattern requires, so a token the
     stored text matches can stop matching once the copy is joined up.
+
+    The first pass is :func:`kiro_crew.security.redact_control_split` rather than the bare
+    ``redact_exfiltration_urls`` / ``redact_credentials`` pair. It redacts everything that
+    pair does AND, with byte fidelity, a credential split by a control or invisible
+    character OR by a terminal escape SEQUENCE that the pair alone would miss. Its span
+    covers the bytes BETWEEN the two halves -- a sequence's printable payload included --
+    ONLY when the reassembled run is a credential the redactor actually matches: there the
+    fail-safe choice is to remove the whole secret rather than leave the payload dangling
+    where it sat. Every sequence that does NOT bridge a matched credential is untouched, so
+    its printable payload is kept as content. The control-strip and normalisation passes
+    below are unchanged.
     """
-    out, _ = redact_exfiltration_urls(val)
-    out, _ = redact_credentials(out)
+    out = redact_control_split(val)
     stripped = strip_control_characters(out)
     if stripped != out:
         out, _ = redact_exfiltration_urls(stripped)
