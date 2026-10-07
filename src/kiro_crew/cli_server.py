@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -2723,34 +2724,83 @@ def _status(args: argparse.Namespace) -> None:
     _print_component_identity(data)
 
 
+def _selected_package_version() -> str | None:
+    """Version of the package Kiro Crew has *selected* to run, or ``None``.
+
+    Selection lives in the live-target pointer (``service/live_target.py``): when
+    one is pinned, the gateway re-``execve``s into that checkout, so the selected
+    package is that checkout's code — NOT whichever checkout this ``status`` CLI
+    happens to have been launched from. We therefore read the pinned checkout's
+    own ``__version__`` literal (plus any ``BUILD_VERSION`` stamp beside it, via
+    the same resolution ``kiro_crew/__init__`` applies to itself) rather than
+    this process's ``__version__``, which would make a CLI from a foreign
+    checkout report false skew or miss real skew.
+
+    When nothing is pinned, selection IS the installed build this process runs,
+    so its own ``__version__`` is the honest selected version. ``None`` means the
+    selected version could not be read (an unusable pinned checkout), which the
+    caller renders as ``unknown`` rather than a fabricated match.
+    """
+    from kiro_crew import _apply_build_version_file
+    from kiro_crew.service import live_target
+
+    target = live_target.read_target()
+    if target is None:
+        # No pin: the installed build this CLI runs is the selected package.
+        return __version__
+    init_py = target / "src" / "kiro_crew" / "__init__.py"
+    try:
+        text = init_py.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if match is None:
+        return None
+    return _apply_build_version_file(match.group(1), str(init_py.parent))
+
+
 def _print_component_identity(data: dict) -> None:
     """Print the selected-versus-running component version-skew section.
 
-    Compares the selected package (the CLI module's own release version) against
-    the version the running gateway reports in its ``/api/status`` payload,
-    surfacing the "listener healthy but the gateway still runs an earlier
-    package" state that ordinary gateway health cannot distinguish from a
-    fully-aligned install. Never fatal: a comparison that cannot run is skipped
-    silently rather than failing the whole ``status`` command.
+    Compares the version the running gateway reports in its ``/api/status``
+    payload against the version Kiro Crew has *selected* (the live-target
+    pointer's checkout when one is pinned, else the installed build; see
+    :func:`_selected_package_version`). This surfaces the "listener healthy but
+    the gateway still runs an earlier package" state that ordinary gateway
+    health cannot distinguish from a fully-aligned install.
+
+    The equality test is on the FULL version so two builds that merely clamp to
+    the same public release are not mistaken for one package; the release-clamped
+    form is shown for display. Never fatal: a comparison that cannot run is
+    skipped silently rather than failing the whole ``status`` command.
     """
     try:
-        from kiro_crew import component_identity
+        from kiro_crew import beacon
 
-        report = component_identity.compare_gateway(data.get("version"))
+        running = data.get("version")
+        selected = _selected_package_version()
     except Exception:
         return
-    if report.result == component_identity.RESULT_SKEW:
-        age = int(report.mismatch_age_seconds)
-        print(f"\n  Components:  ⚠ version_skew — {report.reason} (skew age {age}s)")
-    elif report.result == component_identity.RESULT_ALIGNED:
+    if not selected or not running:
+        reason = (
+            "the running gateway did not report a version"
+            if not running
+            else "the selected package version could not be read"
+        )
+        print(f"\n  Components:  unknown — {reason}")
+        return
+    if running == selected:
         print("\n  Components:  aligned (the running gateway serves the selected package)")
     else:
-        print(f"\n  Components:  unknown — {report.reason}")
-    for row in report.rows:
         print(
-            f"    {row.role:<10} {row.product_version:<14} "
-            f"{row.build_identity:<16} {row.relation}"
+            "\n  Components:  ⚠ version_skew — the running gateway serves a package "
+            "other than the selected one"
         )
+    print(f"    selected   {beacon.release(selected):<14} {selected}")
+    print(
+        f"    gateway    {beacon.release(running):<14} {running} "
+        f"({'aligned' if running == selected else 'skewed'})"
+    )
 
 
 def _format_count(data: dict, key: str) -> str:
