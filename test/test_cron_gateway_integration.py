@@ -1342,7 +1342,7 @@ class TestModelFallback:
 
 
 class TestDeliverableBlock:
-    """An agent cron whose answer marks a <deliverable> block delivers only it (#9738)."""
+    """An agent cron whose answer marks a <deliverable> block delivers only it."""
 
     _NARRATED = (
         "I'll run the checks... now checking the queue.\n\n"

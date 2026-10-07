@@ -4906,7 +4906,7 @@ class GatewayOrchestrator:
                         # only for a succeeded stop reason.
                         _seq_landed = stop_reason_landed(_seq_stop["reason"])
                         # Before the placeholder and every annotation, so only
-                        # the model's own narration is cut (#9738).
+                        # the model's own narration is cut.
                         result_text = extract_cron_deliverable(result_text)
                         if not result_text:
                             result_text = _gate.empty_reply_placeholder()
@@ -5188,7 +5188,7 @@ class GatewayOrchestrator:
                 _turn_landed = stop_reason_landed(_turn_stop["reason"])
 
                 # A job whose answer marks a <deliverable> block delivers only
-                # that block (#9738). Cut before the placeholder and the
+                # that block. Cut before the placeholder and the
                 # annotations below, so the refusal and fallback notes the
                 # framework appends always survive it.
                 result_text = extract_cron_deliverable(result_text)

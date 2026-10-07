@@ -3,7 +3,7 @@
 A cron agent's answer text carries everything the model wrote during the turn,
 including narration such as "I'll run the checks... now checking..." ahead of
 the digest the job exists to produce. That narration is ordinary answer text,
-not reasoning, so no renderer flag can tell it apart (#9738). The job's author
+not reasoning, so no renderer flag can tell it apart. The job's author
 can: wrapping the digest in ``<deliverable>...</deliverable>`` in the agent's
 answer makes the cron deliver only what is inside.
 

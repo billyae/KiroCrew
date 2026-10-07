@@ -1,4 +1,4 @@
-"""extract_cron_deliverable: the <deliverable> marker contract for cron delivery (#9738)."""
+"""extract_cron_deliverable: the <deliverable> marker contract for cron delivery."""
 
 import pathlib
 
