@@ -70,6 +70,8 @@
     "input_count": "対応が必要：{{countText}}",
     "tile_progress": "進捗",
     "hide": "ステータスタイルを隠す",
+    "dismiss": "新しいアクティビティまで非表示",
+    "more_actions": "その他の操作",
     "show": "ステータスタイルを表示",
     "open_panel": "ダッシュボードを開く",
     "nothing_running": "実行中のものはありません。",

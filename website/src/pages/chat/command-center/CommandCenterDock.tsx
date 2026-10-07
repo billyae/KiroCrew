@@ -1,14 +1,18 @@
-import { memo, useEffect, useId, useRef, useState } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { EyeOff, PanelRightOpen } from 'lucide-react'
+import { EyeOff, MoreHorizontal, PanelRightOpen, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Btn } from '../../../components/ui'
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '../../../components/ui/dropdown-menu'
 import ErrorNotice from '../../../components/ErrorNotice'
 import { Glass } from '../../../components/Glass'
 import { usePersistedBool } from '../../../hooks/usePersistedBool'
+import { usePersistedString } from '../../../hooks/usePersistedString'
 import { fmtNumber } from '../../../i18n/format'
 import { useLanguageGeneration } from '../../../i18n/useLanguageGeneration'
-import { missingSourcesNotice, useCommandCenter } from './useCommandCenter'
+import { type CommandCenterData, missingSourcesNotice, useCommandCenter } from './useCommandCenter'
 import StatusTiles, { type Tile } from './StatusTiles'
 import TileList, { TILE_LABEL_KEYS } from './TileList'
 import { PANEL_HEADING_ATTR } from './panelHeading'
@@ -30,6 +34,34 @@ function focusOpenedPanel(from: Element | null, deadline = performance.now() + F
 }
 
 
+/** The ids of the work the dock is CURRENTLY showing — every run node, work
+ * item and published view — so a dismissal can be released the moment GENUINELY
+ * NEW work appears. Attention is deliberately NOT here: a dismiss never applies
+ * while something waits on the user (see `dismissed`), so folding it in would
+ * only churn the set on a change the dismiss already ignores. */
+function activityIds(data: CommandCenterData): string[] {
+  return [
+    ...data.nodes.map(n => n.id),
+    ...data.workItems.map(w => `work:${w.item_id}`),
+    ...data.dashboards.map(d => `view:${d.slug}`),
+  ]
+}
+
+/** The stored fingerprint is the sorted id set joined by a separator none of
+ * the ids contains. A dismissal persists this set; it is RELEASED only when the
+ * live set holds an id the stored set lacks (new work), NOT when the set merely
+ * changes. So a finished sub-agent aging out — which only REMOVES an id — keeps
+ * the dock dismissed, while a new sub-agent, workflow, work item or view brings
+ * it back. */
+const SEP = '\u0000'
+function fingerprintOf(ids: string[]): string {
+  return [...ids].sort().join(SEP)
+}
+function hasNewActivity(liveIds: string[], storedFingerprint: string): boolean {
+  const stored = new Set(storedFingerprint ? storedFingerprint.split(SEP) : [])
+  return liveIds.some(id => !stored.has(id))
+}
+
 /** Three numbers above the composer, in the composer's own column: progress,
  * what is blocked, what waits on the user. A tile opens its own short list; the
  * side panel holds the full page and every answer/approval control, so this
@@ -45,26 +77,44 @@ function CommandCenterDock({ slot, onOpen }: { slot: string | null; onOpen: () =
   // team; the panel, opened on purpose, always does (see useCommandCenter).
   const data = useCommandCenter(slot, true, 'task', { dock: true })
   const [hidden, setHidden] = usePersistedBool('mc-task-dashboard-hidden', false)
+  // Dismiss removes the dock entirely — no pill, no layout — until GENUINELY NEW
+  // work appears. It persists the set of ids on screen when it was taken (per
+  // chat, so dismissing one does not dismiss another), keyed under the GC's
+  // reserved `mc-task-dashboard-dismissed:` prefix. The dock stays gone while no
+  // live id is absent from that stored set — so work merely AGING OUT keeps it
+  // dismissed, and only a new sub-agent, workflow, work item or published view
+  // brings it back. FAIL-SAFE: a dismiss never applies while something waits on
+  // the user, so a blocking approval or question is never hidden behind it.
+  const dismissKey = `mc-task-dashboard-dismissed:${slot ?? ''}`
+  const [dismissedAt, setDismissedAt] = usePersistedString(dismissKey, '')
+  const liveIds = useMemo(() => activityIds(data), [data])
+  const attention = data.attention.length
+  const dismissed = dismissedAt !== '' && attention === 0 && !hasNewActivity(liveIds, dismissedAt)
   const [selected, setSelected] = useState<Tile | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   // The toggle swaps the tiles for the dot and back, so the pressed button
   // unmounts under the keyboard and focus would fall to body. Hand it to the
   // counterpart control instead — only when the toggle came from the dock's own
   // controls: a remount or a persisted-value change must not steal focus.
-  const hideRef = useRef<HTMLButtonElement>(null)
+  // Expanding from the pill lands on the overflow trigger (where Hide now lives).
+  const menuRef = useRef<HTMLButtonElement>(null)
   const dotRef = useRef<HTMLButtonElement>(null)
   const toggledFromDock = useRef(false)
   const toggle = (next: boolean) => { toggledFromDock.current = true; setHidden(next) }
   useEffect(() => {
     if (!toggledFromDock.current) return
     toggledFromDock.current = false
-    ;(hidden ? dotRef : hideRef).current?.focus({ preventScroll: true })
+    ;(hidden ? dotRef : menuRef).current?.focus({ preventScroll: true })
   }, [hidden])
   const reducedMotion = useReducedMotion()
   const idBase = useId()
   const open = () => { const from = document.activeElement; onOpen(); focusOpenedPanel(from) }
-  const attention = data.attention.length
+  // Dismiss stamps the current id set; show again clears the stamp. A dismiss
+  // leaves `hidden` untouched, so a later re-show (new activity, or something
+  // that needs the user) returns to the form the dock had.
+  const dismiss = () => setDismissedAt(fingerprintOf(liveIds))
   const transition = { duration: reducedMotion ? 0 : 0.24, ease: [0.34, 1.2, 0.64, 1] as const }
-  const shown = data.relevant && !data.finished
+  const shown = data.relevant && !data.finished && !dismissed
   return (
     // `relative z-[2]` clears the transcript's bottom mask, as the sibling bars
     // do. The INPUT column, not the message column: the dock is the composer's
@@ -108,9 +158,26 @@ function CommandCenterDock({ slot, onOpen }: { slot: string | null; onOpen: () =
               <div className="overflow-hidden rounded-[inherit] p-1.5 space-y-1.5">
               <StatusTiles data={data} selected={selected} idBase={idBase} onSelect={tile => setSelected(current => current === tile ? null : tile)}
                 controls={<div className="flex items-center gap-1">
-                  {/* Labelled in the cell: an icon alone does not say where the full page is. */}
+                  {/* Two actions, under the max-two-buttons-per-row cap: Open, and an
+                      overflow menu holding Hide (shrink to the pill) and Dismiss (remove
+                      until new activity). The menu gives each a text label, so the two
+                      are told apart even where their translations collide. */}
                   <Btn aria-label={t('commandCenter.open_panel')} onClick={open} className="px-2 min-h-7 text-[12px] whitespace-nowrap"><PanelRightOpen size={14} />{t('commandCenter.open_panel')}</Btn>
-                  <Btn ref={hideRef} aria-label={t('commandCenter.hide')} title={t('commandCenter.hide')} onClick={() => toggle(true)} className="px-1.5 min-h-7"><EyeOff size={14} /></Btn>
+                  <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+                    <DropdownMenuTrigger asChild>
+                      <Btn ref={menuRef} aria-label={t('commandCenter.more_actions')} title={t('commandCenter.more_actions')} className="px-1.5 min-h-7"><MoreHorizontal size={14} /></Btn>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[180px]">
+                      <DropdownMenuItem onSelect={() => toggle(true)}>
+                        <EyeOff size={13} className="shrink-0 text-muted" />
+                        <span>{t('commandCenter.hide')}</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={dismiss}>
+                        <X size={13} className="shrink-0 text-muted" />
+                        <span>{t('commandCenter.dismiss')}</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>} />
               {/* No hand-off: the adjacent chat composer and panel can hold unsent answer drafts. */}
               {data.stale && <ErrorNotice message={t('commandCenter.stale')} />}

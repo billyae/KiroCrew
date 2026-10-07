@@ -70,6 +70,8 @@
     "input_count": "내 처리 필요: {{countText}}",
     "tile_progress": "진행률",
     "hide": "상태 타일 숨기기",
+    "dismiss": "새 활동이 있을 때까지 숨기기",
+    "more_actions": "추가 작업",
     "show": "상태 타일 표시",
     "open_panel": "대시보드 열기",
     "nothing_running": "실행 중인 항목이 없습니다.",

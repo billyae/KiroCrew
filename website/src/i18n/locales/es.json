@@ -70,6 +70,8 @@
     "input_count": "Te necesita: {{countText}}",
     "tile_progress": "Progreso",
     "hide": "Ocultar mosaicos de estado",
+    "dismiss": "Descartar hasta que haya nueva actividad",
+    "more_actions": "Más acciones",
     "show": "Mostrar mosaicos de estado",
     "open_panel": "Abrir el Panel",
     "nothing_running": "No hay nada en ejecución.",

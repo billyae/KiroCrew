@@ -70,6 +70,8 @@
     "input_count": "Richiede te: {{countText}}",
     "tile_progress": "Avanzamento",
     "hide": "Nascondi riquadri di stato",
+    "dismiss": "Ignora fino a nuova attività",
+    "more_actions": "Altre azioni",
     "show": "Mostra riquadri di stato",
     "open_panel": "Apri Dashboard",
     "nothing_running": "Niente in esecuzione.",

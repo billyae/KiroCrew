@@ -70,6 +70,8 @@
     "input_count": "तुम्हारी ज़रूरत: {{countText}}",
     "tile_progress": "प्रगति",
     "hide": "स्थिति टाइल छिपाओ",
+    "dismiss": "नई गतिविधि तक खारिज करो",
+    "more_actions": "और क्रियाएँ",
     "show": "स्थिति टाइल दिखाओ",
     "open_panel": "डैशबोर्ड खोलो",
     "nothing_running": "कुछ भी चल नहीं रहा है।",

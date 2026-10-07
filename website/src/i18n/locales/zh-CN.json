@@ -70,6 +70,8 @@
     "input_count": "需要你：{{countText}}",
     "tile_progress": "进度",
     "hide": "隐藏状态格",
+    "dismiss": "隐藏至有新动态",
+    "more_actions": "更多操作",
     "show": "显示状态格",
     "open_panel": "打开仪表板",
     "nothing_running": "没有正在运行的任务。",

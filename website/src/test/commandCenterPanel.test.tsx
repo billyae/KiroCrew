@@ -293,9 +293,11 @@ describe('task dashboard host controls', () => {
     expect(screen.getByRole('group', { name: 'Dashboard' })).toContainElement(needsYou)
     expect(screen.getByRole('button', { name: 'Progress 1/2' })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByRole('button', { name: 'Blocked 1' })).toBeVisible()
-    // Two actions beside the three disclosures, so the row stays under the button cap.
+    // Two actions beside the three disclosures, so the row stays under the button cap:
+    // Open, and an overflow menu holding Hide and Dismiss.
     expect(screen.getByTestId('status-tiles').querySelectorAll(':scope > button, :scope > div:not([role=group]) button')).toHaveLength(2)
-    // No explanatory sentence on the dock: numbers, a disclosure, two controls.
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeVisible()
+    // No explanatory sentence on the dock: numbers, a disclosure, the controls.
     expect(screen.queryByText(/Running \d/)).not.toBeInTheDocument()
     fireEvent.click(needsYou)
     expect(needsYou).toHaveAttribute('aria-expanded', 'true')
@@ -322,7 +324,8 @@ describe('task dashboard host controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Progress 1/2' }))
     expect(screen.getByRole('button', { name: 'Progress 1/2' })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Hide status tiles' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'Enter' })
+    fireEvent.click(await screen.findByText('Hide status tiles'))
     expect(screen.queryByRole('button', { name: 'Needs you 1' })).not.toBeInTheDocument()
     // The pill's name carries its visible title and the count, so a screen reader
     // hears what is waiting; its visible text names what was hidden beside the count.
@@ -581,7 +584,7 @@ describe('task dashboard host controls', () => {
     expect(screen.getByRole('button', { name: 'Needs you 0' })).toHaveAttribute('title', 'Waiting on you — questions and approvals')
   })
 
-  it('labels the open button beside its icon and keeps the row at two actions', async () => {
+  it('labels the open button beside its icon and keeps the row at two actions (Open + overflow)', async () => {
     renderWithProviders(<CommandCenterDock slot="root" onOpen={vi.fn()} />, { store: taskStore() })
     await screen.findByRole('button', { name: 'Progress 1/2' })
     const tiles = screen.getByTestId('status-tiles')
@@ -589,6 +592,10 @@ describe('task dashboard host controls', () => {
     expect(open).toHaveTextContent('Open Dashboard')
     expect(open.querySelector('svg')).not.toBeNull()
     expect(tiles.querySelectorAll(':scope > div:not([role=group]) button')).toHaveLength(2)
+    // Hide and Dismiss moved into the overflow menu, each with a text label.
+    fireEvent.keyDown(within(tiles).getByRole('button', { name: 'More actions' }), { key: 'Enter' })
+    expect(await screen.findByText('Hide status tiles')).toBeInTheDocument()
+    expect(screen.getByText('Dismiss until new activity')).toBeInTheDocument()
   })
 
   it('shows the dock for work that arrives while disconnected, arming the settled latch only after a real read', async () => {
@@ -654,14 +661,15 @@ describe('task dashboard host controls', () => {
     first.unmount()
     localStorage.clear()
     renderWithProviders(<CommandCenterDock slot="root" onOpen={vi.fn()} />, { store: taskStore() })
-    const hide = await screen.findByRole('button', { name: 'Hide status tiles' })
-    hide.focus()
-    fireEvent.click(hide)
+    // Hide now lives in the overflow menu; selecting it swaps the tiles for the pill.
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'More actions' }), { key: 'Enter' })
+    fireEvent.click(await screen.findByText('Hide status tiles'))
     const dot = screen.getByRole('button', { name: 'Dashboard: Show status tiles' })
     expect(dot).toHaveFocus()
     // Quiet form: no count, but the pill still says what it stands for.
     expect(dot).toHaveTextContent('Dashboard')
+    // Showing again from the pill lands on the overflow trigger (where Hide lives).
     fireEvent.click(dot)
-    expect(screen.getByRole('button', { name: 'Hide status tiles' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'More actions' })).toHaveFocus()
   })
 })

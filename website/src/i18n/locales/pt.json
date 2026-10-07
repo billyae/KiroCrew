@@ -70,6 +70,8 @@
     "input_count": "Precisa de você: {{countText}}",
     "tile_progress": "Progresso",
     "hide": "Ocultar blocos de status",
+    "dismiss": "Dispensar até haver nova atividade",
+    "more_actions": "Mais ações",
     "show": "Mostrar blocos de status",
     "open_panel": "Abrir o Painel",
     "nothing_running": "Nada em execução.",

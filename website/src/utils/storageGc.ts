@@ -40,9 +40,10 @@ const SESSION_PREFIXES = [
   'mc-webpreview-pending:',
   'mc-webpreview-applied:',
   'mc-busy-send-mode:',
-  // No live writer: the one-time Dashboard hint card wrote this flag before the
-  // dock became persistent. Kept so a browser that already carries the keys
-  // still has them collected.
+  // Per-session dock dismissal: `CommandCenterDock` writes
+  // `mc-task-dashboard-dismissed:<slot>` holding the activity fingerprint the
+  // dismiss was taken against. GC-collected so a deleted session's stamp does
+  // not linger.
   'mc-task-dashboard-dismissed:',
 ] as const
 

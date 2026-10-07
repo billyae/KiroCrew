@@ -70,6 +70,8 @@
     "input_count": "Ton attention : {{countText}}",
     "tile_progress": "Progression",
     "hide": "Masquer les tuiles d’état",
+    "dismiss": "Masquer jusqu’à une nouvelle activité",
+    "more_actions": "Plus d’actions",
     "show": "Afficher les tuiles d’état",
     "open_panel": "Ouvrir le Tableau de bord",
     "nothing_running": "Rien n’est en cours.",
