@@ -113,7 +113,18 @@ def _is_corruption_error(exc: BaseException) -> bool:
 
 
 def workspace_dir() -> Path:
-    return config_dir() / WORKSPACE_DIR_NAME
+    """The default workspace's DATA directory (home of its memory tree).
+
+    Routes through :func:`kiro_crew.config.loader.default_workspace_data_root`,
+    which honours ``workspaces.<default>.data_root`` from ``config.json`` when it
+    names an absolute, non-sensitive path and otherwise returns
+    ``config_dir() / WORKSPACE_DIR_NAME`` byte-identically. The resolver reads
+    the key once per process and refuses a relative or sensitive value loudly,
+    so a relocated memory root never silently splits from the built-in location.
+    """
+    from kiro_crew.config.loader import default_workspace_data_root
+
+    return default_workspace_data_root()
 
 
 def memory_dir() -> Path:

@@ -266,6 +266,18 @@ def memory_silo_fence() -> MemorySiloFence:
         candidates.extend(
             workspace_dir_from_entry(cfg.workspaces[name]) for name in sorted(cfg.workspaces)
         )
+        # The default workspace's DATA root honours ``data_root``; include a
+        # relocated Global memory tree so it stays inside the fence. Resolved
+        # from THIS snapshot (no reload, preserving the one-load invariant
+        # above); a bad value raises, which the fence tolerates by falling
+        # through to the built-in roots already listed.
+        try:
+            from kiro_crew.config.loader import _data_root_from_cfg
+
+            data_root, _ = _data_root_from_cfg(cfg, base, base / WORKSPACE_DIR_NAME)
+            candidates.append(data_root)
+        except Exception:
+            pass
     roots: list[Path] = []
     for candidate in candidates:
         try:

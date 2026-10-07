@@ -101,6 +101,15 @@ def _refuse_managed_source(path: Path) -> None:
     cfg = KiroCrewConfig.load()
     roots = [config_dir(), Path.home() / ".kiro/crew", Path.home() / ".kirocrew"]
     workspaces = [config_dir() / "workspace"]
+    # The default workspace's DATA root honours ``data_root``; cover a relocated
+    # tree too. Defensive: a bad value makes the resolver raise, but the guard
+    # must still protect the built-in roots, so a failure falls through.
+    try:
+        from kiro_crew.config.loader import default_workspace_data_root
+
+        workspaces.append(default_workspace_data_root())
+    except Exception:
+        pass
     workspaces.extend(workspace_dir_for(name) for name in cfg.workspaces)
     candidate = Path(os.path.abspath(path))
     # Reuse only within this check. A later call must observe new configuration

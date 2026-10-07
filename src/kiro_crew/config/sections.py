@@ -3516,6 +3516,29 @@ class WorkspaceConfig:
         default="workspace",
         metadata=_meta("Directory", "Workspace directory path."),
     )
+    data_root: str = field(
+        default="",
+        metadata=_meta(
+            "Data Root",
+            "Absolute filesystem directory the gateway uses for the default "
+            "workspace's DATA root -- the markdown memory tree lives under it. "
+            "EMPTY (the default) keeps the built-in location "
+            "~/.kiro/crew/workspace byte-for-byte, so an install that never sets "
+            "this is unchanged. Unlike ``dir`` (the UI identity, which may be "
+            "relative to the data home), ``data_root`` is read ONCE at process "
+            "start and MUST be an ABSOLUTE, non-sensitive path: a relative, "
+            "empty-after-strip, or sensitive-path value is REJECTED loudly rather "
+            "than silently resolved, because this answer becomes a filesystem "
+            "root the gateway reads and writes. Relocating it is an OPERATION, "
+            "not a live setting -- change it while the gateway is stopped and move "
+            "the existing data yourself; it is not migrated for you. This is an "
+            "OPERATOR knob: config.json is on the agent file-edit write-deny floor "
+            "(security.paths._WRITE_PROTECTED_HOME_PATHS), so an agent cannot "
+            "relocate its own data root by editing config. Only the default "
+            "workspace's entry is read; the key is ignored on other entries.",
+            restart=True,
+        ),
+    )
 
 
 @dataclass
@@ -4312,7 +4335,8 @@ def _migrate_workspaces(raw_workspaces: dict) -> dict[str, WorkspaceConfig]:
     """Auto-migrate workspaces from flat or structured format.
 
     - String values → WorkspaceConfig(dir=value)
-    - Dict values → WorkspaceConfig(dir=value["dir"]), the field default without ``dir``
+    - Dict values → WorkspaceConfig(dir=value["dir"], data_root=value["data_root"]),
+      each field falling back to its default when absent
     - Non-string/non-dict values → default WorkspaceConfig()
     - Empty input → {"default": WorkspaceConfig()}
     """
@@ -4321,7 +4345,11 @@ def _migrate_workspaces(raw_workspaces: dict) -> dict[str, WorkspaceConfig]:
         if isinstance(value, str):
             result[name] = WorkspaceConfig(dir=value)
         elif isinstance(value, dict):
-            result[name] = WorkspaceConfig(dir=SectionReader(WorkspaceConfig, value).get("dir"))
+            reader = SectionReader(WorkspaceConfig, value)
+            result[name] = WorkspaceConfig(
+                dir=reader.get("dir"),
+                data_root=reader.get("data_root"),
+            )
         else:
             result[name] = WorkspaceConfig()
     if not result:

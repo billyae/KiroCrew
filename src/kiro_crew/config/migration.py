@@ -188,7 +188,15 @@ def apply_document_migrations(
         if isinstance(raw_workspaces, dict):
             for name, value in list(raw_workspaces.items()):
                 if isinstance(value, str):
-                    raw_workspaces[name] = asdict(WorkspaceConfig(dir=value))
+                    # Minimal shape: a flat string carries only a dir, so the
+                    # migrated entry is ``{"dir": ...}``. New optional fields that
+                    # are still at their default (``data_root=""``) are dropped so
+                    # an install that never used them keeps a byte-identical
+                    # workspaces document across this migration.
+                    migrated = asdict(WorkspaceConfig(dir=value))
+                    raw_workspaces[name] = {
+                        k: v for k, v in migrated.items() if k == "dir" or v not in ("", None)
+                    }
                     changed = True
 
     # Seed the default agent when the document still has none.

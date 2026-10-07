@@ -1391,6 +1391,254 @@ def workspace_dir_from_entry(entry: WorkspaceConfig | None) -> Path:
     return config_dir() / dirname
 
 
+class WorkspaceDataRootError(ValueError):
+    """A configured ``workspaces.<name>.data_root`` is not a usable absolute path.
+
+    Raised loudly rather than silently falling back, because the value becomes
+    a filesystem root the gateway reads and writes: silently ignoring a bad one
+    sends live data to the built-in location while the operator believes it
+    moved, so a bad value is refused rather than resolved.
+    """
+
+
+#: Process cache for :func:`default_workspace_data_root`, keyed on the resolved
+#: ``config_dir()``. The data root is read ONCE per (process, config_dir) and
+#: frozen: the gateway and the MCP tool subprocess start at different times, and
+#: a value that could change under a running pair would let the two processes
+#: resolve different directories and silently split live data. Freezing it makes
+#: relocation an OPERATION across a coordinated restart, not a live setting.
+#: Keying on ``config_dir()`` means a test (or a KIROCREW_HOME change) that
+#: repoints the data home re-resolves rather than inheriting an earlier home's
+#: answer, while production — where ``config_dir()`` is stable — still resolves
+#: exactly once.
+#:
+#: Only a value that LOADED (a real config, or a genuinely-unset default) is
+#: cached. A transient load failure returns the base WITHOUT caching, so a later
+#: call once config.json is readable again honours the configured root instead of
+#: being frozen at the fallback for the whole process.
+_DEFAULT_WORKSPACE_DATA_ROOT: dict[Path, Path] = {}
+_DEFAULT_WORKSPACE_DATA_ROOT_LOCK = threading.Lock()
+
+
+def _resolve_default_workspace_data_root() -> tuple[Path, bool]:
+    """Resolve the default workspace data root from config, with no caching.
+
+    Returns ``(path, cacheable)``: ``cacheable`` is ``False`` only when a
+    transient config-load failure forced a fallback to the built-in base, so the
+    caller must not freeze that fallback. A successful load — configured or
+    genuinely unset — is cacheable. A bad VALUE (relative, non-string, sensitive)
+    raises :class:`WorkspaceDataRootError` and is never cached.
+
+    Separated from :func:`default_workspace_data_root` so tests can exercise the
+    resolution + validation without the process cache getting in the way.
+    """
+    from kiro_crew.memory import WORKSPACE_DIR_NAME
+
+    # ``memory.WORKSPACE_DIR_NAME`` is the DATA-dir name ("workspace"), distinct
+    # from ``config.paths._WORKSPACE_DIR_NAME`` ("kirocrew-workspace", the LLM
+    # session working dir). Use the data-dir constant so the base stays
+    # byte-identical to memory.workspace_dir()'s ``config_dir() / "workspace"``.
+    cdir = config_dir()
+    base = cdir / WORKSPACE_DIR_NAME
+
+    try:
+        cfg = KiroCrewConfig.load()
+    except Exception:
+        # A config that cannot be loaded resolves to the built-in base, exactly
+        # as workspace_dir_for does: a raise here would break a fresh install.
+        # NOT cacheable: a mid-write / briefly-invalid config must not freeze the
+        # fallback for the process lifetime.
+        logger.warning(
+            "could not load config to resolve the default workspace data root; "
+            "using the built-in location %s for now",
+            base,
+            exc_info=True,
+        )
+        return base, False
+
+    return _data_root_from_cfg(cfg, cdir, base)
+
+
+def _data_root_from_cfg(cfg: "KiroCrewConfig", cdir: Path, base: Path) -> tuple[Path, bool]:
+    """Validate the default workspace's ``data_root`` against an ALREADY-loaded
+    config, with no further load. Returns ``(path, cacheable)`` or raises
+    :class:`WorkspaceDataRootError` on a bad value. Callers that hold a config
+    snapshot (the silo fence) use this so they never reload — a second load
+    could observe a different document.
+    """
+    entry = cfg.workspaces.get(cfg.default_workspace)
+    # A torn read does not raise: the loader hands back DEFAULTS for the file or
+    # the ``workspaces`` table it could not parse and records that in
+    # ``degraded_sections``. Trusting ``data_root`` from such a load would read
+    # an unset key and freeze the built-in base even though a real root is
+    # configured. Fall back to base WITHOUT caching so a later clean load honours
+    # the configured root.
+    from kiro_crew.config.resolution import (
+        DEGRADED_WHOLE_CONFIG,
+        DEGRADED_WORKSPACES,
+    )
+
+    if {DEGRADED_WHOLE_CONFIG, DEGRADED_WORKSPACES} & cfg.degraded_sections:
+        logger.warning(
+            "config was read in a degraded state (%s); using the built-in "
+            "workspace data root %s until it reads cleanly",
+            ",".join(sorted(cfg.degraded_sections)),
+            base,
+        )
+        return base, False
+
+    raw = entry.data_root if entry is not None else ""
+    # A present-but-non-string value (hand-edited junk) is refused loudly rather
+    # than silently accepted as a path. ``SectionReader`` returns a stored value
+    # as-is, so a ``"data_root": 123`` survives the load and lands here.
+    if not isinstance(raw, str):
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root must be a string, "
+            f"got {type(raw).__name__}"
+        )
+    stripped = raw.strip()
+    if not stripped:
+        # Unset (or whitespace-only): byte-identical to today's behaviour.
+        return base, True
+
+    # Reject non-absolute BEFORE expanduser: ``~/x`` is lexically non-absolute,
+    # and the contract is a true absolute path, so a ``~`` convenience value is
+    # refused rather than silently expanded (which also avoids expanduser's
+    # RuntimeError on an unknown ``~user``).
+    if not Path(stripped).is_absolute():
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root must be an ABSOLUTE "
+            f"path (got {stripped!r}); relocating the data root is an operation, "
+            "not a relative convenience, so a relative or ~-prefixed value is "
+            "refused rather than silently resolved against the data home."
+        )
+
+    from kiro_crew.security import is_sensitive_path  # circular import
+
+    resolved = Path(os.path.realpath(str(stripped)))
+    cdir_resolved = Path(os.path.realpath(str(cdir)))
+    # Refuse the config dir itself or any ancestor of it: placing the memory
+    # tree AT or ABOVE the data home would interleave it with config.json,
+    # session dirs and home dotfiles, and a prune/export of the tree could then
+    # reach them.
+    if resolved == cdir_resolved or resolved in cdir_resolved.parents:
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root ({resolved}) is the "
+            "data home or an ancestor of it; the workspace data root must be a "
+            "distinct directory, not one that contains config.json and the "
+            "session dirs."
+        )
+    if is_sensitive_path(str(resolved)):
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root resolves to a "
+            f"sensitive path ({resolved}); refusing to place the workspace data "
+            "root where the gateway would read or write a protected location."
+        )
+
+    # The export/snapshot archivers walk ONE anchored tree, the data home
+    # (``config_dir()``, which already honours ``KIROCREW_HOME``). They are not a
+    # single call site that can be re-pointed, so a data root OUTSIDE that tree
+    # would be silently omitted from every backup and could be pruned by
+    # retention. Refuse to honour such a value rather than hand the operator
+    # incomplete backups: the root must live under the data home (relocating the
+    # whole home is what ``KIROCREW_HOME`` is for).
+    archive_home = cdir_resolved
+    if resolved != archive_home and archive_home not in resolved.parents:
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root ({resolved}) is "
+            f"outside the data home ({archive_home}); the backup/snapshot "
+            "archivers only cover the data home, so a root outside it would be "
+            "left out of every backup. Keep it under the data home, or relocate "
+            "the whole home with KIROCREW_HOME."
+        )
+
+    # Refuse while the OLD built-in memory tree still holds content. Boot's
+    # auto-migration detects "something to migrate" through the RESOLVED memory
+    # dir but imports from the built-in path; if the two differ while the old
+    # tree has data, migration would import nothing yet still mark memory
+    # migrated, silently dropping it. Refusing until the operator moves (or
+    # clears) the old tree makes relocation a safe operation.
+    old_memory = base / "memory"
+    if resolved != base and _legacy_tree_has_content(old_memory):
+        raise WorkspaceDataRootError(
+            f"workspaces.{cfg.default_workspace!r}.data_root is set to "
+            f"{resolved}, but the built-in memory tree at {old_memory} still "
+            "holds data. Move its contents to the new location (while the "
+            "gateway is stopped) and remove the old tree, then start again; the "
+            "gateway will not migrate it for you and refuses to run with the "
+            "data split across two roots."
+        )
+    return resolved, True
+
+
+def _legacy_tree_has_content(memory_dir: Path) -> bool:
+    """True when the built-in memory tree holds markdown/history worth keeping.
+
+    Mirrors what boot auto-migration treats as "something to migrate": a ``- ``
+    bullet in preferences.md/projects.md, or any ``history/*.md``. Used only to
+    REFUSE a relocation that would strand this content, so it errs toward
+    reporting content (a read error counts as content).
+    """
+    try:
+        for name in ("preferences.md", "projects.md"):
+            f = memory_dir / name
+            if f.is_file() and any(
+                line.strip().startswith("- ")
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
+            ):
+                return True
+        history = memory_dir / "history"
+        if history.is_dir() and any(history.glob("*.md")):
+            return True
+    except OSError:
+        return True
+    return False
+
+
+def default_workspace_data_root() -> Path:
+    """The gateway DATA root for the default workspace, resolved once per process.
+
+    This is the home of the default workspace's ``workspace/`` subtree — the
+    markdown memory tree (``memory/preferences.md``, ``projects.md``,
+    ``history/``) and everything else routed through ``memory.workspace_dir()``.
+    It honours ``workspaces.<default_workspace>.data_root`` from ``config.json``
+    when that key names an absolute, non-sensitive directory; otherwise — unset,
+    empty, or unloadable config — it returns ``config_dir() / "workspace"``
+    BYTE-IDENTICALLY, so an install that never sets the key is unchanged.
+
+    A relative, ``~``-prefixed, non-string, sensitive, or data-home-ancestor
+    value is rejected with :class:`WorkspaceDataRootError` rather than silently
+    resolved: the answer is a filesystem root the gateway reads and writes, and a
+    silent fallback would split live data between the configured and built-in
+    locations.
+
+    The result is cached per process, keyed on ``config_dir()`` and guarded by a
+    lock so concurrent first calls agree; a transient-load fallback is NOT cached
+    so a later call honours a now-readable configured root. config.json is on the
+    agent file-edit write-deny floor
+    (``security.paths._WRITE_PROTECTED_HOME_PATHS``), so an agent cannot relocate
+    its own data root by editing config.
+    """
+    cdir = config_dir()
+    cached = _DEFAULT_WORKSPACE_DATA_ROOT.get(cdir)
+    if cached is not None:
+        return cached
+    with _DEFAULT_WORKSPACE_DATA_ROOT_LOCK:
+        cached = _DEFAULT_WORKSPACE_DATA_ROOT.get(cdir)
+        if cached is not None:
+            return cached
+        resolved, cacheable = _resolve_default_workspace_data_root()
+        if cacheable:
+            _DEFAULT_WORKSPACE_DATA_ROOT[cdir] = resolved
+        return resolved
+
+
+def _reset_default_workspace_data_root_cache() -> None:
+    """Clear the process data-root cache. For tests only."""
+    with _DEFAULT_WORKSPACE_DATA_ROOT_LOCK:
+        _DEFAULT_WORKSPACE_DATA_ROOT.clear()
+
+
 def default_project_dir(workspace: str | None = None) -> str:
     """Resolve the default project directory for a workspace.
 

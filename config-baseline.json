@@ -8933,6 +8933,21 @@
       "defaultValue": "workspace"
     },
     {
+      "path": "workspaces.*.data_root",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Data Root",
+      "help": "Absolute filesystem directory the gateway uses for the default workspace's DATA root -- the markdown memory tree lives under it. EMPTY (the default) keeps the built-in location ~/.kiro/crew/workspace byte-for-byte, so an install that never sets this is unchanged. Unlike ``dir`` (the UI identity, which may be relative to the data home), ``data_root`` is read ONCE at process start and MUST be an ABSOLUTE, non-sensitive path: a relative, empty-after-strip, or sensitive-path value is REJECTED loudly rather than silently resolved, because this answer becomes a filesystem root the gateway reads and writes. Relocating it is an OPERATION, not a live setting -- change it while the gateway is stopped and move the existing data yourself; it is not migrated for you. This is an OPERATOR knob: config.json is on the agent file-edit write-deny floor (security.paths._WRITE_PROTECTED_HOME_PATHS), so an agent cannot relocate its own data root by editing config. Only the default workspace's entry is read; the key is ignored on other entries.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": "",
+      "requiresRestart": true
+    },
+    {
       "path": "default_workspace",
       "kind": "core",
       "type": "string",

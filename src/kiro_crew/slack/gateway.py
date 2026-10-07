@@ -2516,6 +2516,14 @@ class GatewayOrchestrator:
             logger.debug("service config watchers not fully registered", exc_info=True)
 
         # Memory, skills, hooks, lessons
+        # Resolve the default workspace data root OFF the event loop before any
+        # memory object is built. The resolver canonicalises the path with a
+        # synchronous ``os.path.realpath`` and caches it once per process; doing
+        # it here warms that cache so later loop-path callers never block, and a
+        # misconfigured ``data_root`` fails here, loudly, instead of mid-write.
+        from kiro_crew.config.loader import default_workspace_data_root
+
+        await asyncio.get_running_loop().run_in_executor(None, default_workspace_data_root)
         memory = MemoryStore()
 
         # Vector memory (structured semantic store)
