@@ -102,6 +102,18 @@ LANES = {
 # with ai-review-human-override.yml's reader.
 _FORK_LANE_MARKER_PREFIX = "<!-- ai-review-fork-lane run="
 
+# The re-run is bounded per workflow run. A lane whose withhold cause persists
+# -- a head/slot read that stays unreadable, a PATCH that keeps failing -- would
+# otherwise re-run on every STALE_MINUTES tick forever (a full paid model review
+# every 15-20 minutes per lane per PR), since the sweep places this recovery
+# OUTSIDE MAX_DISPATCH on purpose. GitHub's own per-run re-run limit (50) is far
+# too high to be a cost bound. A run's ``run_attempt`` counts the attempts the
+# platform has recorded for it (1 for the first run, incremented by each rerun),
+# so once it reaches this cap the sweep stops re-running that lane and asks for a
+# manual re-run instead. Three attempts is enough to clear a transient cause and
+# small enough to bound the fail-open cost.
+MAX_RERUN_ATTEMPTS = 3
+
 
 def _gh_json(args: list[str]) -> object | None:
     """Run a read-only ``gh api`` call and parse its JSON, or ``None`` on any
@@ -163,10 +175,13 @@ def owed_lanes(repo: str, pr: str, head: str) -> list[str] | None:
 
 def _same_repo_run_id(
     repo: str, workflow: str, head: str, head_repo: str, head_ref: str
-) -> str | None:
+) -> tuple[str, int] | None:
     """Newest same-repo ``pull_request`` run of ``workflow`` for ``head``, bound
     to this PR by (head repository, head ref) -- not by ``.pull_requests``,
-    which is empty on fork runs. Mirrors the readiness lane-run binding."""
+    which is empty on fork runs. Mirrors the readiness lane-run binding.
+
+    Returns ``(run_id, run_attempt)`` -- the attempt count is already in the
+    runs-list payload -- or ``None`` when no matching run is found."""
     data = _gh_json(
         [
             "api",
@@ -182,6 +197,7 @@ def _same_repo_run_id(
     if not isinstance(runs, list):
         return None
     best_id = None
+    best_attempt = 1
     for run in runs:
         if not isinstance(run, dict):
             continue
@@ -194,14 +210,21 @@ def _same_repo_run_id(
         rid = run.get("id")
         if isinstance(rid, int) and (best_id is None or rid > best_id):
             best_id = rid
-    return str(best_id) if best_id is not None else None
+            attempt = run.get("run_attempt")
+            best_attempt = attempt if isinstance(attempt, int) and attempt >= 1 else 1
+    return (str(best_id), best_attempt) if best_id is not None else None
 
 
-def _fork_run_id(repo: str, check_name: str, fork_workflow: str, head: str) -> str | None:
+def _fork_run_id(
+    repo: str, check_name: str, fork_workflow: str, head: str
+) -> tuple[str, int] | None:
     """The fork Stage-2 lane's run id, read from the lane-run marker the lane
     writes into its check-run's ``output.text`` on the head. The resolved run is
     then VERIFIED to be that fork workflow before it is returned, so a check-run
-    of this name posted by anything else cannot redirect the re-run."""
+    of this name posted by anything else cannot redirect the re-run.
+
+    Returns ``(run_id, run_attempt)`` -- the attempt count comes from the same
+    ``actions/runs/{id}`` read the verification already makes -- or ``None``."""
     enc = check_name.replace(" ", "%20")
     data = _gh_json(
         [
@@ -244,11 +267,13 @@ def _fork_run_id(repo: str, check_name: str, fork_workflow: str, head: str) -> s
         return None
     # Verify the resolved run really is the expected fork lane before re-running
     # it -- the marker is trusted, but a check-run of this name could in
-    # principle be posted by any workflow with checks:write.
+    # principle be posted by any workflow with checks:write. The same read also
+    # carries ``run_attempt``, so the attempt bound costs no extra REST call.
     run = _gh_json(["api", f"repos/{repo}/actions/runs/{digits}"])
     if not isinstance(run, dict) or run.get("path") != f".github/workflows/{fork_workflow}":
         return None
-    return digits
+    attempt = run.get("run_attempt")
+    return digits, attempt if isinstance(attempt, int) and attempt >= 1 else 1
 
 
 def _rerun(repo: str, run_id: str) -> bool:
@@ -321,15 +346,27 @@ def republish(
         spec = LANES[name]
         check_name = spec["check_name"]
         if is_fork:
-            run_id = _fork_run_id(repo, check_name, spec["fork"], head)
+            located = _fork_run_id(repo, check_name, spec["fork"], head)
             which = spec["fork"]
         else:
-            run_id = _same_repo_run_id(repo, spec["same_repo"], head, head_repo, head_ref)
+            located = _same_repo_run_id(repo, spec["same_repo"], head, head_repo, head_ref)
             which = spec["same_repo"]
-        if not run_id:
+        if not located:
             print(
                 f"PR #{pr}: {check_name} owes {head} a verdict but its {which} run could not "
                 f"be located; re-run it manually from the Actions tab."
+            )
+            continue
+        run_id, run_attempt = located
+        # Bound the recovery: once a run has been re-run MAX_RERUN_ATTEMPTS times
+        # and the verdict still has not published, the withhold cause is not
+        # transient. Stop re-running it (the sweep would otherwise re-fire the
+        # lane every STALE_MINUTES forever) and ask for a manual re-run.
+        if run_attempt >= MAX_RERUN_ATTEMPTS:
+            print(
+                f"PR #{pr}: {check_name} ({which} run {run_id}) has reached "
+                f"{run_attempt} attempts without publishing its verdict for {head}; "
+                f"not re-running it. Re-run this lane manually from the Actions tab."
             )
             continue
         if _rerun(repo, run_id):
