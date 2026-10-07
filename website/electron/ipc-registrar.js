@@ -17,6 +17,7 @@ const { initAutoUpdate } = require("./auto-update");
 const { makeUpdaterLogger } = require("./update-logger");
 const { detectWsl2 } = require("./wsl-detection");
 const { crashNoticeSummary } = require("./crash-collector");
+const { classifyExternalSchemeOpen } = require("./external-scheme");
 const { PREFIX: PANE_ASSETS_PREFIX, purgeableOrigin } = require("./pane-asset-journal");
 
 /**
@@ -380,6 +381,49 @@ function createIpcRegistrar({
         return { ok: true };
       } catch (e) {
         log(`dashboard:open-file refused: ${e && e.message}`);
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
+
+    // Open an EDITOR DEEP-LINK scheme (idea://, vscode://, cursor://) a user
+    // clicked in a markdown link, by handing the URL to the OS registered
+    // handler (shell.openExternal) on the machine in front of them (issue #3218).
+    //
+    // Sibling to `dashboard:open-file`, and gated the SAME way: this is a LAUNCH
+    // on the local machine, so it takes the full three-gate local-dashboard
+    // check. A connection window pointed at a REMOTE gateway shares this preload
+    // and must never be able to spawn an editor on the host running this shell.
+    //
+    // THREAT MODEL. shell.openExternal hands the URL to LaunchServices / the OS,
+    // which routes a registered scheme to its handler. Two things keep that from
+    // becoming an arbitrary-protocol-handler trigger from untrusted content:
+    //   1. The scheme is matched on the PARSED protocol against a fixed editor
+    //      allowlist (classifyExternalSchemeOpen) — never a string prefix, and
+    //      never "anything that isn't http" — so javascript:, file:, data:,
+    //      smb://, x-apple.systempreferences: and every unknown scheme are
+    //      refused here even though the renderer already filtered them.
+    //   2. This is a DISTINCT channel from the window.open handler
+    //      (external-scheme.js classifyNavigation), which untrusted
+    //      widget/artifact iframes (allow-popups-to-escape-sandbox) and page
+    //      script can reach and which still blocks every non-web scheme. The
+    //      preload that exposes this bridge is attached only to the trusted
+    //      dashboard frame, not to sandboxed iframes, so model-authored content
+    //      cannot invoke it; and the renderer only calls it from a user click,
+    //      never from script or a redirect.
+    ipcMain.handle("dashboard:open-external-scheme", async (event, url) => {
+      await assertLocalDashboard(event, "dashboard:open-external-scheme");
+      if (typeof url !== "string" || url === "") {
+        return { ok: false, error: "no url" };
+      }
+      if (!classifyExternalSchemeOpen(url)) {
+        log(`dashboard:open-external-scheme refused scheme: ${url.slice(0, 60)}`);
+        return { ok: false, error: "unsupported scheme" };
+      }
+      try {
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch (e) {
+        log(`dashboard:open-external-scheme failed: ${e && e.message}`);
         return { ok: false, error: String((e && e.message) || e) };
       }
     });

@@ -2,7 +2,9 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   EXTERNAL_URLS,
+  ALLOWED_EXTERNAL_SCHEMES,
   classifyNavigation,
+  classifyExternalSchemeOpen,
   createWindowOpenHandler,
   openExternalSafely,
 } = require("../external-scheme");
@@ -40,6 +42,73 @@ describe("pane constants agree across backend, panel and this allowlist", () => 
   });
 });
 
+/* The editor-scheme hand-off gate for the user-click `dashboard:open-external-scheme`
+ * IPC channel (issue #3218). Independent of classifyNavigation: that one gates
+ * window.open and must keep blocking these schemes (pinned above), while this one
+ * ADMITS the editor allowlist for a user click on a markdown link. Matched on the
+ * parsed protocol, never a string prefix. */
+describe("classifyExternalSchemeOpen", () => {
+  it("admits each allowlisted editor scheme carrying a payload", () => {
+    for (const url of [
+      "vscode://file/home/user/project",
+      "vscode-insiders://vscode-remote/ssh-remote+host/path",
+      "idea://open?file=/home/user/project/src/main.py&line=42",
+      "cursor://file/home/user/project/src/main.py:42",
+    ]) {
+      assert.equal(classifyExternalSchemeOpen(url), true, url);
+    }
+  });
+
+  it("refuses dangerous and non-editor schemes (defence in depth on the launch)", () => {
+    for (const url of [
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "data:text/html,<script>alert(1)</script>",
+      "smb://attacker/share",
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+      "obsidian://open?vault=Notes",
+      "http://example.com/",
+      "https://example.com/",
+      "about:blank",
+    ]) {
+      assert.equal(classifyExternalSchemeOpen(url), false, url);
+    }
+  });
+
+  it("matches the PARSED protocol, never a string prefix", () => {
+    // A scheme that merely begins with an allowed name must be refused.
+    for (const url of [
+      "idea-attacker://open?file=x",
+      "cursorx://open?file=x",
+      "notvscode://file/x",
+      "vscodex://file/x",
+    ]) {
+      assert.equal(classifyExternalSchemeOpen(url), false, url);
+    }
+  });
+
+  it("refuses a bare scheme with no payload", () => {
+    for (const url of ["vscode://", "idea://", "cursor:", "vscode-insiders://"]) {
+      assert.equal(classifyExternalSchemeOpen(url), false, url);
+    }
+  });
+
+  it("fails closed on absent or unparseable input", () => {
+    for (const url of ["", "not a url", undefined, null, 42, {}]) {
+      assert.equal(classifyExternalSchemeOpen(url), false, JSON.stringify(url));
+    }
+  });
+
+  it("exposes exactly the four editor schemes the issue names", () => {
+    assert.deepEqual([...ALLOWED_EXTERNAL_SCHEMES].sort(), [
+      "cursor:",
+      "idea:",
+      "vscode-insiders:",
+      "vscode:",
+    ]);
+  });
+});
+
 describe("classifyNavigation", () => {
   it("keeps same-origin web URLs in-app", () => {
     assert.equal(classifyNavigation(`${ORIGIN}/settings`, ORIGIN), "allow");
@@ -67,6 +136,9 @@ describe("classifyNavigation", () => {
       "javascript:alert(1)",
       "data:text/html,<script>alert(1)</script>",
       "vscode://file/etc/hosts",
+      "vscode-insiders://file/etc/hosts",
+      "idea://open?file=/etc/hosts",
+      "cursor://file/etc/hosts",
       "smb://attacker/share",
       "ftp://example.com/x",
       "chrome://settings",

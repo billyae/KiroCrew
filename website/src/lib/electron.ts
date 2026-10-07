@@ -115,6 +115,53 @@ export async function openFileInEditor(
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
+
+/**
+ * Whether an editor-scheme deep link (`idea://`, `vscode://`, `cursor://`) can
+ * be handed to the OS from this window.
+ *
+ * True only when the desktop shell's `fileOpenAPI.openExternalScheme` preload
+ * bridge is present. A plain browser tab and the PWA expose no such bridge: the
+ * browser itself already delegates a registered custom scheme to the OS, so the
+ * markdown anchor stays an ordinary link there. Read lazily so a test can stub
+ * `window.fileOpenAPI` per-case.
+ */
+export function canOpenExternalScheme(): boolean {
+  return typeof (window as {
+    fileOpenAPI?: { openExternalScheme?: unknown }
+  }).fileOpenAPI?.openExternalScheme === 'function'
+}
+
+/**
+ * Hand an editor-scheme deep link to the desktop shell to open in the OS
+ * registered handler (via shell.openExternal in the main process).
+ *
+ * Distinct from `openFileInEditor` on purpose: this takes a URL, never a
+ * filesystem path, and the main process re-validates the scheme against its own
+ * editor allowlist (ALLOWED_EXTERNAL_SCHEMES) before launching — the frontend
+ * `ALLOWED_PROTOCOLS` check in urlTransform is a UX gate, not the trust
+ * boundary. It is deliberately a SEPARATE channel from the `window.open`
+ * handler (external-scheme.js `classifyNavigation`), which untrusted
+ * widget/artifact iframes can reach and which therefore still blocks every
+ * non-web scheme: this preload bridge is unreachable from a sandboxed iframe.
+ *
+ * Resolves the main process's { ok, error? }, or { ok: false, error:
+ * 'unavailable' } when no bridge is present, so a plain-browser caller gets a
+ * definite negative rather than a thrown error.
+ */
+export async function openExternalScheme(
+  url: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const api = (window as {
+    fileOpenAPI?: { openExternalScheme?: (u: string) => Promise<{ ok: boolean; error?: string }> }
+  }).fileOpenAPI
+  if (typeof api?.openExternalScheme !== 'function') return { ok: false, error: 'unavailable' }
+  try {
+    return await api.openExternalScheme(url)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
 /**
  * Width reserved on the right for the Windows titleBarOverlay caption buttons
  * (minimize/maximize/close). The overlay is 138px wide at default DPI on

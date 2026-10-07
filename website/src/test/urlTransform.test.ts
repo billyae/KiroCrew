@@ -17,6 +17,33 @@ describe('urlTransform', () => {
     expect(urlTransform(url)).toBe(url)
   })
 
+  it('allows idea:// editor deep link (issue #3218)', () => {
+    const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
+    expect(urlTransform(url)).toBe(url)
+  })
+
+  it('allows cursor:// editor deep link (issue #3218)', () => {
+    const url = 'cursor://file/home/user/project/src/main.py:42'
+    expect(urlTransform(url)).toBe(url)
+  })
+
+  it('rejects bare idea://', () => {
+    expect(urlTransform('idea://')).toBe('')
+  })
+
+  it('rejects bare cursor://', () => {
+    expect(urlTransform('cursor://')).toBe('')
+  })
+
+  // A lookalike scheme that merely begins with an allowed name must NOT be
+  // admitted — the allowlist is matched on the exact parsed protocol, so
+  // `idea-attacker:` and `cursorx:` fall through to the strict default.
+  it('rejects a lookalike scheme that only prefixes an allowed one', () => {
+    expect(urlTransform('idea-attacker://open?file=x')).toBe('')
+    expect(urlTransform('cursorx://open?file=x')).toBe('')
+    expect(urlTransform('notvscode://file/x')).toBe('')
+  })
+
   it('preserves vscode URL with query params', () => {
     const url = 'vscode://vscode-remote/ssh-remote+host/path?windowId=1'
     expect(urlTransform(url)).toBe(url)

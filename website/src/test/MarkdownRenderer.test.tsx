@@ -200,6 +200,74 @@ describe('MarkdownRenderer XSS sanitization', () => {
       expect(a).not.toBeNull()
       expect(a!.getAttribute('href')).toBe(url)
     })
+
+    it('control: an idea:// link keeps its anchor and href (issue #3218)', () => {
+      const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
+      const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')
+      expect(a).not.toBeNull()
+      expect(a!.getAttribute('href')).toBe(url)
+    })
+
+    it('control: a cursor:// link keeps its anchor and href (issue #3218)', () => {
+      const url = 'cursor://file/home/user/project/src/main.py:42'
+      const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')
+      expect(a).not.toBeNull()
+      expect(a!.getAttribute('href')).toBe(url)
+    })
+  })
+
+  // Editor-scheme deep links route a USER CLICK to the desktop shell's
+  // openExternalScheme preload bridge (issue #3218), because the in-frame
+  // navigation such a scheme would otherwise attempt is refused by the
+  // dashboard CSP. In a plain browser the bridge is absent and the anchor's
+  // default is left alone so the browser delegates to the OS itself.
+  describe('editor-scheme deep links (idea/vscode/cursor) — click routing', () => {
+    afterEach(() => {
+      delete (window as { fileOpenAPI?: unknown }).fileOpenAPI
+    })
+
+    it('routes a plain click through fileOpenAPI.openExternalScheme in the desktop shell', () => {
+      const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
+      const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
+      ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+      const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')!
+      const ev = fireEvent.click(a)
+      // The in-frame navigation is suppressed; the bridge receives the URL.
+      expect(ev).toBe(false) // preventDefault was called
+      expect(openExternalScheme).toHaveBeenCalledWith(url)
+    })
+
+    it('leaves the anchor default alone in a plain browser (no bridge)', () => {
+      const url = 'cursor://file/home/user/project/src/main.py:42'
+      const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')!
+      // No window.fileOpenAPI → not intercepted → default not prevented, so the
+      // browser handles the registered scheme itself.
+      const ev = fireEvent.click(a)
+      expect(ev).toBe(true)
+    })
+
+    it('does not intercept a modified (Cmd/Ctrl) click, so a new tab still works', () => {
+      const url = 'vscode://file/home/user/project'
+      const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
+      ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+      const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')!
+      fireEvent.click(a, { metaKey: true })
+      expect(openExternalScheme).not.toHaveBeenCalled()
+    })
+
+    it('does not route a plain https link through the editor bridge', () => {
+      const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
+      ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+      const { container } = render(<MarkdownRenderer content={'[docs](https://example.com/docs)'} />)
+      const a = container.querySelector('a')!
+      fireEvent.click(a)
+      expect(openExternalScheme).not.toHaveBeenCalled()
+    })
   })
 
   it('preserves safe HTML elements like details/summary', () => {

@@ -33,6 +33,7 @@ const SHELL_HANDLES = [
   "browser:track-session",
   "crash-reports:get",
   "crash-reports:reveal",
+  "dashboard:open-external-scheme",
   "dashboard:open-file",
   "global-hotkey:get",
   "local-gateway:get",
@@ -182,6 +183,8 @@ function harness({
   revealThrows = false,
   openPathResult = "",
   openPathThrows = false,
+  openExternalResult = undefined,
+  openExternalThrows = false,
   // Called synchronously INSIDE the openPath mock, so a test can observe
   // process state that only holds for the duration of the native launch (the
   // narrowed launcher PATH openPathHardened installs and then restores).
@@ -258,6 +261,11 @@ function harness({
         if (onOpenPath) onOpenPath();
         if (openPathThrows) throw new Error("shell.openPath blew up");
         return openPathResult;
+      },
+      openExternal: async (...args) => {
+        shellCalls.push(["openExternal", ...args]);
+        if (openExternalThrows) throw new Error("shell.openExternal blew up");
+        return openExternalResult;
       },
     },
     webContents: { getAllWebContents: () => [liveContents, destroyedContents] },
@@ -454,13 +462,13 @@ test("registerShell owns the exact shell channel set and is idempotent", () => {
 
   assert.deepEqual([...h.handlers.keys()].sort(), SHELL_HANDLES);
   assert.deepEqual([...h.listeners.keys()].sort(), SHELL_LISTENERS);
-  assert.equal(h.handlers.size + h.listeners.size, 36);
+  assert.equal(h.handlers.size + h.listeners.size, 37);
 
   // boot-complete is a further non-update host channel, but it is deliberately
   // gateway-owned and scoped to a single connecting WebContents. Registering it
   // globally here would weaken its sender check and leak listeners.
   assert.match(GATEWAY_SOURCE, /ipcMain\.on\("boot-complete", onComplete\)/);
-  assert.equal(h.handlers.size + h.listeners.size + 1, 37);
+  assert.equal(h.handlers.size + h.listeners.size + 1, 38);
   assert.equal(h.handlers.has("boot-complete"), false);
   assert.equal(h.listeners.has("boot-complete"), false);
 
@@ -1032,6 +1040,90 @@ test("dashboard:open-file hardens the launcher PATH across the native launch", a
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+test("dashboard:open-external-scheme routes through the shared local-dashboard gate", async () => {
+  // Gate 1 rejection (wrong origin) must fire before any shell work: this is a
+  // LAUNCH on the local machine (shell.openExternal hands the URL to the OS
+  // scheme handler), the same hazard dashboard:open-file guards, so a remote
+  // renderer must never reach it.
+  const h = harness();
+  h.registrar.registerShell();
+  await assert.rejects(
+    () => h.handlers.get("dashboard:open-external-scheme")(
+      wslEvent("https://remote.example/chat"),
+      "vscode://file/home/user/project",
+    ),
+    (error) => {
+      assert.equal(
+        error && error.message,
+        "dashboard:open-external-scheme is restricted to the local dashboard",
+      );
+      return true;
+    },
+  );
+  assert.equal(h.shellCalls.length, 0, "a rejected sender must not reach shell.openExternal");
+  assert.equal(
+    h.gatewayCalls.some(([name]) => name === "probePrimaryPortOwner"),
+    false,
+    "an origin rejection must precede the port probe",
+  );
+});
+
+test("dashboard:open-external-scheme opens an allowlisted editor scheme on a user click", async () => {
+  for (const url of [
+    "vscode://file/home/user/project",
+    "vscode-insiders://vscode-remote/ssh-remote+host/path",
+    "idea://open?file=/home/user/project/src/main.py&line=42",
+    "cursor://file/home/user/project/src/main.py:42",
+  ]) {
+    const h = harness();
+    h.registrar.registerShell();
+    const result = await h.handlers.get("dashboard:open-external-scheme")(wslEvent(), url);
+    assert.deepEqual(result, { ok: true }, url);
+    assert.deepEqual(lastCall(h.shellCalls, "openExternal").slice(1), [url], url);
+  }
+});
+
+test("dashboard:open-external-scheme refuses dangerous and non-editor schemes", async () => {
+  // Defence in depth on the launch primitive: even though the renderer already
+  // filtered these, the main process re-validates against its own allowlist on
+  // the parsed protocol. javascript:, file:, an unknown scheme and a bare
+  // scheme are all refused and never reach shell.openExternal.
+  for (const [url, expected] of [
+    ["", { ok: false, error: "no url" }],
+    [123, { ok: false, error: "no url" }],
+    ["javascript:alert(1)", { ok: false, error: "unsupported scheme" }],
+    ["file:///etc/passwd", { ok: false, error: "unsupported scheme" }],
+    ["data:text/html,<script>alert(1)</script>", { ok: false, error: "unsupported scheme" }],
+    ["smb://attacker/share", { ok: false, error: "unsupported scheme" }],
+    ["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", { ok: false, error: "unsupported scheme" }],
+    ["obsidian://open?vault=Notes", { ok: false, error: "unsupported scheme" }],
+    ["https://example.com/", { ok: false, error: "unsupported scheme" }],
+    ["idea-attacker://open?file=x", { ok: false, error: "unsupported scheme" }],
+    ["vscodex://file/x", { ok: false, error: "unsupported scheme" }],
+    ["vscode://", { ok: false, error: "unsupported scheme" }],
+  ]) {
+    const h = harness();
+    h.registrar.registerShell();
+    const result = await h.handlers.get("dashboard:open-external-scheme")(wslEvent(), url);
+    assert.deepEqual(result, expected, JSON.stringify(url));
+    assert.equal(
+      h.shellCalls.some(([name]) => name === "openExternal"),
+      false,
+      `${JSON.stringify(url)}: must not reach shell.openExternal`,
+    );
+  }
+});
+
+test("dashboard:open-external-scheme surfaces an OS failure rather than throwing", async () => {
+  const h = harness({ openExternalThrows: true });
+  h.registrar.registerShell();
+  assert.deepEqual(
+    await h.handlers.get("dashboard:open-external-scheme")(wslEvent(), "vscode://file/x"),
+    { ok: false, error: "shell.openExternal blew up" },
+  );
+  assert.match(h.logs.join("\n"), /dashboard:open-external-scheme failed: shell\.openExternal blew up/);
 });
 
 test("bind and unregister remain owned by the dedicated hotkey helper", () => {

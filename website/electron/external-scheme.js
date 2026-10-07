@@ -63,6 +63,35 @@ const EXTERNAL_URLS = Object.freeze([
 // Web schemes the dashboard itself may navigate to.
 const WEB_SCHEMES = Object.freeze(["http:", "https:"]);
 
+// Editor / IDE deep-link schemes a USER CLICK on a markdown link may hand to the
+// OS (issue #3218). This is a SCHEME allowlist, matched on the parsed protocol —
+// unlike EXTERNAL_URLS, which is a whole-URL allowlist — because an editor deep
+// link carries a user-chosen file path and line (`idea://open?file=…&line=…`),
+// so the host/path cannot be pinned the way the two System Settings panes can.
+//
+// It is used ONLY by `classifyExternalSchemeOpen`, which gates the dedicated,
+// user-gesture-only `dashboard:open-external-scheme` IPC channel. It is
+// deliberately NOT consulted by `classifyNavigation` below: that function gates
+// `setWindowOpenHandler`, which untrusted LLM-authored widget/artifact iframes
+// (sandbox `allow-popups-to-escape-sandbox`) and page-script redirects can
+// reach, so it must keep blocking every non-web scheme. Admitting editor schemes
+// there would let model-generated JS pop `vscode://`/`idea://` targets with no
+// user action — exactly the threat the whole-URL EXTERNAL_URLS rule guards
+// against for the System Settings panes.
+//
+// MUST stay in sync with the frontend `ALLOWED_PROTOCOLS` set
+// (website/src/utils/urlTransform.ts), which decides whether the markdown link
+// renders as a clickable anchor at all. A scheme here but not there is an anchor
+// that is never offered; a scheme there but not here is an anchor that is offered
+// and then refused at the launch. The urlTransform test and this module's test
+// each pin their own copy; the PR body documents the pair.
+const ALLOWED_EXTERNAL_SCHEMES = Object.freeze([
+  "vscode:",
+  "vscode-insiders:",
+  "idea:",
+  "cursor:",
+]);
+
 // Schemes that INHERIT the creating page's origin, so a same-origin check is
 // meaningful for them. `blob:` is the load-bearing case: WidgetFrame's "Open in
 // new tab" builds a wrapper document with URL.createObjectURL and opens it, and
@@ -71,6 +100,38 @@ const WEB_SCHEMES = Object.freeze(["http:", "https:"]);
 // window object); it must never be handed to the OS, which is why these are
 // checked for same-origin only and never appear in EXTERNAL_SCHEMES.
 const ORIGIN_INHERITING_SCHEMES = Object.freeze(["blob:"]);
+
+/**
+ * Whether a URL is an editor deep link this app may hand to the OS on a user
+ * click. The verdict is computed from the PARSED protocol (`new URL(url).protocol`),
+ * never a string prefix: `idea://…` matches, but `idea-attacker:…`,
+ * `notidea://…`, and a URL whose scheme merely begins with `idea` do not. Fails
+ * closed on anything unparseable or absent.
+ *
+ * This is the ONLY gate for the `dashboard:open-external-scheme` channel, and
+ * that channel is reachable only from the trusted top dashboard frame (the
+ * preload bridge is not exposed to sandboxed iframes) and only fires on a user
+ * click (MdAnchor's onClick). The scheme check here is defence in depth on the
+ * launch primitive, mirroring how `dashboard:open-file` re-validates the path.
+ *
+ * @param {string} url the requested target
+ * @returns {boolean} true iff `url` parses and its protocol is allowlisted
+ */
+function classifyExternalSchemeOpen(url) {
+  if (typeof url !== "string" || url === "") return false;
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  // Require content after the scheme so a bare `vscode://` (no payload) is not
+  // forwarded — mirroring the frontend urlTransform guard
+  // (`href.length > protocol.length + '//'.length`), computed on the PARSED href
+  // so trailing whitespace or an empty authority cannot sneak a bare scheme past.
+  if (target.href.length <= target.protocol.length + 2) return false;
+  return ALLOWED_EXTERNAL_SCHEMES.includes(target.protocol);
+}
 
 /**
  * Classify a URL the renderer asked to open.
@@ -208,9 +269,11 @@ function createWindowOpenHandler(deps) {
 
 module.exports = {
   EXTERNAL_URLS,
+  ALLOWED_EXTERNAL_SCHEMES,
   ORIGIN_INHERITING_SCHEMES,
   WEB_SCHEMES,
   classifyNavigation,
+  classifyExternalSchemeOpen,
   createWindowOpenHandler,
   openExternalSafely,
 };

@@ -220,8 +220,19 @@ contextBridge.exposeInMainWorld("wslAPI", {
 // user's own machine. Resolves { ok, error? }. Absent in a plain browser and in
 // the PWA — the renderer treats a missing bridge as "cannot open externally" and
 // hides the control, keeping the built-in viewer as the only path there.
+//
+// `openExternalScheme` is the sibling for an EDITOR DEEP-LINK URL scheme
+// (idea://, vscode://, cursor://) a user clicks in a markdown link (issue #3218).
+// It hands the URL to the main process, which re-validates the scheme against
+// its own editor allowlist before shell.openExternal. It is a SEPARATE channel
+// from the window.open handler (external-scheme.js classifyNavigation), which
+// untrusted iframe content can reach and which still blocks every non-web
+// scheme; this bridge is unreachable from a sandboxed iframe and fires only on a
+// user click. Resolves { ok, error? }.
 contextBridge.exposeInMainWorld("fileOpenAPI", {
   open: (filePath) => ipcRenderer.invoke("dashboard:open-file", String(filePath || "")),
+  openExternalScheme: (url) =>
+    ipcRenderer.invoke("dashboard:open-external-scheme", String(url || "")),
 });
 
 // Native zoom bridge for the Settings > Display "Zoom Level" stepper.

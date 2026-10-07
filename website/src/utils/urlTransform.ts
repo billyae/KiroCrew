@@ -1,8 +1,18 @@
 import { defaultUrlTransform } from 'react-markdown'
 
+// Editor / IDE deep-link schemes a markdown link may navigate to. An EXPLICIT
+// allowlist, never a "not http/https" rule: an agent-authored link controls the
+// scheme, so admitting anything outside this set would hand `javascript:`,
+// `data:`, `file:`, `vbscript:` or an arbitrary attacker-chosen protocol handler
+// to the OS. Every entry here is a registered editor scheme that opens a file at
+// a line (`idea://open?file=…&line=…`, `vscode://file/…`, `cursor://…`) — the
+// targets issue #3218 names — and nothing else. Everything NOT in this set keeps
+// the strict `defaultUrlTransform` sanitizer below, which strips it.
 export const ALLOWED_PROTOCOLS = new Set([
   'vscode:',
   'vscode-insiders:',
+  'idea:',
+  'cursor:',
 ])
 
 /** Windows drive-letter absolute path (`C:/…` or `C:\…`). THE single copy of

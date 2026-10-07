@@ -83,6 +83,7 @@ import {
   type SessionActions,
 } from './markdown/contexts'
 import { artifactSlugFromHref, resolveSessionChip, soleLinkInParagraph, useUnfurlHref } from './markdown/linkTargets'
+import { canOpenExternalScheme, openExternalScheme } from '../lib/electron'
 import { activatePath, usePathResolution } from './markdown/pathReferences'
 import { ELEMENT_OVERRIDES, sp } from './markdown/elements'
 import { InlineCode } from './markdown/InlineCode'
@@ -323,6 +324,30 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   }
   let ext = false
   try { ext = !!href && ALLOWED_PROTOCOLS.has(new URL(href, 'http://x').protocol) } catch { /* not a URL */ }
+  // An editor-scheme deep link (`idea://`, `vscode://`, `cursor://`) — an
+  // ALLOWED_PROTOCOLS match that is NOT a session or in-page `#` link. In the
+  // desktop shell a plain in-frame navigation to such a scheme is refused by the
+  // dashboard's `frame-src` CSP (issue #3218: the window reloads instead of the
+  // editor opening), so a user click is routed through the `openExternalScheme`
+  // preload bridge to shell.openExternal instead. In a plain browser the bridge
+  // is absent and the ordinary anchor already delegates the registered scheme to
+  // the OS, so nothing is intercepted there.
+  let editorScheme = false
+  try { editorScheme = !!href && ALLOWED_PROTOCOLS.has(new URL(href).protocol) } catch { /* not an absolute URL */ }
+  const onEditorSchemeClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // ONLY a plain primary click, and ONLY in the desktop shell. A
+    // modified/non-primary click, or a plain browser (no bridge), keeps the
+    // anchor's default so Cmd/Ctrl-click and the browser's own OS delegation
+    // still work. The hand-off is thus strictly user-gesture gated — it never
+    // fires from script, a redirect, or a synthetic navigation.
+    const plainPrimaryClick = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+    if (!plainPrimaryClick || !href || !canOpenExternalScheme()) return
+    e.preventDefault()
+    // Fire-and-forget: the main process re-validates the scheme against its own
+    // allowlist and swallows any OS failure. A rejected hand-off is cosmetic,
+    // never a reason to disturb the click.
+    void openExternalScheme(href)
+  }
   // A confirmed session link is in-app navigation, so it keeps in-place semantics.
   // So does a `#heading` link: the renderer scrolls to it (see handleClick).
   if (sessionLink || href?.startsWith('#')) ext = true
@@ -339,7 +364,15 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
       // closed or unknown key, a short name no open session answers to, or the
       // active session's own key) is intercepted and declined rather than left to
       // navigate the browser to a dead `?sid=` view (#9914) or a duplicate tab.
-      onClick={sessionHrefNamesSession ? onSessionClick : (pathResolution.candidate ? onPathClick : undefined)}
+      //
+      // An editor-scheme link (idea/vscode/cursor) takes its own user-click
+      // handler, below both of those: it is never a session or path href, so the
+      // populations do not overlap.
+      onClick={sessionHrefNamesSession
+        ? onSessionClick
+        : (editorScheme
+          ? onEditorSchemeClick
+          : (pathResolution.candidate ? onPathClick : undefined))}
       title={sessionLink
         ? `${sessionLink.title}\n${i18nT('components.markdownRenderer.click_to_switch_to_this_session')}`
         : undefined}
