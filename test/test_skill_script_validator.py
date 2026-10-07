@@ -23,6 +23,42 @@ def test_rejects_destructive():
     assert any("rm -rf" in f for f in findings)
 
 
+def test_rejects_dd_output_to_device():
+    ok, findings = validate_skill_script("run.py", "import os\nos.system('dd of=/dev/sda')\n")
+    assert ok is False
+    assert any("dd of=" in f for f in findings)
+    # The Xen root device spelling this project's own EC2 template provisions.
+    ok, findings = validate_skill_script("run.py", "import os\nos.system('dd of=/dev/xvda')\n")
+    assert ok is False
+    assert any("dd of=" in f for f in findings)
+    # Operands before of= and a sudo prefix still deny when the command is run.
+    for src in (
+        "import os\nos.system('dd bs=1M of=/dev/nvme0n1')\n",
+        'import os\nos.system("sudo dd of=/dev/sda")\n',
+    ):
+        ok, findings = validate_skill_script("run.py", src)
+        assert ok is False, src
+        assert any("dd of=" in f for f in findings), (src, findings)
+
+
+def test_allows_dd_of_device_only_documented():
+    """The ``dd of=/dev/`` rule is anchored to a command-start position (line
+    start or an opening quote), like the ``local-destructive-dd-of-device`` deny
+    row. A script that only DOCUMENTS the command -- a docstring, a help string,
+    or a comment that quotes it -- must stay allowed; the script never runs it,
+    and refusing documentation of a rule is exactly the over-match the Security
+    Scope Review flagged on the un-anchored pattern.
+    """
+    for src in (
+        'def flash():\n    """Then flash with: sudo dd of=/dev/sdX bs=4M."""\n    return 1\n',
+        'print("Never run: dd of=/dev/sda")\n',
+        "x = 1  # equivalent to: dd of=/dev/md0\n",
+        'URL = "dd-of-dev-sda-is-blocked"  # DD OF in a slug, not a command\n',
+    ):
+        ok, findings = validate_skill_script("run.py", src)
+        assert ok is True, (src, findings)
+
+
 def test_rejects_rmtree():
     ok, findings = validate_skill_script("run.py", "import shutil\nshutil.rmtree('/data')\n")
     assert ok is False

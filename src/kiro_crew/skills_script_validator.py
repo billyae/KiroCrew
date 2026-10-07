@@ -28,6 +28,22 @@ _DESTRUCTIVE = [
     (re.compile(r"\brmdir\b\s+/", re.I), "destructive: rmdir on root path"),
     (re.compile(r"\bmkfs\b", re.I), "destructive: mkfs"),
     (re.compile(r"\bdd\s+if=", re.I), "destructive: dd if="),
+    # Anchored to a command-start position -- the line start or an opening
+    # string quote -- the way the ``local-destructive-dd-of-device`` deny row
+    # anchors ``^(sudo\s+)?dd``. Without the anchor the bare ``\bdd\s+.*of=``
+    # search matched the command quoted inside prose: a docstring or ``print``
+    # that tells the user "run: sudo dd of=/dev/sdX", or a ``# dd of=/dev/md0``
+    # comment, was refused even though the script never runs it. Requiring the
+    # ``dd`` token to open a line or a quoted string refuses an executed command
+    # (``os.system("dd of=/dev/sda")``) while leaving documentation of it alone.
+    (
+        re.compile(
+            r"""(?:^|["'`])\s*(?:sudo\s+)?dd\s+[^"'`\n]*of\s*=\s*/dev/"""
+            r"(sd|xvd|hd|vd|nvme|mmcblk|loop|dm-|md|dasd|disk/)",
+            re.I | re.M,
+        ),
+        "destructive: dd of=/dev/",
+    ),
     (re.compile(r">\s*/dev/sd", re.I), "destructive: write to block device"),
     (re.compile(r"\bDROP\s+(TABLE|DATABASE)\b", re.I), "destructive: SQL DROP"),
     (re.compile(r"\bTRUNCATE\s+TABLE\b", re.I), "destructive: SQL TRUNCATE"),
