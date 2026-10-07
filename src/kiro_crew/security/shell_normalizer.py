@@ -2918,8 +2918,532 @@ def _split_shell_words(segment: str) -> list[str]:
     return words
 
 
-# The product name as a WHOLE program name (bare or the tail of a path), which is
-# what distinguishes ``bin/kirocrew token`` from ``cd kirocrew-wt-x``.
+# Git global flags that consume a separate argument token (they appear between
+# ``git`` and the subcommand). Shared by the opaque-preverb detector below and
+# by ``argv_floor._is_git_push_via_normalizer``'s subcommand seek. These are the
+# git global options that take a SEPARATE value word; a value given with ``=``
+# (``--git-dir=/x``) is self-contained and is matched by the ``=`` check in the
+# seek, not by membership here. The whole set is listed, not just ``-c``/``-C``,
+# so an option's value word is never mistaken for the subcommand.
+_GIT_ARG_FLAGS = frozenset(
+    {
+        "-c",
+        "-C",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--config-env",
+        "--attr-source",
+        "--super-prefix",
+    }
+)
+
+
+def _resolves_to_git(token: str) -> bool:
+    """True when *token* in command-word position names the git program.
+
+    Resolves the token through :func:`_shell_tokens` — the module's own argv
+    tokenizer — so EVERY spelling bash hands to exec as ``git`` is recognised:
+    the bare word, a path whose basename is ``git`` (``/usr/bin/git``), quoted
+    forms (``'git'`` / ``"git"``), empty-string concatenation (``g""it``), and
+    ANSI-C / locale quoting anywhere in the word (``$'git'``, ``g$'it'``,
+    ``$"git"``). Hand-rolled dequoting missed the embedded-ANSI-C case
+    (``g$'it'`` read as ``g$it``); the tokenizer does not. A program-position
+    EXPANSION (``$GIT``, ``${GIT}``, ``$(echo git)``) does NOT resolve to git
+    here — ``_shell_tokens`` performs no variable or command-substitution
+    expansion — which is correct: that case is the publish floor's
+    substitution-program regex's job, not this literal check.
+    """
+    tokens = _shell_tokens(_cut_at_operator(token))
+    if not tokens:
+        return False
+    resolved = tokens[0]
+    return resolved == "git" or os.path.basename(resolved) == "git"
+
+
+def _word_lexes_empty(word: str) -> bool:
+    """True when *word* resolves to NO characters -- a quoted or ANSI-C empty
+    string (``""``, ``''``, ``$''``, ``""''``). Such a word definitively expands
+    to zero words, so bash removes it; it is distinct from a variable-arity
+    expansion like ``$@`` (which lexes to ``$@`` and may expand to many words).
+    A quote delimiter is not content; a whitespace-only quoted word (``" "``) is
+    NOT empty -- it is a real operand.
+    """
+    for step in _iter_shell_chars(word):
+        if step.trailing_escape:
+            return False  # a fragment is not a clean empty
+        if step.char in "'\"":
+            continue  # a quote delimiter (opening or closing) is not content
+        if step.char.strip():
+            return False  # a significant (non-whitespace) character
+    return True
+
+
+def _resolves_to_publish_subcommand(token: str) -> bool:
+    """True when *token* in subcommand position resolves to a publish subcommand
+    (``push``). Resolved through :func:`_shell_tokens`, the module's own argv
+    tokenizer, so every spelling bash hands to git is recognised -- the bare
+    word, quoted (``'push'`` / ``"push"``), concatenated (``pu""sh``) and ANSI-C
+    (``$'push'``, ``p$'ush'``). A plain string compare missed ``$'push'``, which
+    bash runs as ``push``.
+    """
+    tokens = _shell_tokens(_cut_at_operator(token))
+    return bool(tokens) and tokens[0] in _PUBLISH_SUBCOMMANDS
+
+
+#: Command-position PREFIX keywords that run the word AFTER them (and their own
+#: options, incl a ``--`` terminator) as the program (``time git ...``, ``exec
+#: git ...``, ``command -- git ...``, ``nice -n 5 git ...``). The real git
+#: command word sits past the keyword and its options, which the plain path can
+#: misread, so a keyword running git makes the position unverifiable.
+_UNMODELLED_PREFIX_KEYWORDS = frozenset(
+    {"time", "exec", "eval", "command", "env", "builtin", "nice", "nohup"}
+)
+
+#: Lookup options for ``command``/``builtin`` that do NOT execute their argument
+#: (``command -v git`` resolves a path, it does not run git), so a git word after
+#: one is not an executing-prefix case.
+_COMMAND_LOOKUP_FLAGS = frozenset({"-v", "-V"})
+
+#: The git subcommands this floor gates as a publish. The git-publish gate is
+#: push-specific; other spellings are handled by passes 1-2.
+_PUBLISH_SUBCOMMANDS = frozenset({"push"})
+
+#: A leading assignment prefix in command position: ``NAME=...`` or the append
+#: form ``NAME+=...``. Broader than the shared trust matcher ``ENV_ASSIGNMENT_RE``
+#: (which rejects ``+=``) only for THIS command-position walk, so an append
+#: assignment does not get read as the command word. The value is not inspected
+#: here -- :func:`_consume_substitution_span` carries a substitution value whole.
+_ASSIGN_PREFIX_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+
+def _git_segment_has_opaque_preverb(segment: str) -> bool:
+    """Fail-safe: deny a git invocation whose SUBCOMMAND POSITION cannot be
+    verified as a plain publish. Narrowly scoped so ordinary git usage is
+    untouched.
+
+    1. The segment is split into background groups only on a STANDALONE ``&``
+       word at span depth zero. A ``&`` glued into a word (``ok&git``) or inside
+       a ``$(...)``/backtick/quote span is NOT a boundary -- the glued word is
+       judged whole and counts as non-plain in step 3. ``;``/``&&``/``||``/
+       newline are handled by the upstream segment splitter.
+    2. In a group, walk the command-position prefix (leading assignments,
+       redirections, grouping and command-position reserved words) to the
+       command word, consuming any ``$(...)``/backtick/quote span torn across
+       words. A prefix keyword (``time``/``exec``/``eval``/``command``/``env``/
+       ``builtin``) is transparent -- the walk continues from the word it runs,
+       so the real git subcommand is judged (``eval git status`` -> ``status``).
+    3. If the command word resolves to ``git`` (:func:`_resolves_to_git`), walk
+       to the first PLAIN non-option word (the candidate subcommand), skipping an
+       option and its value only when BOTH are plain literals. If ANY word in
+       that prefix is non-plain (:func:`_prefix_word_is_nonplain` -- any ``$``
+       expansion quoted or not, a redirection, a glob, or a word with a glued
+       ``&``/``;``/backtick) AND a publish subcommand word (``push``) appears
+       anywhere later in the group, the subcommand position is unverifiable
+       (a vanishing or re-splitting prefix word can shift ``push`` into it) ->
+       deny; the exact shift is not computed. A fully PLAIN prefix is read
+       precisely: the real subcommand decides (``git -C /abs stash push`` allows,
+       ``git -C . push`` denies). The accepted fail-safe cost is that an
+       expansion in the prefix plus a later ``push`` denies (``git -C $R stash
+       push``); the deny message says to cd into the repo or use a literal path.
+
+    A deny here means the push target is unverifiable, the fail-safe direction.
+    A git publish NESTED in a substitution span (``cat <(git push origin main)``)
+    is already caught upstream -- passes 1-2 read every ``$(...)``/``<(...)`` body
+    and run the publish detector on it -- so it is not re-checked here.
+    """
+    # Split into background groups only on a STANDALONE ``&`` word, and only at
+    # span depth zero -- a ``&`` glued inside a word (``ok&git``) or inside a
+    # ``$(...)``/backtick/quote span is NOT a command boundary (a glued word is
+    # judged whole and counts as non-plain in the prefix rule). ``;``/``&&``/
+    # ``||``/newline were already handled by the upstream segment splitter.
+    words = _split_shell_words(segment)
+    group: list[str] = []
+    depth = 0
+    state = 0
+    ansi = False
+    backtick = False
+
+    def _advance(w: str) -> None:
+        nonlocal depth, state, ansi, backtick
+        walk = _shell_quote_walk(w, state=state, ansi=ansi)
+        depth += walk.paren_delta
+        state, ansi = walk.end_state, walk.end_ansi
+        for step in _iter_shell_chars(w):
+            if step.active and step.char == "`":
+                backtick = not backtick
+
+    git_at_command_pos = False
+    for word in words:
+        in_span = depth > 0 or state != 0 or backtick
+        if not in_span and word == "&":  # standalone background op -> boundary
+            if _group_is_unverifiable_git_push(group):
+                return True
+            git_at_command_pos = git_at_command_pos or _group_command_word_is_git(group)
+            group = []
+            _advance(word)
+            continue
+        group.append(word)
+        _advance(word)
+    if _group_is_unverifiable_git_push(group):
+        return True
+    git_at_command_pos = git_at_command_pos or _group_command_word_is_git(group)
+
+    # (BACKSTOP) A parse we do not cleanly model: if ``git`` appears as a word
+    # that is NOT the command word of any group (so a splitter miscount, a
+    # process-substitution the span walk mis-sized, ``&&``/``|`` list parts we
+    # don't walk, ...) AND a publish word appears anywhere in the segment, a
+    # protected push may run unverified -> deny. ``git`` cleanly parsed as a
+    # group's command word (with a non-publish subcommand) does NOT trip this.
+    if not git_at_command_pos:
+        git_word = re.compile(r"(?:^|[^0-9a-z_-])git(?:$|[^0-9a-z_-])")
+        if any(_resolves_to_git(w) for w in words) or git_word.search(segment):
+            if any(_resolves_to_publish_subcommand(w) for w in words):
+                return True
+    return False
+
+
+def _group_command_word_is_git(words: "list[str]") -> bool:
+    """True when *words* (one background group) cleanly resolves its command word
+    to git -- i.e. the prefix walk reaches a word that :func:`_resolves_to_git`.
+    Used by the backstop to tell a git CLEANLY parsed as a command (handled by
+    the group check) from a git buried in a parse the splitter did not model.
+    """
+    i = 0
+    n = len(words)
+    while i < n:
+        word = words[i]
+        if not word.strip() or _word_lexes_empty(word):
+            i += 1
+            continue
+        is_redirection, consumes_next = _push_token_redirection(word)
+        if is_redirection:
+            first = i
+            i += 1
+            if consumes_next and i < n:
+                i += 1
+            i = _consume_substitution_span(words, first, i)
+            continue
+        if ENV_ASSIGNMENT_RE.match(word) or _ASSIGN_PREFIX_RE.match(word):
+            i = _consume_substitution_span(words, i, i + 1)
+            continue
+        bare = _dequote_token(_cut_at_operator(word)).strip("(){}")
+        if not bare or bare in _KEEPS_COMMAND_POSITION or bare in _UNMODELLED_PREFIX_KEYWORDS:
+            i += 1
+            continue
+        return _resolves_to_git(word)
+    return False
+
+
+def _consume_substitution_span(words: list[str], start: int, end: int) -> int:
+    """Advance past a command-substitution/quote span that the word split tore
+    across words. *start*..*end* are the words consumed so far (an assignment
+    value or a redirection target); if they leave an unclosed ``$(...)`` /
+    `` `...` `` / quote, consume following words until it closes. Returns the new
+    index. The shared quote-aware walk proves the ``$(...)``/quote boundary; a
+    backtick span is followed by parity, since the walk does not track it.
+    Nothing is executed.
+    """
+    depth = 0
+    state = 0
+    ansi = False
+    backtick = False
+
+    def _apply(w: str) -> None:
+        nonlocal depth, state, ansi, backtick
+        walk = _shell_quote_walk(w, state=state, ansi=ansi)
+        depth += walk.paren_delta
+        state, ansi = walk.end_state, walk.end_ansi
+        for step in _iter_shell_chars(w):
+            if step.active and step.char == "`":
+                backtick = not backtick
+
+    for w in words[start:end]:
+        _apply(w)
+    i = end
+    while i < len(words) and (depth > 0 or state != 0 or backtick):
+        _apply(words[i])
+        i += 1
+    return i
+
+
+def _group_is_unverifiable_git_push(words: list[str]) -> bool:
+    """The per-group core of :func:`_git_segment_has_opaque_preverb`: *words* is
+    one command's word list (already split off at any standalone ``&``)."""
+    n = len(words)
+    # A word that GLUES a command operator (``&``/``;``/``|``) to text
+    # (``ok&git``, ``a;git``, ``x|git``) hides a command boundary the whitespace
+    # splitter did not break on. Re-split the whole group at every glued OR
+    # standalone ``&``/``;``/``|`` into sub-groups and judge each as its own
+    # command, so a git invocation hiding after such an operator (``x&git $@
+    # push``) is checked at its true command position. The glued word also stays
+    # non-plain for the prefix rule below.
+    if any(_word_has_glued_command_operator(w) for w in words) or any(
+        _word_has_glued_pipe(w) for w in words
+    ):
+        subgroup: list[str] = []
+        for w in words:
+            parts = re.split(r"[&;|]+", _dequote_token(w))
+            for p_idx, part in enumerate(parts):
+                if p_idx > 0:  # an operator preceded this part -> boundary
+                    if subgroup and _group_is_unverifiable_git_push(subgroup):
+                        return True
+                    subgroup = []
+                if part:
+                    subgroup.append(part)
+        if subgroup and _group_is_unverifiable_git_push(subgroup):
+            return True
+    # (2) Walk to the command word, consuming spans torn across words.
+    i = 0
+    while i < n:
+        word = words[i]
+        if not word.strip():
+            i += 1
+            continue
+        is_redirection, consumes_next = _push_token_redirection(word)
+        if is_redirection:
+            first = i
+            i += 1
+            if consumes_next and i < n:
+                i += 1
+            i = _consume_substitution_span(words, first, i)
+            continue
+        if ENV_ASSIGNMENT_RE.match(word) or _ASSIGN_PREFIX_RE.match(word):
+            i = _consume_substitution_span(words, i, i + 1)
+            continue
+        bare = _dequote_token(_cut_at_operator(word)).strip("(){}")
+        if not bare:
+            i += 1  # lone grouping operator
+            continue
+        if bare in _UNMODELLED_PREFIX_KEYWORDS:
+            # A transparent prefix keyword runs a later word as the program. Skip
+            # the keyword and its own options -- including a ``--`` terminator and
+            # ``env`` assignments -- to the program, then re-evaluate it (so
+            # ``command -- git ...`` and ``nice -n 5 git ...`` reach git). A
+            # ``command``/``builtin`` LOOKUP flag (``-v``/``-V``) does not execute
+            # its argument, so a git word after it is left alone. A non-plain
+            # option word (``$(x)`` as an option/value) is itself unverifiable.
+            is_lookup = False
+            j = i + 1
+            while j < n and not words[j].strip():
+                j += 1
+            while j < n:
+                opt = _dequote_token(_cut_at_operator(words[j]))
+                if bare in ("command", "builtin") and opt in _COMMAND_LOOKUP_FLAGS:
+                    is_lookup = True
+                    break
+                if opt == "--":
+                    j += 1  # option terminator; the program follows
+                    break
+                if opt.startswith("-"):
+                    j += 1  # a runner option (its value, if any, follows)
+                elif bare == "env" and _ASSIGN_PREFIX_RE.match(words[j]):
+                    j += 1  # an ``env`` assignment, not the program
+                else:
+                    break  # the program word
+                while j < n and not words[j].strip():
+                    j += 1
+            if is_lookup:
+                i += 1  # treat the keyword itself as the command word (a lookup)
+                break
+            # The program a runner keyword executes is at ``j``; but a runner may
+            # take option VALUES this walk does not model (``nice -n 5 git ...``
+            # -- ``5`` is ``-n``'s value, not the program). Rather than model each
+            # keyword's option arities, if ``j`` is not git, seek the first later
+            # word that resolves to git within this (already ``&``-split) group;
+            # the main walk then judges that git's subcommand. If none, ``k``
+            # reaches ``n`` and the loop ends -- advance ``i`` to ``k`` so the
+            # suffix is scanned once per group, not once per wrapper word (a run
+            # of wrapper keywords stays linear, not quadratic).
+            if j < n and _resolves_to_git(words[j]):
+                i = j
+            else:
+                k = j
+                while k < n and not _resolves_to_git(words[k]):
+                    k += 1
+                i = k
+            continue
+        if bare in _KEEPS_COMMAND_POSITION:
+            i += 1
+            continue
+        break  # command word
+    if i >= n or not _resolves_to_git(words[i]):
+        return False  # not a git command -- not this pass's concern
+
+    # (3) Walk from git to the first PLAIN non-option word (the subcommand). If
+    # ANY word up to and INCLUDING the subcommand position is non-plain under the
+    # allowlist (an expansion quoted or not, a redirection, a glob, a glued
+    # ``&``/``;``, a brace, ...), DENY -- an expansion can become any subcommand,
+    # so the position is unverifiable and the exact shift is not worth computing.
+    # A word that lexes to nothing is skipped (it cannot shift the subcommand). A
+    # fully PLAIN prefix is read precisely: skip an option and a PLAIN value, and
+    # the real subcommand decides. The accepted fail-safe cost is that an
+    # expansion in the prefix denies even without a later ``push`` word
+    # (``git -C $R log``); the deny message says to cd in or use a literal path.
+    i += 1  # past git
+    while i < n:
+        word = words[i]
+        if not word.strip():
+            i += 1
+            continue
+        if _word_lexes_empty(word):
+            i += 1  # ``""``/``''`` expands to zero words; cannot shift
+            continue
+        if _push_token_redirection(word)[0]:
+            return True  # a redirection the shell removes -> unverifiable
+        if _prefix_word_is_nonplain(word):
+            return True  # non-plain word up to/including the subcommand
+        cut = _dequote_token(_cut_at_operator(word))
+        if cut in _GIT_ARG_FLAGS:
+            i += 1  # value-taking global option; its value follows
+            if i < n and words[i].strip():
+                value = words[i]
+                if _is_fixed_single_param_value(value):
+                    i += 1  # ``"$VAR"`` is one fixed word -- cannot shift
+                    continue
+                if _push_token_redirection(value)[0] or _prefix_word_is_nonplain(value):
+                    return True  # a non-plain value can shift the subcommand
+                i += 1
+            continue
+        if cut.startswith("-"):
+            i += 1  # a plain global flag (boolean, or ``--opt=value``)
+            continue
+        # First plain non-option word: the subcommand. Publish -> deny.
+        return _resolves_to_publish_subcommand(cut)
+    return False  # git with no subcommand -- not a publish
+
+
+#: The ONLY characters a plain prefix/subcommand word may contain. A word is
+#: plain only if, after lexing, every character is active (unquoted, unescaped)
+#: and in this set. Everything else -- ``{ } $ ` * ? [ ] ( ) < > & ; | ! ~ \``,
+#: any quote, any ANSI-C or escape -- makes the word non-plain, so new shell
+#: syntax cannot slip through by not being on a denylist. Chosen to admit
+#: ordinary literal operands: identifiers, flags, paths, ``k=v``, refspecs
+#: (``origin/main``), emails/URLs fragments (``@`` ``:`` ``%`` ``+``), and the
+#: comma git itself uses, while excluding every character the shell acts on.
+_PLAIN_WORD_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:=@%+,-"
+)
+
+
+def _is_fixed_single_param_value(word: str) -> bool:
+    """True when *word* is a DOUBLE-QUOTED single-parameter expansion -- ``"$VAR"``
+    or ``"${VAR}"`` -- used as a global-option VALUE. Double quotes suppress word
+    splitting and globbing, and a single scalar parameter expands to EXACTLY one
+    word, so such a value occupies one fixed slot and cannot shift the subcommand
+    -- it is plain in the value position. An array/positional expansion (``"$@"``
+    / ``"$*"``) can expand to zero or many words, an UNQUOTED ``$VAR`` can split
+    or vanish, and a command substitution (``"$(...)"``) is unverifiable, so none
+    of those qualify. Checked structurally on the lexer: the word must be exactly
+    one active ``"`` quote span whose content is a single ``$NAME`` / ``${NAME}``
+    reference with no ``@``/``*``/``(`` and no second expansion.
+    """
+    s = word.strip()
+    m = re.fullmatch(r'"\$(\w+)"', s) or re.fullmatch(r'"\$\{(\w+)\}"', s)
+    return m is not None
+
+
+def _prefix_word_is_nonplain(word: str) -> bool:
+    """True when *word*, in a git command's option prefix, is NOT a plain literal
+    -- an ALLOWLIST test, so unmodelled shell syntax fails safe. *word* is plain
+    only if, after lexing, every character is active (unquoted and unescaped) and
+    in :data:`_PLAIN_WORD_CHARS`. Any quote, escape, ANSI-C, expansion
+    (``$``/backtick), glob (``*?[``), brace expansion (``{}``), subshell
+    (``()``), redirection (``<>``), command operator (``&;|``), ``!`` or ``~``
+    makes it non-plain. A non-plain word in the prefix can vanish, re-split or
+    expand at run time and shift the subcommand, so it is treated as
+    unverifiable.
+    """
+    saw_char = False
+    for step in _iter_shell_chars(word):
+        saw_char = True
+        if step.trailing_escape:
+            return True  # fragment / escaped boundary
+        if step.text != step.char:
+            return True  # a backslash escape pair -- ``\`` was used
+        if step.char in "'\"":
+            continue  # a quote DELIMITER is stripped by lexing, not content
+        if step.active:
+            if step.char not in _PLAIN_WORD_CHARS:
+                return True  # an UNQUOTED meta character ($ ` * ? [ { ( < & ; |)
+            continue
+        # Quoted CONTENT: an unescaped ``$`` / backtick inside DOUBLE quotes
+        # still expands, so it is meta; any other character is a literal, which
+        # is plain only if it is in the allowlist (a space or glob char inside
+        # quotes is a real non-allowlist operand -> non-plain).
+        if step.state == 2 and step.char in "$`":
+            return True
+        if step.char not in _PLAIN_WORD_CHARS:
+            return True
+    return not saw_char  # an empty word is not a plain literal
+
+
+def _word_has_glued_pipe(word: str) -> bool:
+    """True when *word* has an UNQUOTED ``|`` GLUED to following text (``x|git``),
+    hiding a pipeline command boundary the whitespace splitter did not break on.
+    ``||`` is a control operator and does not count. Read from the lexer's own
+    escape-resolved step stream, like :func:`_word_has_glued_command_operator`.
+    """
+    steps = list(_iter_shell_chars(word))
+    for idx, step in enumerate(steps):
+        if not step.active or step.char != "|":
+            continue
+        prev_pipe = idx > 0 and steps[idx - 1].active and steps[idx - 1].char == "|"
+        nxt = steps[idx + 1] if idx + 1 < len(steps) else None
+        next_pipe = nxt is not None and nxt.active and nxt.char == "|"
+        if prev_pipe or next_pipe:
+            continue  # ``||`` control operator
+        if nxt is not None and not (nxt.active and nxt.char in "&;|<>"):
+            return True  # non-operator text follows -> a glued pipeline boundary
+    return False
+
+
+def _word_has_glued_command_operator(word: str) -> bool:
+    """True when *word* has an UNQUOTED ``&`` or ``;`` command operator GLUED to
+    other text (``ok&git``, ``a;git``), hiding a command boundary the whitespace
+    splitter did not break on. A standalone operator word (``&``/``;``) is not
+    glued and returns False -- the splitter already handles it. ``&&``/``||`` are
+    control operators, and a redirection ``&`` (``>&``/``2>&1``) is not a command
+    boundary, so neither counts. An ESCAPED ``\\&`` / ``\\;`` is a literal (the
+    lexer marks it inactive) and never a separator.
+
+    Neighbours are read from the lexer's OWN step stream by index, never from
+    reconstructed source text indexed by ``offset`` -- the step chars are already
+    escape-resolved, so an escape that contracts the source cannot shift a lookup
+    off the end (which would raise) nor make ``\\&&`` read as ``&&``.
+    """
+    steps = list(_iter_shell_chars(word))
+    for idx, step in enumerate(steps):
+        if not step.active or step.char not in "&;":
+            continue
+
+        def _adj(k: int) -> str:
+            # The adjacent step's char when it is an ACTIVE operator-class
+            # character; otherwise "" (an inactive/escaped or ordinary char is
+            # not an operator neighbour).
+            if 0 <= k < len(steps):
+                s = steps[k]
+                if s.active and s.char in "&;|<>":
+                    return s.char
+            return ""
+
+        prev_ch = _adj(idx - 1)
+        next_ch = _adj(idx + 1)
+        if step.char == "&" and (prev_ch == "&" or next_ch == "&"):
+            continue  # ``&&`` control operator
+        if step.char == "&" and (prev_ch in ("<", ">") or next_ch in ("<", ">")):
+            continue  # redirection fd-dup (``>&``, ``&>``, ``2>&1``)
+        if step.char == ";" and (prev_ch == ";" or next_ch == ";"):
+            continue  # ``;;`` case terminator
+        # Glued only when non-operator text FOLLOWS the operator (``&git``,
+        # ``a;git`` hide a following command). A trailing operator (``push;``,
+        # ``ok&``) is just a separator the segment splitter already handles: the
+        # next step is absent or an operator, so it does NOT count.
+        nxt = steps[idx + 1] if idx + 1 < len(steps) else None
+        if nxt is not None and not (nxt.active and nxt.char in "&;|<>"):
+            return True
+    return False
 
 
 def _is_self_program(token: str) -> bool:
