@@ -7522,7 +7522,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Clique para mostrar esta pasta na barra lateral",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "A cópia falhou. Ctrl/Cmd+clique copia o caminho da pasta {{label}}.",
       "couldnt_copy_the_image_path": "Não foi possível copiar o caminho da imagem",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "A cópia falhou. Ctrl/Cmd+clique copia o caminho {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "A cópia falhou. Ctrl/Cmd+clique copia o caminho {{label}}.",
+      "opens_in_editor_app": "Abre no {{app}}",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "seu editor",
+      "open_editor_failed_no_app": "Nenhum aplicativo neste computador abre links {{app}}. Instale o {{app}} ou copie o link para abri-lo de outra forma.",
+      "open_editor_failed_generic": "Não foi possível abrir o link no {{app}}. Verifique se o {{app}} está instalado."
     },
     "markdownToc": {
       "contents": "Conteúdo",
@@ -15582,7 +15590,9 @@
         "message_font_size_desc": "Tamanho da fonte da conversa, em todas as sessões: texto das mensagens, código, tabelas, respostas sugeridas e o campo de entrada de mensagens. A largura de conteúdo compacta cresce na mesma proporção. A barra lateral, a lista de sessões e o restante da interface não são afetados.",
         "remove_the_agents_pin": "Remover a fixação",
         "failed_to_clear_agent_model_pin": "Não foi possível remover o modelo fixado do agente ({{error}}). Tente novamente.",
-        "failed_to_clear_agent_model_pin_no_reason": "Não foi possível remover o modelo fixado do agente. Tente novamente."
+        "failed_to_clear_agent_model_pin_no_reason": "Não foi possível remover o modelo fixado do agente. Tente novamente.",
+        "open_editor_links": "Abrir links de editor de código no seu editor",
+        "open_editor_links_desc": "Clicar em um link do IntelliJ IDEA, VS Code ou Cursor em uma mensagem abre esse arquivo no editor."
       },
       "computerUsePanel": {
         "accessibility": "Acessibilidade",

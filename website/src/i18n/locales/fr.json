@@ -7522,7 +7522,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Cliquer pour afficher ce dossier dans la barre latérale",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "La copie a échoué. Ctrl/Cmd+clic copie le chemin du dossier {{label}}.",
       "couldnt_copy_the_image_path": "Impossible de copier le chemin de l’image",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "La copie a échoué. Ctrl/Cmd+clic copie le chemin {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "La copie a échoué. Ctrl/Cmd+clic copie le chemin {{label}}.",
+      "opens_in_editor_app": "Ouvre dans {{app}}",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "ton éditeur",
+      "open_editor_failed_no_app": "Aucune application de cet ordinateur n'ouvre les liens {{app}}. Installe {{app}} ou copie le lien pour l'ouvrir autrement.",
+      "open_editor_failed_generic": "Impossible d'ouvrir le lien dans {{app}}. Vérifie que {{app}} est installé."
     },
     "markdownToc": {
       "contents": "Sommaire",
@@ -15582,7 +15590,9 @@
         "message_font_size_desc": "Taille de police de la conversation, dans toutes les sessions : texte des messages, code, tableaux, réponses suggérées et zone de saisie du message. La largeur de contenu compacte s'élargit en proportion. La barre latérale, la liste des sessions et le reste de l'interface ne sont pas affectés.",
         "remove_the_agents_pin": "Retirer son épingle",
         "failed_to_clear_agent_model_pin": "Impossible de retirer le modèle épinglé de l’agent ({{error}}). Réessaie.",
-        "failed_to_clear_agent_model_pin_no_reason": "Impossible de retirer le modèle épinglé de l’agent. Réessaie."
+        "failed_to_clear_agent_model_pin_no_reason": "Impossible de retirer le modèle épinglé de l’agent. Réessaie.",
+        "open_editor_links": "Ouvre les liens d'éditeur de code dans ton éditeur",
+        "open_editor_links_desc": "Cliquer sur un lien IntelliJ IDEA, VS Code ou Cursor dans un message ouvre ce fichier dans l'éditeur."
       },
       "computerUsePanel": {
         "accessibility": "Accessibilité",

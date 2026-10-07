@@ -1138,6 +1138,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.open-code-editor-links-in-your-editor",
+    "label": "Open code-editor links in your editor",
+    "labelKey": "pages.settings.chatPanel.open_editor_links",
+    "description": "Clicking an IntelliJ IDEA, VS Code or Cursor link in a message opens that file in the editor.",
+    "tab": "chat",
+    "type": "toggle",
+    "occurrence": 1,
+    "params": {
+      "sub": "transcript"
+    }
+  },
+  {
     "id": "chat.pin-the-latest-turn",
     "label": "Pin the latest turn",
     "labelKey": "pages.settings.chatPanel.pin_last_prompt",

@@ -7300,7 +7300,15 @@
       "click_to_show_this_folder_in_the_sidebar": "クリックしてこのフォルダーをサイドバーに表示",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "コピーできませんでした。Ctrl/Cmd+クリックでフォルダーのパス {{label}} をコピーします。",
       "couldnt_copy_the_image_path": "画像のパスをコピーできませんでした",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "コピーできませんでした。Ctrl/Cmd+クリックでパス {{label}} をコピーします。"
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "コピーできませんでした。Ctrl/Cmd+クリックでパス {{label}} をコピーします。",
+      "opens_in_editor_app": "{{app}} で開きます",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "お使いのエディター",
+      "open_editor_failed_no_app": "このコンピューターには {{app}} リンクを開くアプリがありません。{{app}} をインストールするか、リンクをコピーして別の方法で開いてください。",
+      "open_editor_failed_generic": "リンクを {{app}} で開けませんでした。{{app}} がインストールされているか確認してください。"
     },
     "markdownToc": {
       "contents": "目次",
@@ -15076,7 +15084,9 @@
         "message_font_size_desc": "会話のフォントサイズ（すべてのセッションに適用）：メッセージのテキスト、コード、表、返信候補、メッセージ入力欄。コンパクトなコンテンツ幅もそれに合わせて広がります。サイドバー、セッション一覧、その他のUIには影響しません。",
         "remove_the_agents_pin": "固定を解除",
         "failed_to_clear_agent_model_pin": "エージェントの固定モデルを解除できませんでした（{{error}}）。もう一度お試しください。",
-        "failed_to_clear_agent_model_pin_no_reason": "エージェントの固定モデルを解除できませんでした。もう一度お試しください。"
+        "failed_to_clear_agent_model_pin_no_reason": "エージェントの固定モデルを解除できませんでした。もう一度お試しください。",
+        "open_editor_links": "コードエディターのリンクをエディターで開く",
+        "open_editor_links_desc": "メッセージ内の IntelliJ IDEA、VS Code、Cursor のリンクをクリックすると、そのファイルがエディターで開きます。"
       },
       "computerUsePanel": {
         "accessibility": "アクセシビリティ",

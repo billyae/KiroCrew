@@ -7411,7 +7411,15 @@
       "click_to_show_this_folder_in_the_sidebar": "এই ফোল্ডারটি সাইডবারে দেখতে ক্লিক করো",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "কপি করা যায়নি। Ctrl/Cmd+ক্লিক দিয়ে ফোল্ডার পাথ {{label}} কপি হয়।",
       "couldnt_copy_the_image_path": "ছবির পাথ কপি করা যায়নি",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "কপি করা যায়নি। Ctrl/Cmd+ক্লিক দিয়ে পাথ {{label}} কপি হয়।"
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "কপি করা যায়নি। Ctrl/Cmd+ক্লিক দিয়ে পাথ {{label}} কপি হয়।",
+      "opens_in_editor_app": "{{app}}-এ খোলে",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "তোমার এডিটর",
+      "open_editor_failed_no_app": "এই কম্পিউটারে {{app}} লিঙ্ক খোলার মতো কোনো অ্যাপ নেই। {{app}} ইনস্টল করো, বা লিঙ্কটি কপি করে অন্যভাবে খোলো।",
+      "open_editor_failed_generic": "লিঙ্কটি {{app}}-এ খোলা যায়নি। {{app}} ইনস্টল করা আছে কিনা দেখো।"
     },
     "markdownToc": {
       "contents": "বিষয়সূচি",
@@ -15329,7 +15337,9 @@
         "message_font_size_desc": "প্রতিটি সেশনে কথোপকথনের ফন্টের আকার: বার্তার টেক্সট, কোড, টেবিল, প্রস্তাবিত উত্তর এবং বার্তা লেখার ঘর। কমপ্যাক্ট কন্টেন্টের প্রস্থও সেই অনুপাতে বাড়ে। সাইডবার, সেশন তালিকা এবং বাকি ইন্টারফেসে কোনো প্রভাব পড়ে না।",
         "remove_the_agents_pin": "এর পিন সরাও",
         "failed_to_clear_agent_model_pin": "এজেন্টের পিন করা মডেল সরানো যায়নি ({{error}})। আবার চেষ্টা করো।",
-        "failed_to_clear_agent_model_pin_no_reason": "এজেন্টের পিন করা মডেল সরানো যায়নি। আবার চেষ্টা করো।"
+        "failed_to_clear_agent_model_pin_no_reason": "এজেন্টের পিন করা মডেল সরানো যায়নি। আবার চেষ্টা করো।",
+        "open_editor_links": "কোড-এডিটর লিঙ্ক তোমার এডিটরে খোলো",
+        "open_editor_links_desc": "কোনো বার্তায় IntelliJ IDEA, VS Code বা Cursor লিঙ্কে ক্লিক করলে সেই ফাইলটি এডিটরে খোলে।"
       },
       "computerUsePanel": {
         "accessibility": "সহজগম্যতা",

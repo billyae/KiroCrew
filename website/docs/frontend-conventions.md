@@ -400,13 +400,20 @@ changing the separate sanitizer, executable-tag and multi-tag-block behavior.
 ## URL sanitization
 
 `react-markdown` strips protocols it does not know. `src/utils/urlTransform.ts`
-re-allows the editor deep links, `vscode:` and `vscode-insiders:`, and delegates
-everything else to `defaultUrlTransform`. It also requires the URL to carry more
-than the bare scheme, so `vscode://` alone is not treated as a link.
+re-allows the editor deep links — `idea:`, `vscode:`, `vscode-insiders:` and
+`cursor:` — and delegates everything else to `defaultUrlTransform`. It also
+requires the URL to carry more than the bare scheme, so `vscode://` alone is not
+treated as a link.
 
-Add a new protocol to `ALLOWED_PROTOCOLS` in that file, and only there. Each
-addition widens what a model-authored or user-pasted link can launch on the host,
-so treat it as a security change, not a formatting one.
+Add a new protocol to `ALLOWED_PROTOCOLS` in that file — and, if the scheme must
+also open from the DESKTOP shell, add it to the paired allowlist
+`ALLOWED_EXTERNAL_SCHEMES` in `website/electron/external-scheme.js`. The two must
+agree: `urlTransform` decides whether the markdown renders a clickable anchor at
+all, while the Electron allowlist is what the main process re-validates before
+`shell.openExternal`. A scheme added in only one place renders a clickable link
+that silently refuses to open on the desktop. Each addition widens what a
+model-authored or user-pasted link can launch on the host, so treat it as a
+security change, not a formatting one.
 
 How a refused destination RENDERS is part of the contract (issue #9925): the
 transform's rejection sentinel is `''`, and `MdAnchor`'s `!href` guard renders

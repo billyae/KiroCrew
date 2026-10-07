@@ -2786,7 +2786,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Click to show this folder in the sidebar",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "The copy failed. Ctrl/Cmd+click copies the folder path {{label}}.",
       "couldnt_copy_the_image_path": "Couldn’t copy the image path",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "The copy failed. Ctrl/Cmd+click copies the path {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "The copy failed. Ctrl/Cmd+click copies the path {{label}}.",
+      "opens_in_editor_app": "Opens in {{app}}",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "your editor",
+      "open_editor_failed_no_app": "No app on this computer opens {{app}} links. Install {{app}}, or copy the link to open it another way.",
+      "open_editor_failed_generic": "Couldn’t open the link in {{app}}. Check that {{app}} is installed."
     },
     "mcpAppFrame": {
       "collapse": "Collapse",
@@ -7025,7 +7033,9 @@
         "failed_to_load_feature_video_status": "Failed to load feature-video cache status",
         "failed_to_start_feature_video_download": "Failed to start the download",
         "message_font_size": "Message Font Size",
-        "message_font_size_desc": "Font size for the conversation, in every session: message text, code, tables, suggested replies and the message input. The Compact content width grows to match. Sidebar, session list and the rest of the interface are unaffected."
+        "message_font_size_desc": "Font size for the conversation, in every session: message text, code, tables, suggested replies and the message input. The Compact content width grows to match. Sidebar, session list and the rest of the interface are unaffected.",
+        "open_editor_links": "Open code-editor links in your editor",
+        "open_editor_links_desc": "Clicking an IntelliJ IDEA, VS Code or Cursor link in a message opens that file in the editor."
       },
       "displayPanel": {
         "color": "Color {{n}}",

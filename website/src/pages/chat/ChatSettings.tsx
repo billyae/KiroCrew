@@ -86,6 +86,15 @@ export interface ChatConfig {
    *  false every pane stays at full brightness; the focused pane's accent
    *  border still marks where keyboard input goes. */
   dimInactivePanes: boolean
+  /** Opt in to opening editor / IDE deep links (`idea://`, `vscode://`,
+   *  `vscode-insiders://`, `cursor://`) in your editor via the OS when you click
+   *  one in a message (#3218). Default false: handing an agent-authored link to
+   *  an OS protocol handler is a product-shape/security change, so a client with
+   *  no stored config behaves exactly as before — `idea://`/`cursor://` render
+   *  as plain text and `vscode://` stays a non-opening anchor. When true, a plain
+   *  user click routes through the allowlisted, click-only desktop-shell bridge
+   *  to `shell.openExternal`. */
+  openEditorLinks: boolean
   /** Font size in px for the conversation surface — what the user reads and
    *  writes: message text, inline and block code, tables, follow-up chips and
    *  the composer — clamped to [MIN_MESSAGE_FONT_SIZE, MAX_MESSAGE_FONT_SIZE].
@@ -113,7 +122,7 @@ const LS_KEY = 'mc-chat-config'
  *  it. The sidebar's view toggle persists this flag BEFORE creating its first
  *  column, so a deliberate board user always has an explicit `true` stored and
  *  is unaffected by the default. */
-const DEFAULTS: ChatConfig = { historyExpanded: true, showTimestamps: true, showTurnStats: true, sendOnEnter: 'enter', collapseAllSteps: true, confirmCloseSession: false, simplifiedToolNames: true, contentWidth: 'compact', tagColumnsEnabled: false, fileChipStyle: 'expanded', followUpLayout: 'scroll', streamMode: 'smooth', showContextPct: false, showContextTokens: false, pinLastPrompt: true, hideEmptyFolderBody: false, spellcheck: true, inlineMarkdown: false, showFullPastes: false, doubleClickToEdit: false, dimInactivePanes: true, minimapSide: 'left', messageFontSize: DEFAULT_MESSAGE_FONT_SIZE }
+const DEFAULTS: ChatConfig = { historyExpanded: true, showTimestamps: true, showTurnStats: true, sendOnEnter: 'enter', collapseAllSteps: true, confirmCloseSession: false, simplifiedToolNames: true, contentWidth: 'compact', tagColumnsEnabled: false, fileChipStyle: 'expanded', followUpLayout: 'scroll', streamMode: 'smooth', showContextPct: false, showContextTokens: false, pinLastPrompt: true, hideEmptyFolderBody: false, spellcheck: true, inlineMarkdown: false, showFullPastes: false, doubleClickToEdit: false, dimInactivePanes: true, minimapSide: 'left', openEditorLinks: false, messageFontSize: DEFAULT_MESSAGE_FONT_SIZE }
 
 const clampMessageFontSize = (n: number): number =>
   Math.max(MIN_MESSAGE_FONT_SIZE, Math.min(MAX_MESSAGE_FONT_SIZE, Math.round(n)))
@@ -164,6 +173,9 @@ export function loadChatConfig(): ChatConfig {
     // Coerced, not trusted: a stored non-boolean must not attach the
     // double-click gesture that replaces word selection on the bubble.
     if (typeof cfg.doubleClickToEdit !== 'boolean') cfg.doubleClickToEdit = false
+    // Coerced, not trusted: a stored non-boolean must not decide whether a click
+    // hands an agent-authored editor link to an OS protocol handler (#3218).
+    if (typeof cfg.openEditorLinks !== 'boolean') cfg.openEditorLinks = false
     if (typeof cfg.dimInactivePanes !== 'boolean') cfg.dimInactivePanes = true
     if (cfg.minimapSide !== 'left' && cfg.minimapSide !== 'right') cfg.minimapSide = 'left'
     cfg.messageFontSize = typeof cfg.messageFontSize === 'number' ? clampMessageFontSize(cfg.messageFontSize) : DEFAULT_MESSAGE_FONT_SIZE

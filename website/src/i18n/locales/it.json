@@ -7522,7 +7522,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Clicca per mostrare questa cartella nella barra laterale",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "La copia non è riuscita. Ctrl/Cmd+clic copia il percorso della cartella {{label}}.",
       "couldnt_copy_the_image_path": "Impossibile copiare il percorso dell’immagine",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "La copia non è riuscita. Ctrl/Cmd+clic copia il percorso {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "La copia non è riuscita. Ctrl/Cmd+clic copia il percorso {{label}}.",
+      "opens_in_editor_app": "Si apre in {{app}}",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "il tuo editor",
+      "open_editor_failed_no_app": "Nessuna applicazione su questo computer apre i link {{app}}. Installa {{app}} oppure copia il link per aprirlo in altro modo.",
+      "open_editor_failed_generic": "Impossibile aprire il link in {{app}}. Verifica che {{app}} sia installato."
     },
     "markdownToc": {
       "contents": "Contenuto",
@@ -15582,7 +15590,9 @@
         "message_font_size_desc": "Dimensione del carattere della conversazione, in ogni sessione: testo dei messaggi, codice, tabelle, risposte suggerite e campo di inserimento del messaggio. La larghezza compatta del contenuto cresce di conseguenza. La barra laterale, l'elenco delle sessioni e il resto dell'interfaccia non sono interessati.",
         "remove_the_agents_pin": "Rimuovi il suo modello fissato",
         "failed_to_clear_agent_model_pin": "Impossibile rimuovere il modello fissato dell'agente ({{error}}). Riprova.",
-        "failed_to_clear_agent_model_pin_no_reason": "Impossibile rimuovere il modello fissato dell'agente. Riprova."
+        "failed_to_clear_agent_model_pin_no_reason": "Impossibile rimuovere il modello fissato dell'agente. Riprova.",
+        "open_editor_links": "Apri i link dell'editor di codice nel tuo editor",
+        "open_editor_links_desc": "Fare clic su un link di IntelliJ IDEA, VS Code o Cursor in un messaggio apre quel file nell'editor."
       },
       "computerUsePanel": {
         "accessibility": "Accessibilità",

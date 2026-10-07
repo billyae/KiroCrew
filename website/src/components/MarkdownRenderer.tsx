@@ -29,7 +29,8 @@ import type { Element as HastElement } from 'hast'
 import '../utils/hljs'
 import { useBlockAssembler, maskInlineCode } from '../hooks/useBlockAssembler'
 import SegmentedControl from './SegmentedControl'
-import { urlTransform, ALLOWED_PROTOCOLS } from '../utils/urlTransform'
+import { makeUrlTransform, ALLOWED_PROTOCOLS } from '../utils/urlTransform'
+import { useOpenEditorLinks } from '../hooks/useOpenEditorLinks'
 import { safeHttpUrl } from '../lib/safeUrl'
 import { useLinkMeta, type LinkMeta } from '../lib/linkMeta'
 import { LinkChip, LinkCard } from './LinkPreview'
@@ -117,6 +118,11 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   const override = useContext(LinkOverrideCtx)
   const probeEnabled = useContext(PathProbeCtx)
   const actions = useContext(PathActionCtx)
+  // The editor-link OPT-IN (#3218, default off). Gates the click→OS hand-off and
+  // the "Opens in <app>" title below. When off, an editor-scheme anchor behaves
+  // exactly as main did: `vscode:` renders as a non-opening anchor (and
+  // `idea:`/`cursor:` never reach here — the sanitizer strips them when off).
+  const openEditorLinks = useOpenEditorLinks()
   // The override is resolved FIRST and wins outright — Issue Radar's in-app
   // issue/PR affordance must keep beating a link preview. Feeding `null` into
   // the unfurl gate for a claimed href also means a claimed link is never
@@ -324,17 +330,39 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   }
   let ext = false
   try { ext = !!href && ALLOWED_PROTOCOLS.has(new URL(href, 'http://x').protocol) } catch { /* not a URL */ }
-  // An editor-scheme deep link (`idea://`, `vscode://`, `cursor://`) — an
-  // ALLOWED_PROTOCOLS match that is NOT a session or in-page `#` link. In the
-  // desktop shell a plain in-frame navigation to such a scheme is refused by the
-  // dashboard's `frame-src` CSP (issue #3218: the window reloads instead of the
-  // editor opening), so a user click is routed through the `openExternalScheme`
-  // preload bridge to shell.openExternal instead. In a plain browser the bridge
-  // is absent and the ordinary anchor already delegates the registered scheme to
-  // the OS, so nothing is intercepted there.
-  let editorScheme = false
-  try { editorScheme = !!href && ALLOWED_PROTOCOLS.has(new URL(href).protocol) } catch { /* not an absolute URL */ }
-  const onEditorSchemeClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+  // An editor-scheme deep link (`idea://`, `vscode://`, `cursor://`) is exactly
+  // an ALLOWED_PROTOCOLS match that is NOT a session or in-page `#` link, which
+  // is what `ext` already answers HERE — before the `sessionLink`/`#` override
+  // below widens it. (A relative href resolves against the `http://x` base to
+  // `http:`, which is not in the set, so `ext` is the editor-scheme predicate at
+  // this point.) Capture it before that override so the click handler can reuse
+  // it rather than re-parsing the URL and re-checking the same allowlist.
+  //
+  // In the desktop shell a plain in-frame navigation to such a scheme is refused
+  // by the dashboard's `frame-src` CSP (issue #3218: the window reloads instead
+  // of the editor opening), so a user click is routed through the
+  // `openExternalScheme` preload bridge to shell.openExternal instead. In a
+  // plain browser the bridge is absent and the ordinary anchor already delegates
+  // the registered scheme to the OS, so nothing is intercepted there.
+  // Only an editor-scheme match (via `ext`, before the session/`#` override) AND
+  // the opt-in enabled routes a click to the OS. With the setting off this is
+  // false, so the anchor keeps main's behaviour: a plain non-opening link.
+  const editorScheme = ext && openEditorLinks
+  // Map an editor scheme to the product it launches, so the anchor can say what
+  // will open and a failure can name the app instead of echoing a raw code.
+  // Falls back to a generic noun for an allowlisted scheme without a known name.
+  const editorAppName = (): string => {
+    let proto = ''
+    try { proto = href ? new URL(href).protocol : '' } catch { /* not absolute */ }
+    switch (proto) {
+      case 'idea:': return i18nT('components.markdownRenderer.editor_app_idea')
+      case 'vscode:': return i18nT('components.markdownRenderer.editor_app_vscode')
+      case 'vscode-insiders:': return i18nT('components.markdownRenderer.editor_app_vscode_insiders')
+      case 'cursor:': return i18nT('components.markdownRenderer.editor_app_cursor')
+      default: return i18nT('components.markdownRenderer.editor_app_generic')
+    }
+  }
+  const onEditorSchemeClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
     // ONLY a plain primary click, and ONLY in the desktop shell. A
     // modified/non-primary click, or a plain browser (no bridge), keeps the
     // anchor's default so Cmd/Ctrl-click and the browser's own OS delegation
@@ -343,10 +371,25 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
     const plainPrimaryClick = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
     if (!plainPrimaryClick || !href || !canOpenExternalScheme()) return
     e.preventDefault()
-    // Fire-and-forget: the main process re-validates the scheme against its own
-    // allowlist and swallows any OS failure. A rejected hand-off is cosmetic,
-    // never a reason to disturb the click.
-    void openExternalScheme(href)
+    // Await the hand-off and surface a failure inline through the same
+    // `reveal.onError` → `ErrorNotice` the path-open uses (#3218 GPT review:
+    // a discarded `{ok:false}` left a dead click with no hint when no OS handler
+    // is registered). The bridge's reasons are internal codes ('unavailable',
+    // 'unsupported scheme', 'no url') or Electron's raw OS message, which are not
+    // user copy (#3218 UX review) — map them to a localized sentence that names
+    // the app and a next step. 'unsupported scheme' means the main process
+    // allowlist refused it, which for an editor-scheme anchor should not happen,
+    // so it collapses into the same generic "couldn't open" guidance.
+    const app = editorAppName()
+    const r = await openExternalScheme(href)
+    if (!r.ok) {
+      const key = r.error === 'unavailable' || r.error === undefined
+        // No OS handler registered / no desktop bridge answered — the common case
+        // the user can act on by installing the editor or copying the link.
+        ? 'components.markdownRenderer.open_editor_failed_no_app'
+        : 'components.markdownRenderer.open_editor_failed_generic'
+      reveal.onError(i18nT(key, { app }))
+    }
   }
   // A confirmed session link is in-app navigation, so it keeps in-place semantics.
   // So does a `#heading` link: the renderer scrolls to it (see handleClick).
@@ -375,7 +418,12 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
           : (pathResolution.candidate ? onPathClick : undefined))}
       title={sessionLink
         ? `${sessionLink.title}\n${i18nT('components.markdownRenderer.click_to_switch_to_this_session')}`
-        : undefined}
+        : (editorScheme
+          // Name the app the click will launch, so an editor-scheme link does not
+          // read as a risky unknown (#3218 UX review). The visible label can
+          // differ from the href, so the title states the real destination app.
+          ? i18nT('components.markdownRenderer.opens_in_editor_app', { app: editorAppName() })
+          : undefined)}
       {...(ext ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
       // A session link that names a session but cannot open one drops the live-link
       // affordance rather than keeping it and doing nothing. The click is swallowed
@@ -390,6 +438,16 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
     >
       <InsideLinkCtx.Provider value={true}>{children}</InsideLinkCtx.Provider>
     </a>
+    {editorScheme && (
+      // The app the click launches, shown INLINE (not only in the `title`), so a
+      // user — including a screen-reader user who never hovers — can see what an
+      // editor-scheme link opens before clicking it (#3218 UX review). Muted and
+      // non-interactive: it annotates the adjacent anchor, it is not a second
+      // link.
+      <span className="ml-1 text-[0.85em] text-muted align-baseline" data-testid="md-editor-scheme-app">
+        {i18nT('components.markdownRenderer.opens_in_editor_app', { app: editorAppName() })}
+      </span>
+    )}
     {reveal.error && (
       <ErrorNotice variant="inline" className="ml-1.5 align-baseline" message={reveal.error} askAgent onDismiss={reveal.clear} testId="md-link-reveal-error" />
     )}
@@ -771,6 +829,14 @@ const MarkdownBlock = memo(function MarkdownBlock({ content, sourcePos, startLin
     () => ({ enabled: !!unfurl && !sourcePos, live: !!live }),
     [unfurl, sourcePos, live],
   )
+  // Declared here (before the early return below) — Rules of Hooks. The
+  // editor-link OPT-IN (#3218) gates WHICH schemes the sanitizer admits as
+  // clickable: off (default) is main-parity (only `vscode:`/`vscode-insiders:`
+  // render, `idea:`/`cursor:` are stripped), on admits all four. Memoized on the
+  // flag so react-markdown is not handed a new transform identity every render.
+  // The click→OS hand-off is gated separately in MdAnchor on the same flag.
+  const openEditorLinks = useOpenEditorLinks()
+  const linkUrlTransform = useMemo(() => makeUrlTransform(openEditorLinks), [openEditorLinks])
   // Strip any <mcwidget> or <tool_use> tags that leak through during
   // streaming transitions or when the agent emits protocol markup as text.
   // Both passes preserve mentions inside inline-code spans.
@@ -838,7 +904,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ content, sourcePos, startLin
   const prepared = sourcePos ? fenced : fixCjkAutolinkBoundaries(fixUnencodedLinkDestinations(fenced))
   const md = (
     <MdSourceCtx.Provider value={prepared}>
-      <ReactMarkdown remarkPlugins={softBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS} rehypePlugins={rehypePlugins} urlTransform={urlTransform} components={MD_COMPONENTS}>
+      <ReactMarkdown remarkPlugins={softBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS} rehypePlugins={rehypePlugins} urlTransform={linkUrlTransform} components={MD_COMPONENTS}>
         {prepared}
       </ReactMarkdown>
     </MdSourceCtx.Provider>

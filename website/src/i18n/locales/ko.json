@@ -7300,7 +7300,15 @@
       "click_to_show_this_folder_in_the_sidebar": "클릭하여 이 폴더를 사이드바에서 보기",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "복사하지 못했습니다. Ctrl/Cmd+클릭으로 {{label}} 폴더 경로를 복사합니다.",
       "couldnt_copy_the_image_path": "이미지 경로를 복사하지 못했습니다",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "복사하지 못했습니다. Ctrl/Cmd+클릭으로 {{label}} 경로를 복사합니다."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "복사하지 못했습니다. Ctrl/Cmd+클릭으로 {{label}} 경로를 복사합니다.",
+      "opens_in_editor_app": "{{app}}에서 열림",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "편집기",
+      "open_editor_failed_no_app": "이 컴퓨터에는 {{app}} 링크를 열 수 있는 앱이 없습니다. {{app}}을(를) 설치하거나 링크를 복사하여 다른 방법으로 여세요.",
+      "open_editor_failed_generic": "{{app}}에서 링크를 열 수 없습니다. {{app}}이(가) 설치되어 있는지 확인하세요."
     },
     "markdownToc": {
       "contents": "목차",
@@ -15076,7 +15084,9 @@
         "message_font_size_desc": "모든 세션에서 대화의 글꼴 크기입니다: 메시지 텍스트, 코드, 표, 추천 답변 및 메시지 입력창. 콤팩트 콘텐츠 너비도 이에 맞춰 넓어집니다. 사이드바, 세션 목록 및 나머지 인터페이스에는 영향을 주지 않습니다.",
         "remove_the_agents_pin": "고정 해제",
         "failed_to_clear_agent_model_pin": "에이전트의 고정 모델을 해제할 수 없습니다 ({{error}}). 다시 시도하세요.",
-        "failed_to_clear_agent_model_pin_no_reason": "에이전트의 고정 모델을 해제할 수 없습니다. 다시 시도하세요."
+        "failed_to_clear_agent_model_pin_no_reason": "에이전트의 고정 모델을 해제할 수 없습니다. 다시 시도하세요.",
+        "open_editor_links": "코드 편집기 링크를 편집기에서 열기",
+        "open_editor_links_desc": "메시지에서 IntelliJ IDEA, VS Code 또는 Cursor 링크를 클릭하면 해당 파일이 편집기에서 열립니다."
       },
       "computerUsePanel": {
         "accessibility": "손쉬운 사용",

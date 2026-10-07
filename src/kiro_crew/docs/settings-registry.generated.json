@@ -629,6 +629,13 @@
       "description": "When located on the right edge, the minimap replaces the scroll bar."
     },
     {
+      "id": "chat.open-code-editor-links-in-your-editor",
+      "label": "Open code-editor links in your editor",
+      "tab": "chat",
+      "route": "/settings/chat/transcript?highlight=chat.open-code-editor-links-in-your-editor",
+      "description": "Clicking an IntelliJ IDEA, VS Code or Cursor link in a message opens that file in the editor."
+    },
+    {
       "id": "chat.pin-the-latest-turn",
       "label": "Pin the latest turn",
       "tab": "chat",

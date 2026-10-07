@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { urlTransform, decodeLocalPath, WINDOWS_ABS_PATH_RE } from '../utils/urlTransform'
+import { urlTransform, makeUrlTransform, decodeLocalPath, WINDOWS_ABS_PATH_RE } from '../utils/urlTransform'
+
+// The opt-in ON transform (#3218): admits all four editor schemes.
+const onTransform = makeUrlTransform(true)
 
 describe('urlTransform', () => {
   it('allows vscode remote SSH URL', () => {
@@ -17,31 +20,45 @@ describe('urlTransform', () => {
     expect(urlTransform(url)).toBe(url)
   })
 
-  it('allows idea:// editor deep link (issue #3218)', () => {
+  it('allows idea:// editor deep link when the opt-in is ON (issue #3218)', () => {
     const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
-    expect(urlTransform(url)).toBe(url)
+    expect(onTransform(url)).toBe(url)
   })
 
-  it('allows cursor:// editor deep link (issue #3218)', () => {
+  it('allows cursor:// editor deep link when the opt-in is ON (issue #3218)', () => {
     const url = 'cursor://file/home/user/project/src/main.py:42'
+    expect(onTransform(url)).toBe(url)
+  })
+
+  // Opt-in OFF is the DEFAULT: idea://cursor:// are STRIPPED, exactly as on main
+  // before #3218. vscode:// still renders (it was already allowlisted on main).
+  it('strips idea:// and cursor:// when the opt-in is OFF (main parity)', () => {
+    expect(urlTransform('idea://open?file=/home/user/project/src/main.py')).toBe('')
+    expect(urlTransform('cursor://file/home/user/project/src/main.py')).toBe('')
+    expect(makeUrlTransform(false)('idea://open?file=x')).toBe('')
+  })
+
+  it('still allows vscode:// when the opt-in is OFF (unchanged from main)', () => {
+    const url = 'vscode://file/home/user/project'
     expect(urlTransform(url)).toBe(url)
+    expect(makeUrlTransform(false)(url)).toBe(url)
   })
 
-  it('rejects bare idea://', () => {
-    expect(urlTransform('idea://')).toBe('')
+  it('rejects bare idea:// even when the opt-in is ON', () => {
+    expect(onTransform('idea://')).toBe('')
   })
 
-  it('rejects bare cursor://', () => {
-    expect(urlTransform('cursor://')).toBe('')
+  it('rejects bare cursor:// even when the opt-in is ON', () => {
+    expect(onTransform('cursor://')).toBe('')
   })
 
   // A lookalike scheme that merely begins with an allowed name must NOT be
   // admitted — the allowlist is matched on the exact parsed protocol, so
   // `idea-attacker:` and `cursorx:` fall through to the strict default.
   it('rejects a lookalike scheme that only prefixes an allowed one', () => {
-    expect(urlTransform('idea-attacker://open?file=x')).toBe('')
-    expect(urlTransform('cursorx://open?file=x')).toBe('')
-    expect(urlTransform('notvscode://file/x')).toBe('')
+    expect(onTransform('idea-attacker://open?file=x')).toBe('')
+    expect(onTransform('cursorx://open?file=x')).toBe('')
+    expect(onTransform('notvscode://file/x')).toBe('')
   })
 
   it('preserves vscode URL with query params', () => {

@@ -7411,7 +7411,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Klicken, um diesen Ordner in der Seitenleiste anzuzeigen",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "Das Kopieren ist fehlgeschlagen. Strg/Cmd+Klick kopiert den Ordnerpfad {{label}}.",
       "couldnt_copy_the_image_path": "Bildpfad konnte nicht kopiert werden",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "Das Kopieren ist fehlgeschlagen. Strg/Cmd+Klick kopiert den Pfad {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "Das Kopieren ist fehlgeschlagen. Strg/Cmd+Klick kopiert den Pfad {{label}}.",
+      "opens_in_editor_app": "Wird in {{app}} geöffnet",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "deinem Editor",
+      "open_editor_failed_no_app": "Auf diesem Computer gibt es keine App, die {{app}}-Links öffnet. Installiere {{app}} oder kopiere den Link, um ihn anders zu öffnen.",
+      "open_editor_failed_generic": "Der Link konnte nicht in {{app}} geöffnet werden. Prüfe, ob {{app}} installiert ist."
     },
     "markdownToc": {
       "contents": "Inhalt",
@@ -15329,7 +15337,9 @@
         "message_font_size_desc": "Schriftgröße für die Konversation, in jeder Sitzung: Nachrichtentext, Code, Tabellen, Antwortvorschläge und die Nachrichteneingabe. Die kompakte Inhaltsbreite wächst entsprechend mit. Seitenleiste, Sitzungsliste und der Rest der Oberfläche sind nicht betroffen.",
         "remove_the_agents_pin": "Anheftung entfernen",
         "failed_to_clear_agent_model_pin": "Angeheftetes Modell des Agenten konnte nicht entfernt werden ({{error}}). Versuch es erneut.",
-        "failed_to_clear_agent_model_pin_no_reason": "Angeheftetes Modell des Agenten konnte nicht entfernt werden. Versuch es erneut."
+        "failed_to_clear_agent_model_pin_no_reason": "Angeheftetes Modell des Agenten konnte nicht entfernt werden. Versuch es erneut.",
+        "open_editor_links": "Code-Editor-Links in deinem Editor öffnen",
+        "open_editor_links_desc": "Ein Klick auf einen IntelliJ IDEA-, VS Code- oder Cursor-Link in einer Nachricht öffnet diese Datei im Editor."
       },
       "computerUsePanel": {
         "accessibility": "Bedienungshilfen",

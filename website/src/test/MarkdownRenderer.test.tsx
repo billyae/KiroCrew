@@ -201,20 +201,24 @@ describe('MarkdownRenderer XSS sanitization', () => {
       expect(a!.getAttribute('href')).toBe(url)
     })
 
-    it('control: an idea:// link keeps its anchor and href (issue #3218)', () => {
+    it('control: an idea:// link keeps its anchor and href when the opt-in is ON (issue #3218)', () => {
+      localStorage.setItem('mc-chat-config', JSON.stringify({ openEditorLinks: true }))
       const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
       const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
       const a = container.querySelector('a')
       expect(a).not.toBeNull()
       expect(a!.getAttribute('href')).toBe(url)
+      localStorage.removeItem('mc-chat-config')
     })
 
-    it('control: a cursor:// link keeps its anchor and href (issue #3218)', () => {
+    it('control: a cursor:// link keeps its anchor and href when the opt-in is ON (issue #3218)', () => {
+      localStorage.setItem('mc-chat-config', JSON.stringify({ openEditorLinks: true }))
       const url = 'cursor://file/home/user/project/src/main.py:42'
       const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
       const a = container.querySelector('a')
       expect(a).not.toBeNull()
       expect(a!.getAttribute('href')).toBe(url)
+      localStorage.removeItem('mc-chat-config')
     })
   })
 
@@ -226,9 +230,15 @@ describe('MarkdownRenderer XSS sanitization', () => {
   describe('editor-scheme deep links (idea/vscode/cursor) — click routing', () => {
     afterEach(() => {
       delete (window as { fileOpenAPI?: unknown }).fileOpenAPI
+      localStorage.removeItem('mc-chat-config')
     })
 
+    // The feature is OPT-IN (#3218): these tests enable it. The OFF (default)
+    // behaviour is pinned in its own describe below.
+    const enableOptIn = () => localStorage.setItem('mc-chat-config', JSON.stringify({ openEditorLinks: true }))
+
     it('routes a plain click through fileOpenAPI.openExternalScheme in the desktop shell', () => {
+      enableOptIn()
       const url = 'idea://open?file=/home/user/project/src/main.py&line=42'
       const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
       ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
@@ -241,6 +251,7 @@ describe('MarkdownRenderer XSS sanitization', () => {
     })
 
     it('leaves the anchor default alone in a plain browser (no bridge)', () => {
+      enableOptIn()
       const url = 'cursor://file/home/user/project/src/main.py:42'
       const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
       const a = container.querySelector('a')!
@@ -251,6 +262,7 @@ describe('MarkdownRenderer XSS sanitization', () => {
     })
 
     it('does not intercept a modified (Cmd/Ctrl) click, so a new tab still works', () => {
+      enableOptIn()
       const url = 'vscode://file/home/user/project'
       const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
       ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
@@ -261,12 +273,87 @@ describe('MarkdownRenderer XSS sanitization', () => {
     })
 
     it('does not route a plain https link through the editor bridge', () => {
+      enableOptIn()
       const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
       ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
       const { container } = render(<MarkdownRenderer content={'[docs](https://example.com/docs)'} />)
       const a = container.querySelector('a')!
       fireEvent.click(a)
       expect(openExternalScheme).not.toHaveBeenCalled()
+    })
+
+    it('surfaces an inline error when the hand-off fails (no silent dead click)', async () => {
+      enableOptIn()
+      const url = 'idea://open?file=/home/user/project/src/main.py'
+      // 'unavailable' is the code the real bridge returns when no OS handler is
+      // registered; the renderer maps it to friendly, app-named copy rather than
+      // echoing the raw code (#3218 UX review).
+      const openExternalScheme = vi.fn().mockResolvedValue({ ok: false, error: 'unavailable' })
+      ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+      const { container, findByTestId } = render(<MarkdownRenderer content={`[open](${url})`} />)
+      const a = container.querySelector('a')!
+      const ev = fireEvent.click(a)
+      expect(ev).toBe(false) // still prevents the dead in-frame navigation
+      expect(openExternalScheme).toHaveBeenCalledWith(url)
+      const notice = await findByTestId('md-link-reveal-error')
+      // Friendly, actionable, and names the product (IntelliJ IDEA for idea://).
+      expect(notice.textContent).toContain('No app on this computer opens IntelliJ IDEA links')
+      expect(notice.textContent).not.toContain('unavailable')
+    })
+
+    it('titles an editor-scheme anchor with the app it opens', () => {
+      enableOptIn()
+      const { container: c1 } = render(<MarkdownRenderer content={'[open](idea://x/y)'} />)
+      expect(c1.querySelector('a')!.getAttribute('title')).toBe('Opens in IntelliJ IDEA')
+      const { container: c2 } = render(<MarkdownRenderer content={'[open](cursor://x/y)'} />)
+      expect(c2.querySelector('a')!.getAttribute('title')).toBe('Opens in Cursor')
+      const { container: c3 } = render(<MarkdownRenderer content={'[open](vscode://file/x)'} />)
+      expect(c3.querySelector('a')!.getAttribute('title')).toBe('Opens in Visual Studio Code')
+    })
+
+    it('shows a visible app badge next to the link (not only on hover)', () => {
+      enableOptIn()
+      const { getByTestId } = render(<MarkdownRenderer content={'[open](idea://x/y)'} />)
+      // The badge is visible text (addresses the #3218 UX blocker: the app the
+      // click launches must be shown without hovering the title).
+      expect(getByTestId('md-editor-scheme-app').textContent).toBe('Opens in IntelliJ IDEA')
+    })
+
+    // Feature OFF is the DEFAULT (no stored config). Behaviour must match main
+    // before #3218: idea://cursor:// stripped to plain text, vscode:// a
+    // non-opening anchor, and no click ever reaches the bridge.
+    describe('opt-in OFF (default) — main parity', () => {
+      it('does not route a click to the bridge and does not prevent default', () => {
+        const url = 'idea://open?file=/home/user/project/src/main.py'
+        const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
+        ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+        // idea:// is stripped when off, so it renders as plain text (no anchor).
+        const { container } = render(<MarkdownRenderer content={`[open](${url})`} />)
+        expect(container.querySelector('a')).toBeNull()
+        expect(openExternalScheme).not.toHaveBeenCalled()
+      })
+
+      it('strips idea:// and cursor:// to plain text (no anchor), as on main', () => {
+        const { container: ci } = render(<MarkdownRenderer content={'[open](idea://x/y)'} />)
+        expect(ci.querySelector('a')).toBeNull()
+        expect(ci.textContent).toContain('open')
+        const { container: cc } = render(<MarkdownRenderer content={'[open](cursor://x/y)'} />)
+        expect(cc.querySelector('a')).toBeNull()
+      })
+
+      it('renders vscode:// as a non-opening anchor with no editor title', () => {
+        const openExternalScheme = vi.fn().mockResolvedValue({ ok: true })
+        ;(window as { fileOpenAPI?: unknown }).fileOpenAPI = { openExternalScheme }
+        const { container } = render(<MarkdownRenderer content={'[open](vscode://file/x)'} />)
+        const a = container.querySelector('a')
+        // vscode:// already rendered as an anchor on main, so it stays an anchor…
+        expect(a).not.toBeNull()
+        // …but with no OS routing (no "Opens in" title) and the click does not
+        // reach the bridge.
+        expect(a!.getAttribute('title')).toBeNull()
+        fireEvent.click(a!)
+        expect(openExternalScheme).not.toHaveBeenCalled()
+      })
     })
   })
 

@@ -7300,7 +7300,15 @@
       "click_to_show_this_folder_in_the_sidebar": "点击在侧边栏中显示此文件夹",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "复制失败。Ctrl/Cmd+点击可复制文件夹路径 {{label}}。",
       "couldnt_copy_the_image_path": "无法复制图片路径",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "复制失败。Ctrl/Cmd+点击可复制路径 {{label}}。"
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "复制失败。Ctrl/Cmd+点击可复制路径 {{label}}。",
+      "opens_in_editor_app": "在 {{app}} 中打开",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "你的编辑器",
+      "open_editor_failed_no_app": "这台电脑上没有可打开 {{app}} 链接的应用。请安装 {{app}}，或复制该链接以其他方式打开。",
+      "open_editor_failed_generic": "无法在 {{app}} 中打开该链接。请检查是否已安装 {{app}}。"
     },
     "markdownToc": {
       "contents": "目录",
@@ -15076,7 +15084,9 @@
         "message_font_size_desc": "所有会话中对话内容的字号：消息文本、代码、表格、建议回复和消息输入框。紧凑内容宽度会随之增大。侧边栏、会话列表和其余界面不受影响。",
         "remove_the_agents_pin": "清除其置顶",
         "failed_to_clear_agent_model_pin": "无法清除代理已置顶的模型（{{error}}）。请重试。",
-        "failed_to_clear_agent_model_pin_no_reason": "无法清除代理已置顶的模型。请重试。"
+        "failed_to_clear_agent_model_pin_no_reason": "无法清除代理已置顶的模型。请重试。",
+        "open_editor_links": "在编辑器中打开代码编辑器链接",
+        "open_editor_links_desc": "点击消息中的 IntelliJ IDEA、VS Code 或 Cursor 链接会在编辑器中打开该文件。"
       },
       "computerUsePanel": {
         "accessibility": "辅助功能",

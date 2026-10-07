@@ -7633,7 +7633,15 @@
       "click_to_show_this_folder_in_the_sidebar": "Нажми, чтобы показать эту папку в боковой панели",
       "the_copy_failed_ctrl_cmd_click_copies_the_folder_path_label": "Скопировать не удалось. Ctrl/Cmd+клик копирует путь к папке {{label}}.",
       "couldnt_copy_the_image_path": "Не удалось скопировать путь к изображению",
-      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "Скопировать не удалось. Ctrl/Cmd+клик копирует путь {{label}}."
+      "the_copy_failed_ctrl_cmd_click_copies_the_path_label": "Скопировать не удалось. Ctrl/Cmd+клик копирует путь {{label}}.",
+      "opens_in_editor_app": "Откроется в {{app}}",
+      "editor_app_idea": "IntelliJ IDEA",
+      "editor_app_vscode": "Visual Studio Code",
+      "editor_app_vscode_insiders": "VS Code Insiders",
+      "editor_app_cursor": "Cursor",
+      "editor_app_generic": "твоём редакторе",
+      "open_editor_failed_no_app": "На этом компьютере нет приложения для открытия ссылок {{app}}. Установи {{app}} или скопируй ссылку, чтобы открыть её другим способом.",
+      "open_editor_failed_generic": "Не удалось открыть ссылку в {{app}}. Проверь, установлен ли {{app}}."
     },
     "markdownToc": {
       "contents": "Содержание",
@@ -15835,7 +15843,9 @@
         "message_font_size_desc": "Размер шрифта беседы во всех сессиях: текст сообщений, код, таблицы, предлагаемые ответы и поле ввода сообщения. Компактная ширина содержимого растёт соответственно. Боковая панель, список сессий и остальной интерфейс не затрагиваются.",
         "remove_the_agents_pin": "Снять закрепление",
         "failed_to_clear_agent_model_pin": "Не удалось снять закреплённую модель агента ({{error}}). Попробуй ещё раз.",
-        "failed_to_clear_agent_model_pin_no_reason": "Не удалось снять закреплённую модель агента. Попробуй ещё раз."
+        "failed_to_clear_agent_model_pin_no_reason": "Не удалось снять закреплённую модель агента. Попробуй ещё раз.",
+        "open_editor_links": "Открывай ссылки редактора кода в твоём редакторе",
+        "open_editor_links_desc": "Щелчок по ссылке IntelliJ IDEA, VS Code или Cursor в сообщении открывает этот файл в редакторе."
       },
       "computerUsePanel": {
         "accessibility": "Универсальный доступ",
