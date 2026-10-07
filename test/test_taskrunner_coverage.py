@@ -155,6 +155,43 @@ class TestResolveWorkspaceDir:
         monkeypatch.setattr(tr, "sel", MagicMock(side_effect=RuntimeError("sel down")))
         assert _resolve_workspace_dir(str(tmp_path)) == str(tmp_path.resolve())
 
+    def test_a_request_scoped_path_rejected_by_the_file_gate_raises_before_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A request/tool-supplied workspace is screened by the file gate
+        # (validate_file_path), which rejects UNC/unrepresentable/sensitive
+        # shapes BEFORE any realpath. On Windows a realpath of a UNC path is
+        # itself the SMB probe that leaks NTLM, so a value the gate rejects must
+        # never reach resolution. Here the gate returns None and
+        # _resolve_workspace_dir must raise without calling Path.resolve.
+        monkeypatch.setattr(tr, "validate_file_path", lambda raw: None)
+
+        def _boom(*_a: object, **_k: object) -> None:  # pragma: no cover - must not run
+            raise AssertionError("resolve() reached despite gate rejection")
+
+        monkeypatch.setattr(tr.Path, "resolve", _boom)
+        audit = MagicMock()
+        monkeypatch.setattr(tr, "sel", lambda: audit)
+        with pytest.raises(ValueError, match="unrepresentable, UNC, or sensitive"):
+            _resolve_workspace_dir(r"\\attacker\share", request_scoped=True)
+        kwargs = audit.log_tool_invocation.call_args.kwargs
+        assert kwargs["outcome"] == "denied"
+        assert kwargs["metadata"]["reason"] == "unsafe_path"
+
+    def test_a_config_scoped_path_is_not_screened_by_the_file_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The operator's configured workspace_dir (constructor / reload) is
+        # trusted and must NOT go through the request-only UNC gate, so a
+        # legitimately configured value still resolves and the gateway boots.
+        # Guard: validate_file_path must not be consulted on the config path.
+        def _gate_must_not_run(_raw: str) -> None:  # pragma: no cover - must not run
+            raise AssertionError("validate_file_path called on a config-scoped path")
+
+        monkeypatch.setattr(tr, "validate_file_path", _gate_must_not_run)
+        monkeypatch.setattr(tr, "sel", MagicMock())
+        assert _resolve_workspace_dir(str(tmp_path)) == str(tmp_path.resolve())
+
 
 # ── YAML decomposition audit wrapper ──
 

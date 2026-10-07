@@ -658,6 +658,18 @@ the first run after priming. Three rules keep this predictable:
 - **A rejected `workspace_dir` keeps the current target.** The validator's
   `ValueError` (sensitive / credential path, already SEL-audited) is logged at
   WARNING and the previous work dir stays in force.
+- **The UNC/file-gate screen applies only to a request-scoped override.** A
+  per-run `workspace_dir` supplied by a request or tool call (`start_background`,
+  `plan`, `execute_plan`, `run`) is passed to `_resolve_workspace_dir` with
+  `request_scoped=True`, which first screens it through `validate_file_path`
+  (the Windows UNC trusted-root + link gate, run BEFORE any resolution because
+  a `realpath`/`resolve()` of a UNC path is itself the outbound SMB probe that
+  leaks NTLM) and rejects an unrepresentable/UNC/sensitive value. The operator's
+  configured `taskrunner.workspace_dir` (the constructor and this reload path)
+  is trusted and keeps the plain resolve + sensitive-path check, so a
+  legitimately configured network-share workspace still boots and reloads — the
+  threat the gate addresses is an untrusted request value, not the operator's
+  own config.
 
 Per-task sessions (`taskrunner:{task_id}:task{N}`) are reset in a `finally`
 block after the gather, so sessions are cleaned up even if `CancelledError`

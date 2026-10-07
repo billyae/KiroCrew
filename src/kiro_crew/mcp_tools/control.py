@@ -218,6 +218,20 @@ def schemas() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Human-readable task name (auto-derived from spec if omitted)",
                     },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "Agent/crew that executes the run (same picker as the "
+                            "Task Runner UI). Omit to use the session's default."
+                        ),
+                    },
+                    "workspace": {
+                        "type": "string",
+                        "description": (
+                            "Workspace directory the run executes in (same selector as "
+                            "the UI). Omit to use the session's/configured default."
+                        ),
+                    },
                 },
                 "required": ["spec"],
             },
@@ -1101,8 +1115,27 @@ def task_run(name: str, args: dict[str, Any]) -> str:
     args = validate_tool_args(args, TASK_RUN_SCHEMA)
     spec = args["spec"]
     task_name = args.get("name", "")
+    # UI launch-control parity: the agent/crew that executes the run and the
+    # workspace it runs in. Both are forwarded verbatim to the already-existing
+    # backend parameters (``agent``, ``workspace_dir``); the backend resolves
+    # them, screens ``workspace_dir`` through the UNC/sensitive-path gate, and
+    # returns a clear error for an unknown or unsafe value, so the tool does not
+    # second-guess them here. Omitted -> the backend's session/config defaults,
+    # which is the common case.
+    agent = args.get("agent", "")
+    workspace = args.get("workspace", "")
     _src = "cron" if mcp_core._resolve_session_key().startswith("cron:") else "mcp"
-    d = mcp_core._post("/api/taskrunner", {"spec": spec, "name": task_name, "source": _src})
+
+    d = mcp_core._post(
+        "/api/taskrunner",
+        {
+            "spec": spec,
+            "name": task_name,
+            "source": _src,
+            "agent": agent,
+            "workspace_dir": workspace,
+        },
+    )
     if d.get("error"):
         return f"Error: {d['error']}"
 

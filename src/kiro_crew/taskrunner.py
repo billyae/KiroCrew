@@ -209,20 +209,51 @@ def _auto_approve_scope(task_id: str) -> str:
     return f"{_SESSION_PREFIX}:{task_id}:autoapprove"
 
 
-def _resolve_workspace_dir(raw: str) -> str:
-    """Canonicalize a user-supplied workspace_dir and reject sensitive paths.
+def _resolve_workspace_dir(raw: str, *, request_scoped: bool = False) -> str:
+    """Canonicalize a workspace_dir and reject unsafe paths.
 
-    Expands ``~`` and resolves symlinks + ``..`` traversal BEFORE the
-    ``is_sensitive_path`` check, so a value like ``/tmp/../../home/user/.aws``
+    Resolves ``~``, symlinks and ``..`` traversal, then rejects
+    ``is_sensitive_path`` targets, so a value like ``/tmp/../../home/user/.aws``
     or a symlink pointing at ``~/.ssh`` cannot slip past by presenting a
     non-sensitive-looking spelling. Returns the resolved absolute path, or an
     empty string when ``raw`` is blank. Raises ``ValueError`` for
     sensitive/credential locations.
+
+    ``request_scoped`` marks a value supplied by a request or tool call (the
+    per-run ``workspace_dir`` override) rather than the operator's own
+    configuration. Only a request-scoped value is additionally screened through
+    the shared ``validate_file_path`` gate BEFORE resolution: on Windows,
+    ``Path.resolve()`` on a UNC path (``\\\\host\\share``) is itself the
+    outbound SMB probe that leaks NTLM credentials, so a prompt-injected UNC
+    path from an agent must be refused on the un-resolved string. The operator's
+    configured ``taskrunner.workspace_dir`` is trusted and keeps the plain
+    resolve path, so a legitimately configured network-share workspace does not
+    break gateway boot — the threat is an untrusted request value, not the
+    operator's config.
     """
     raw = (raw or "").strip()
     if not raw:
         return ""
-    resolved = str(Path(raw).expanduser().resolve())
+    if request_scoped:
+        screened = validate_file_path(raw)
+        if screened is None:
+            try:
+                sel().log_tool_invocation(
+                    session_key="taskrunner",
+                    source="taskrunner",
+                    tool_name="workspace_dir_validate",
+                    outcome="denied",
+                    metadata={"raw": raw, "reason": "unsafe_path"},
+                )
+            except Exception:
+                logger.debug("SEL audit for workspace_dir rejection failed", exc_info=True)
+            raise ValueError(
+                "workspace_dir is an unrepresentable, UNC, or sensitive/credential "
+                f"path and was rejected: {raw!r}"
+            )
+        resolved = screened
+    else:
+        resolved = str(Path(raw).expanduser().resolve())
     if is_sensitive_path(resolved):
         # Security-relevant permission decision — audit before rejecting so a
         # probe for workspace_dir bypass vectors leaves a trace in the SEL log.
@@ -1118,7 +1149,7 @@ class TaskRunner:
             spec_content = ""
 
         self._refresh_from_config()
-        _override = _resolve_workspace_dir(workspace_dir)
+        _override = _resolve_workspace_dir(workspace_dir, request_scoped=True)
         async with self._start_lock:
             self._require_workflow_ready()
             if self._admission_closed():
@@ -1404,7 +1435,7 @@ class TaskRunner:
             # produced there (files/commits, git worktree state). The path is still
             # resolved+validated below regardless of status (audit/sensitive-path guard).
             self._refresh_from_config()
-            _override = _resolve_workspace_dir(workspace_dir)
+            _override = _resolve_workspace_dir(workspace_dir, request_scoped=True)
             if _override and run.status == "planned":
                 run.work_dir = _override
 
@@ -1573,7 +1604,7 @@ class TaskRunner:
         if not task_id:
             task_id = f"{spec_path.stem}_{int(time.time())}"
         self._refresh_from_config()
-        _override = _resolve_workspace_dir(workspace_dir)
+        _override = _resolve_workspace_dir(workspace_dir, request_scoped=True)
         _effective_ws = _override or self._workspace_dir
         task_dir = Path(_effective_ws) if _effective_ws else self._work_dir / spec_path.stem
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -2075,7 +2106,7 @@ class TaskRunner:
         self._require_workflow_ready()
         # Validate the per-run workspace override before entering the admission
         # lock so a bad/sensitive path fails without blocking other starts.
-        _resolve_workspace_dir(workspace_dir)
+        _resolve_workspace_dir(workspace_dir, request_scoped=True)
         self._agent = agent
         try:
             from kiro_crew.hooks import validate_file_path

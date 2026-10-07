@@ -1506,6 +1506,16 @@ TASK_RUN_SCHEMA = ToolSchema(
     fields=[
         FieldSpec("spec", str, required=True, max_len=MAX_LONG_STRING),
         FieldSpec("name", str, max_len=200),
+        # UI launch-control parity. The backend ``/api/taskrunner`` endpoint
+        # already accepts these; the tool only forwards them. ``agent`` and
+        # ``workspace`` are free-form identifiers the backend resolves (and
+        # errors on an unknown value), so they are length-bounded here rather
+        # than enum-checked. The spec PATH is validated for traversal/
+        # sensitivity by the backend's ``_validate_spec_path``, and
+        # ``workspace`` by ``_resolve_workspace_dir``'s UNC/sensitive-path
+        # gate — not duplicated here.
+        FieldSpec("agent", str, max_len=MAX_SHORT_STRING),
+        FieldSpec("workspace", str, max_len=MAX_SHORT_STRING),
     ],
 )
 

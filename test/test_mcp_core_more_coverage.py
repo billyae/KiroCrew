@@ -1178,6 +1178,44 @@ class TestTaskRunTool:
             with patch.object(mcp_core, "_post", return_value={"error": "no runner"}):
                 assert _call_tool_inner("task_run", {"spec": "x"}) == "Error: no runner"
 
+    def test_agent_and_workspace_are_forwarded_to_the_run_endpoint(self) -> None:
+        # UI launch-control parity: the tool forwards agent and workspace to
+        # the already-existing backend parameters.
+        with patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:c"):
+            with patch.object(mcp_core, "_post", return_value={"ok": True}) as p:
+                out = _call_tool_inner(
+                    "task_run",
+                    {
+                        "spec": ".kiro/specs/f/spec.md",
+                        "agent": "atlas",
+                        "workspace": "/w/proj",
+                    },
+                )
+        path, body = p.call_args.args
+        assert path == "/api/taskrunner"
+        assert body["agent"] == "atlas"
+        assert body["workspace_dir"] == "/w/proj"
+        assert body["spec"] == ".kiro/specs/f/spec.md"
+        assert out.startswith("Task runner started:")
+
+    def test_omitted_agent_and_workspace_default_to_empty(self) -> None:
+        # Omitted -> the backend's session/config defaults; the tool forwards
+        # the empty strings the backend already treats as "use default".
+        with patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:c"):
+            with patch.object(mcp_core, "_post", return_value={"ok": True}) as p:
+                _call_tool_inner("task_run", {"spec": "x"})
+        body = p.call_args.args[1]
+        assert body["agent"] == ""
+        assert body["workspace_dir"] == ""
+
+    def test_the_descriptor_advertises_the_ui_parity_parameters(self) -> None:
+        from kiro_crew.mcp_tools.control import schemas
+
+        spec = next(s for s in schemas() if s["name"] == "task_run")
+        props = spec["inputSchema"]["properties"]
+        assert "agent" in props
+        assert "workspace" in props
+
 
 # ── ops_mission_control_api ─────────────────────────────────────────────
 
