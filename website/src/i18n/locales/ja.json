@@ -13122,7 +13122,15 @@
         "default_crewmate_failed": "デフォルトのクルーメイトを変更できませんでした",
         "default_crewmate_hint": "新しいセッションがどのクルーメイトとして始まるか — チャット入力欄の ★（新しいセッションの既定エージェント）が書き込むのと同じ設定です。すでに開いているチャットは開始時のクルーメイトのままです。",
         "default_crewmate_refused_because": "{{name}} を既定のクルーメイトにできませんでした — {{reason}}。ページを再読み込みして、もう一度選んでください。",
-        "default_crewmate_unknown_reason": "{{name}} はクルーメイト一覧にありません"
+        "default_crewmate_unknown_reason": "{{name}} はクルーメイト一覧にありません",
+        "resource_thresholds": "リソースのしきい値",
+        "resource_thresholds_description": "サブエージェントの起動を保留し、[RESOURCES] の注意を出すメモリ水準です。変更は再起動なしで反映されます。",
+        "spawn_min_memory": "起動時の最小メモリ",
+        "spawn_min_memory_hint": "サブエージェント起動後に残しておく空きメモリです。収まらない起動はキューで待機します。0 でチェックを無効にします。",
+        "memory_pressure_threshold": "メモリ逼迫のしきい値",
+        "memory_pressure_threshold_hint": "空きメモリがこの値以下になると、メモリが逼迫しているとエージェントに伝えます。注意のみです。0 で無効にします。",
+        "memory_critical_threshold": "メモリ危険域のしきい値",
+        "memory_critical_threshold_hint": "空きメモリがこの値以下になると、メモリが著しく不足しているとエージェントに伝え、スケジュールされた cron の実行は待機します。逼迫のしきい値以下にしてください。0 で無効にします。"
       },
       "mcpTab": {
         "actions": "アクション",

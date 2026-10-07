@@ -13512,7 +13512,15 @@
         "default_crewmate_failed": "Impossible de changer le coéquipier par défaut",
         "default_crewmate_hint": "Le coéquipier avec lequel démarre une nouvelle session — le même réglage que celui qu’écrit la ★ du champ de discussion (Agent par défaut des nouvelles sessions). Les discussions déjà ouvertes gardent celui avec lequel elles ont commencé.",
         "default_crewmate_refused_because": "Impossible de définir {{name}} comme coéquipier par défaut — {{reason}}. Recharge la page et choisis à nouveau.",
-        "default_crewmate_unknown_reason": "{{name}} ne figure plus dans la liste des coéquipiers"
+        "default_crewmate_unknown_reason": "{{name}} ne figure plus dans la liste des coéquipiers",
+        "resource_thresholds": "Seuils de ressources",
+        "resource_thresholds_description": "Niveaux de mémoire qui retiennent le démarrage des sous-agents et déclenchent l’avis [RESOURCES]. Les changements s’appliquent sans redémarrage.",
+        "spawn_min_memory": "Mémoire minimale au démarrage",
+        "spawn_min_memory_hint": "Mémoire disponible qui doit rester après le démarrage d’un sous-agent ; un démarrage qui ne tient pas attend dans la file. 0 désactive la vérification.",
+        "memory_pressure_threshold": "Seuil de pression mémoire",
+        "memory_pressure_threshold_hint": "À ce niveau de mémoire disponible ou en dessous, l’agent est informé que la mémoire est limitée. Indicatif uniquement. 0 le désactive.",
+        "memory_critical_threshold": "Seuil critique de mémoire",
+        "memory_critical_threshold_hint": "À ce niveau de mémoire disponible ou en dessous, l’agent est informé que la mémoire est critique et les exécutions cron planifiées attendent. Gardez-le inférieur ou égal au seuil de pression. 0 le désactive."
       },
       "mcpTab": {
         "actions": "Actions",

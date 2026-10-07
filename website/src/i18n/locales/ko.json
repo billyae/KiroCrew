@@ -13122,7 +13122,15 @@
         "default_crewmate_failed": "기본 크루메이트를 변경할 수 없습니다",
         "default_crewmate_hint": "새 세션이 어떤 크루메이트로 시작할지 정합니다 — 채팅 입력창의 ★(새 세션의 기본 에이전트)가 쓰는 것과 같은 설정입니다. 이미 열린 채팅은 시작할 때의 크루메이트를 유지합니다.",
         "default_crewmate_refused_because": "{{name}}을(를) 기본 크루메이트로 설정할 수 없습니다 — {{reason}}. 페이지를 새로 고친 뒤 다시 선택하세요.",
-        "default_crewmate_unknown_reason": "크루메이트 목록에 {{name}}이(가) 더 이상 없습니다"
+        "default_crewmate_unknown_reason": "크루메이트 목록에 {{name}}이(가) 더 이상 없습니다",
+        "resource_thresholds": "리소스 임계값",
+        "resource_thresholds_description": "하위 에이전트 시작을 보류하고 [RESOURCES] 안내를 띄우는 메모리 수준입니다. 변경 사항은 재시작 없이 적용됩니다.",
+        "spawn_min_memory": "시작 최소 메모리",
+        "spawn_min_memory_hint": "하위 에이전트 시작 후 남아 있어야 하는 사용 가능 메모리입니다. 들어가지 않는 시작은 대기열에서 기다립니다. 0이면 검사를 끕니다.",
+        "memory_pressure_threshold": "메모리 부족 임계값",
+        "memory_pressure_threshold_hint": "사용 가능 메모리가 이 값 이하이면 에이전트에게 메모리가 부족하다고 알립니다. 안내만 합니다. 0이면 끕니다.",
+        "memory_critical_threshold": "메모리 위험 임계값",
+        "memory_critical_threshold_hint": "사용 가능 메모리가 이 값 이하이면 에이전트에게 메모리가 심각하게 부족하다고 알리고 예약된 cron 실행은 대기합니다. 부족 임계값 이하로 두세요. 0이면 끕니다."
       },
       "mcpTab": {
         "actions": "동작",

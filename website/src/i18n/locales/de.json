@@ -13317,7 +13317,15 @@
         "default_crewmate_failed": "Der Standard-Crew-Kamerad konnte nicht geändert werden",
         "default_crewmate_hint": "Als welcher Crew-Kamerad eine neue Sitzung startet – dieselbe Einstellung, die der ★ im Chat-Eingabefeld (Standard-Agent für neue Sitzungen) schreibt. Bereits geöffnete Chats behalten den, mit dem sie begonnen haben.",
         "default_crewmate_refused_because": "{{name}} konnte nicht als Standard-Crew-Kamerad gesetzt werden – {{reason}}. Lade die Seite neu und wähl noch einmal.",
-        "default_crewmate_unknown_reason": "{{name}} steht nicht mehr in der Crewmate-Liste"
+        "default_crewmate_unknown_reason": "{{name}} steht nicht mehr in der Crewmate-Liste",
+        "resource_thresholds": "Ressourcen-Schwellenwerte",
+        "resource_thresholds_description": "Speicherstände, bei denen Subagenten-Starts zurückgehalten werden und der [RESOURCES]-Hinweis erscheint. Änderungen gelten ohne Neustart.",
+        "spawn_min_memory": "Mindestspeicher für Starts",
+        "spawn_min_memory_hint": "Verfügbarer Speicher, der nach einem Subagenten-Start übrig bleiben muss; ein Start, der nicht passt, wartet in der Warteschlange. 0 schaltet die Prüfung ab.",
+        "memory_pressure_threshold": "Schwelle für Speicherdruck",
+        "memory_pressure_threshold_hint": "Bei so viel verfügbarem Speicher oder weniger wird dem Agenten gemeldet, dass Speicher knapp ist. Nur ein Hinweis. 0 schaltet ihn ab.",
+        "memory_critical_threshold": "Kritische Speicherschwelle",
+        "memory_critical_threshold_hint": "Bei so viel verfügbarem Speicher oder weniger wird dem Agenten gemeldet, dass Speicher kritisch knapp ist, und geplante Cron-Läufe warten. Höchstens so hoch wie die Druckschwelle wählen. 0 schaltet sie ab."
       },
       "mcpTab": {
         "actions": "Aktionen",

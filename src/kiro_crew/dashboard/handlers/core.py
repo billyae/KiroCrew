@@ -67,6 +67,8 @@ from kiro_crew.config.sections import (
     DECISION_MODEL_ROUTE_TIERS,
     FOLDER_SORT_MODES,
     JUDGE_PROVIDERS,
+    RESOURCE_MEMORY_GB_MAX,
+    RESOURCE_MEMORY_GB_MIN,
     STT_LANGUAGE_AUTO,
     transcribe_vocabulary_name,
 )
@@ -2742,6 +2744,27 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "type": "float",
         "min": SOFT_STOP_BUDGET_MIN,
         "max": SOFT_STOP_BUDGET_MAX,
+    },
+    # Resource knobs (#14988): the per-start spawn memory floor and the two
+    # [RESOURCES] posture thresholds. Performance/stability trade-offs the user
+    # owns, not authority grants -- none of them widens a permission, approval
+    # tier or credential path, which is why they belong here while
+    # ``agent.default_approval_mode`` (#8987) does not. Hot-applied: every
+    # reader takes them from the live config on each check.
+    "agent.spawn_min_memory_gb": {
+        "type": "float",
+        "min": RESOURCE_MEMORY_GB_MIN,
+        "max": RESOURCE_MEMORY_GB_MAX,
+    },
+    "agent.resource_pressure_gb": {
+        "type": "float",
+        "min": RESOURCE_MEMORY_GB_MIN,
+        "max": RESOURCE_MEMORY_GB_MAX,
+    },
+    "agent.resource_critical_gb": {
+        "type": "float",
+        "min": RESOURCE_MEMORY_GB_MIN,
+        "max": RESOURCE_MEMORY_GB_MAX,
     },
     "session.timeout_secs": {"type": "int", "min": SESSION_TIMEOUT_MIN, "max": SESSION_TIMEOUT_MAX},
     # Range shared with the load-time clamp in config/loader.py — one constant

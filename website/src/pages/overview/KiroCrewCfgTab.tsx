@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, Bot, FolderOpen, Brain, Settings, Lock, Flame, Plus } from 'lucide-react'
+import { Check, Bot, FolderOpen, Brain, Settings, Lock, Flame, Gauge, Plus } from 'lucide-react'
 import { api } from '../../api/client'
 import { Card, CardTitle, Badge, Btn, EmptyState, Input } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -45,7 +45,7 @@ interface KiroCrewCfg {
   default_workspace: string
   memory_stores: Record<string, MemoryStoreCfg>
   default_memory_store: string
-  agent: { default_agent: string; provider: string; model: string; approval_mode: string; sandbox: string; subagent_max_turns?: number; max_subagents?: number; subagent_auto_max?: number; tool_search?: boolean; max_channels: number; max_channel_agents: number }
+  agent: { default_agent: string; provider: string; model: string; approval_mode: string; sandbox: string; subagent_max_turns?: number; max_subagents?: number; subagent_auto_max?: number; spawn_min_memory_gb?: number; resource_pressure_gb?: number; resource_critical_gb?: number; tool_search?: boolean; max_channels: number; max_channel_agents: number }
   session: { timeout_secs: number; pool_size: number; pool_agent: string; pool_ttl_secs: number }
   memory: { embedding_provider: string }
   auto_update: boolean
@@ -193,22 +193,24 @@ function CfgSelect({ label, path, value, options, hint, labels, onSave }: { labe
   )
 }
 
-function CfgNumber({ label, path, value, suffix, min, max, hint, onSave }: { label: string; path: string; value: number; suffix?: string; min?: number; max?: number; hint?: string; onSave: (p: string, v: number) => void }) {
+function CfgNumber({ label, path, value, suffix, min, max, step, hint, onSave }: { label: string; path: string; value: number; suffix?: string; min?: number; max?: number; step?: number; hint?: string; onSave: (p: string, v: number) => void }) {
   const ime = useImeGuard()
   const [local, setLocal] = useState(String(value))
   const { ok, markDirty } = useDirtyTrack(value)
   const [err, setErr] = useState('')
   useEffect(() => { setLocal(String(value)); setErr('') }, [value])
   const commit = () => {
-    const n = parseInt(local)
-    if (isNaN(n)) { setErr('invalid'); return }
+    // A fractional `step` marks a decimal field (GB thresholds); every other row
+    // is an integer and keeps parseInt, so typing "1.5" there still saves 1.
+    const n = step !== undefined && !Number.isInteger(step) ? parseFloat(local) : parseInt(local)
+    if (!Number.isFinite(n)) { setErr('invalid'); return }
     if (min !== undefined && n < min) { setErr(`min ${min}`); return }
     if (max !== undefined && n > max) { setErr(`max ${max}`); return }
     if (n !== value) { markDirty(); setErr(''); onSave(path, n) }
   }
   return (
     <CfgRow label={label} hint={hint} ok={ok && !err}>
-      <input type="number" aria-label={label} min={min} max={max} placeholder={min !== undefined && max !== undefined ? `${min}–${max}` : undefined}
+      <input type="number" aria-label={label} min={min} max={max} step={step} placeholder={min !== undefined && max !== undefined ? `${min}–${max}` : undefined}
         className={`${inputCls} text-right ${err ? 'border-danger' : ''}`}
         value={local}
         onChange={e => { setLocal(e.target.value); setErr('') }}
@@ -484,6 +486,18 @@ export default function KiroCrewCfgTab() {
 
       {/* Subagent Settings */}
       <SubagentSettings cfg={cfg} onSaved={() => queryClient.invalidateQueries({ queryKey: ['kirocrewConfig'] })} />
+
+      {/* Resource thresholds (#14988): the memory knobs that gate subagent starts
+          and set the [RESOURCES] posture. Saved one row at a time, hot-applied. */}
+      <Card>
+        <CardTitle><Gauge className="lucide-inline" /> {i18nT('pages.overview.kiroCrewCfgTab.resource_thresholds')} <InfoTip text={i18nT('pages.overview.kiroCrewCfgTab.resource_thresholds_description')} /></CardTitle>
+        {saveErr && <p className="text-danger text-[13px] mb-2">{saveErr}</p>}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 max-[600px]:grid-cols-1">
+          <CfgNumber key={`spawnmem-${rev}`} label={i18nT('pages.overview.kiroCrewCfgTab.spawn_min_memory')} path="agent.spawn_min_memory_gb" value={cfg.agent.spawn_min_memory_gb ?? 2} suffix="GB" min={0} max={1024} step={0.5} hint={i18nT('pages.overview.kiroCrewCfgTab.spawn_min_memory_hint')} onSave={save} />
+          <CfgNumber key={`pressure-${rev}`} label={i18nT('pages.overview.kiroCrewCfgTab.memory_pressure_threshold')} path="agent.resource_pressure_gb" value={cfg.agent.resource_pressure_gb ?? 4} suffix="GB" min={0} max={1024} step={0.5} hint={i18nT('pages.overview.kiroCrewCfgTab.memory_pressure_threshold_hint')} onSave={save} />
+          <CfgNumber key={`critical-${rev}`} label={i18nT('pages.overview.kiroCrewCfgTab.memory_critical_threshold')} path="agent.resource_critical_gb" value={cfg.agent.resource_critical_gb ?? 2} suffix="GB" min={0} max={1024} step={0.5} hint={i18nT('pages.overview.kiroCrewCfgTab.memory_critical_threshold_hint')} onSave={save} />
+        </div>
+      </Card>
 
       {/* Warm Pool */}
       {provider.capabilities.warmPool && (

@@ -317,6 +317,64 @@ describe('KiroCrewCfgTab — numeric rows', () => {
 })
 
 // ── CfgSelect + CfgToggle ────────────────────────────────────────────────
+describe('KiroCrewCfgTab — resource thresholds (#14988)', () => {
+  it('shows the shipped defaults when the config omits the three keys', async () => {
+    await renderTab()
+    expect(num('Spawn Min Memory').value).toBe('2')
+    expect(num('Memory Pressure Threshold').value).toBe('4')
+    expect(num('Memory Critical Threshold').value).toBe('2')
+  })
+
+  it('saves a fractional GB value as a decimal, not truncated to an integer', async () => {
+    const updated = clone() as Cfg & { agent: Record<string, unknown> }
+    updated.agent.spawn_min_memory_gb = 1.5
+    seed(CFG, updated)
+
+    await renderTab()
+    const input = num('Spawn Min Memory')
+    fireEvent.change(input, { target: { value: '1.5' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(vi.mocked(api).patchConfig).toHaveBeenCalledWith('agent.spawn_min_memory_gb', 1.5)
+    })
+  })
+
+  it('patches each threshold under its own config path', async () => {
+    await renderTab()
+    for (const [label, path] of [
+      ['Memory Pressure Threshold', 'agent.resource_pressure_gb'],
+      ['Memory Critical Threshold', 'agent.resource_critical_gb'],
+    ] as const) {
+      const input = num(label)
+      fireEvent.change(input, { target: { value: '0.5' } })
+      fireEvent.blur(input)
+      await waitFor(() => {
+        expect(vi.mocked(api).patchConfig).toHaveBeenCalledWith(path, 0.5)
+      })
+    }
+  })
+
+  it('refuses a value above the write ceiling without patching', async () => {
+    await renderTab()
+    const input = num('Spawn Min Memory')
+    fireEvent.change(input, { target: { value: '2048' } })
+    fireEvent.blur(input)
+    expect(screen.getByText('max 1024')).toBeInTheDocument()
+    expect(vi.mocked(api).patchConfig).not.toHaveBeenCalled()
+  })
+
+  it('keeps integer rows integer: a decimal typed into Pool Size saves its integer part', async () => {
+    await renderTab()
+    const input = num('Pool Size')
+    fireEvent.change(input, { target: { value: '3.7' } })
+    fireEvent.blur(input)
+    await waitFor(() => {
+      expect(vi.mocked(api).patchConfig).toHaveBeenCalledWith('session.pool_size', 3)
+    })
+  })
+})
+
 describe('KiroCrewCfgTab — select and toggle rows', () => {
   it('patches the selected option for the row that owns it', async () => {
     const updated = clone()
@@ -548,9 +606,10 @@ describe('KiroCrewCfgTab — select and toggle rows', () => {
     await renderTab()
     fireEvent.click(toggleFor('MCP Tool Search'))
 
-    // The banner is rendered once in Warm Pool and once in Config Summary.
+    // The banner is rendered once in each card of patch-saved rows: Resource
+    // Thresholds, Warm Pool and Config Summary.
     await waitFor(() => {
-      expect(screen.getAllByText('read-only config')).toHaveLength(2)
+      expect(screen.getAllByText('read-only config')).toHaveLength(3)
     })
     // onError also invalidates the config query, so it refetches.
     await waitFor(() => expect(m.kirocrewConfig).toHaveBeenCalledTimes(2))

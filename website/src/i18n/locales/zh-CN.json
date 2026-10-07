@@ -13122,7 +13122,15 @@
         "default_crewmate_failed": "无法更改默认队友",
         "default_crewmate_hint": "新会话以哪位队友开始 —— 聊天输入框里的 ★（新会话默认代理）写入同一项设置。已打开的对话继续使用开始时那位。",
         "default_crewmate_refused_because": "无法将 {{name}} 设为默认队友 —— {{reason}}。请刷新页面后重新选择。",
-        "default_crewmate_unknown_reason": "队友列表中已没有 {{name}}"
+        "default_crewmate_unknown_reason": "队友列表中已没有 {{name}}",
+        "resource_thresholds": "资源阈值",
+        "resource_thresholds_description": "决定何时暂缓启动子代理以及何时发出 [RESOURCES] 提示的内存水位。修改后无需重启即可生效。",
+        "spawn_min_memory": "启动最低内存",
+        "spawn_min_memory_hint": "子代理启动后必须保留的可用内存；放不下的启动会在队列中等待。设为 0 则关闭此检查。",
+        "memory_pressure_threshold": "内存紧张阈值",
+        "memory_pressure_threshold_hint": "可用内存不高于此值时，会告诉代理内存紧张。仅作提示。设为 0 则关闭。",
+        "memory_critical_threshold": "内存严重不足阈值",
+        "memory_critical_threshold_hint": "可用内存不高于此值时，会告诉代理内存严重不足，定时任务也会推迟运行。应不高于紧张阈值。设为 0 则关闭。"
       },
       "mcpTab": {
         "actions": "操作",

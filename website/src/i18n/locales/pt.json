@@ -13512,7 +13512,15 @@
         "default_crewmate_failed": "Não foi possível alterar o colega padrão",
         "default_crewmate_hint": "Com qual colega uma nova sessão começa: a mesma configuração que a ★ da caixa de chat (Agente padrão para novas sessões) grava. Os chats já abertos mantêm o colega com que começaram.",
         "default_crewmate_refused_because": "Não foi possível definir {{name}} como colega padrão: {{reason}}. Recarregue a página e escolha de novo.",
-        "default_crewmate_unknown_reason": "{{name}} já não está na lista de companheiros"
+        "default_crewmate_unknown_reason": "{{name}} já não está na lista de companheiros",
+        "resource_thresholds": "Limites de recursos",
+        "resource_thresholds_description": "Níveis de memória que seguram o início de subagentes e ativam o aviso [RESOURCES]. As alterações valem sem reiniciar.",
+        "spawn_min_memory": "Memória mínima para iniciar",
+        "spawn_min_memory_hint": "Memória disponível que deve sobrar após iniciar um subagente; um início que não cabe espera na fila. 0 desativa a verificação.",
+        "memory_pressure_threshold": "Limite de pressão de memória",
+        "memory_pressure_threshold_hint": "Com esta memória disponível ou menos, o agente é avisado de que a memória está apertada. Apenas informativo. 0 desativa.",
+        "memory_critical_threshold": "Limite crítico de memória",
+        "memory_critical_threshold_hint": "Com esta memória disponível ou menos, o agente é avisado de que a memória está criticamente baixa e as execuções cron agendadas esperam. Mantenha-o igual ou abaixo do limite de pressão. 0 desativa."
       },
       "mcpTab": {
         "actions": "Ações",
