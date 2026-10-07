@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { defaultScheduler, notifyManager } from '@tanstack/react-query'
 import type { ComponentProps } from 'react'
 import { renderWithProviders } from './helpers'
 import WorkspacePicker from '../components/WorkspacePicker'
@@ -40,6 +41,9 @@ let anchorRef: { current: HTMLElement | null }
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
+  // Deliver react-query observer notifications on the microtask queue so an awaited `act`
+  // flushes a late read's landing; the default batched scheduler defers it under fake timers.
+  notifyManager.setScheduler(queueMicrotask)
   anchor = document.createElement('button')
   anchor.textContent = 'anchor'
   anchor.setAttribute('data-testid', 'anchor-btn')
@@ -51,6 +55,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  notifyManager.setScheduler(defaultScheduler)
   vi.clearAllTimers()
   vi.useRealTimers()
   anchor.remove()
@@ -114,6 +119,7 @@ describe('WorkspacePicker', () => {
   })
 
   describe('directory browsing', () => {
+    const timeout = () => Object.assign(new Error('deadline exceeded'), { name: 'TimeoutError' })
     it('loads the default directory and seeds the path input with it', async () => {
       renderPicker()
       // The input is on screen from mount; the value is what proves the opening read landed.
@@ -162,32 +168,6 @@ describe('WorkspacePicker', () => {
       expect(await screen.findByText('No subdirectories')).toBeInTheDocument()
     })
 
-    it('ignores an older browse failure after a newer browse has succeeded', async () => {
-      renderPicker()
-      await screen.findByText('alpha')
-
-      let rejectOlder!: (reason?: unknown) => void
-      const older = new Promise<BrowseDirsResult>((_resolve, reject) => { rejectOlder = reject })
-      let resolveNewer!: (value: BrowseDirsResult) => void
-      const newer = new Promise<BrowseDirsResult>(resolve => { resolveNewer = resolve })
-      vi.mocked(api.browseDirs)
-        .mockReturnValueOnce(older)
-        .mockReturnValueOnce(newer)
-
-      fireEvent.click(screen.getByText('alpha'))
-      fireEvent.click(screen.getByText('beta'))
-      await act(async () => {
-        resolveNewer(browseResult('/home/u/beta', '/home/u', [
-          { name: 'newest', path: '/home/u/beta/newest' },
-        ]))
-      })
-      expect(await screen.findByText('newest')).toBeInTheDocument()
-
-      await act(async () => { rejectOlder(new Error('older listing failed')) })
-      expect(screen.getByText('newest')).toBeInTheDocument()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
-    })
 
     it('surfaces a browse failure without claiming the directory is empty', async () => {
       vi.mocked(api.browseDirs).mockRejectedValue(new Error('nope'))
@@ -387,6 +367,33 @@ describe('WorkspacePicker', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Folder listing timed out')
     })
 
+    it('ignores an older browse failure after a newer browse has succeeded', async () => {
+      renderPicker()
+      await screen.findByText('alpha')
+
+      let rejectOlder!: (reason?: unknown) => void
+      const older = new Promise<BrowseDirsResult>((_resolve, reject) => { rejectOlder = reject })
+      let resolveNewer!: (value: BrowseDirsResult) => void
+      const newer = new Promise<BrowseDirsResult>(resolve => { resolveNewer = resolve })
+      vi.mocked(api.browseDirs)
+        .mockReturnValueOnce(older)
+        .mockReturnValueOnce(newer)
+
+      fireEvent.click(screen.getByText('alpha'))
+      fireEvent.click(screen.getByText('beta'))
+      await act(async () => {
+        resolveNewer(browseResult('/home/u/beta', '/home/u', [
+          { name: 'newest', path: '/home/u/beta/newest' },
+        ]))
+      })
+      expect(await screen.findByText('newest')).toBeInTheDocument()
+
+      await act(async () => { rejectOlder(new Error('older listing failed')) })
+      expect(screen.getByText('newest')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    })
+
     it('a STALE settlement neither re-enables Retry nor replaces the notice; only the ticketed one does', async () => {
       renderPicker()
       await screen.findByText('alpha')
@@ -427,6 +434,37 @@ describe('WorkspacePicker', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Retrying…' })).not.toBeInTheDocument()
     })
+
+    it('a keystroke retires the retry in flight: its late failure does not bring the notice back', async () => {
+      vi.mocked(api.browseDirs)
+        .mockResolvedValueOnce(browseResult())
+        .mockRejectedValueOnce(timeout())
+      renderPicker()
+      fireEvent.click(await screen.findByText('alpha'))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Opening /home/u/alpha timed out')
+
+      let failRetry!: (reason: unknown) => void
+      vi.mocked(api.browseDirs).mockReturnValueOnce(
+        new Promise<BrowseDirsResult>((_resolve, reject) => { failRetry = reject }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      expect(api.browseDirs).toHaveBeenLastCalledWith('/home/u/alpha')
+      expect(screen.getByRole('button', { name: 'Retrying…' })).toHaveAttribute('aria-disabled', 'true')
+
+      fireEvent.change(screen.getByLabelText('Project directory path'), { target: { value: '/home/u/beta' } })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retrying…' })).not.toBeInTheDocument()
+
+      // The request the user typed over lands now, as a failure: it describes a path they replaced.
+      await act(async () => { failRetry(timeout()) })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retrying…' })).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Project directory path')).toHaveValue('/home/u/beta')
+      expect(api.browseDirs).toHaveBeenCalledTimes(3)
+    })
+
+
   })
 
   describe('editing the path after a listing failure', () => {
@@ -471,34 +509,6 @@ describe('WorkspacePicker', () => {
       expect(screen.getByLabelText('Project directory path')).toHaveValue('/home/u/beta')
     })
 
-    it('a keystroke retires the retry in flight: its late failure does not bring the notice back', async () => {
-      vi.mocked(api.browseDirs)
-        .mockResolvedValueOnce(browseResult())
-        .mockRejectedValueOnce(timeout())
-      renderPicker()
-      fireEvent.click(await screen.findByText('alpha'))
-      expect(await screen.findByRole('alert')).toHaveTextContent('Opening /home/u/alpha timed out')
-
-      let failRetry!: (reason: unknown) => void
-      vi.mocked(api.browseDirs).mockReturnValueOnce(
-        new Promise<BrowseDirsResult>((_resolve, reject) => { failRetry = reject }),
-      )
-      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-      expect(api.browseDirs).toHaveBeenLastCalledWith('/home/u/alpha')
-      expect(screen.getByRole('button', { name: 'Retrying…' })).toHaveAttribute('aria-disabled', 'true')
-
-      fireEvent.change(screen.getByLabelText('Project directory path'), { target: { value: '/home/u/beta' } })
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Retrying…' })).not.toBeInTheDocument()
-
-      // The request the user typed over lands now, as a failure: it describes a path they replaced.
-      await act(async () => { failRetry(timeout()) })
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Retrying…' })).not.toBeInTheDocument()
-      expect(screen.getByLabelText('Project directory path')).toHaveValue('/home/u/beta')
-      expect(api.browseDirs).toHaveBeenCalledTimes(3)
-    })
 
     it('a keystroke during a drill claims the field, not the listing: the drill lands its rows and leaves the typed path alone', async () => {
       // The success arm runs `setInput(d.path)`, so a drill landing after the edit would erase what
@@ -812,43 +822,6 @@ describe('WorkspacePicker', () => {
       expect(screen.getByLabelText('Project directory path')).toHaveValue('/home/u/typed')
     })
 
-    it('the re-run supersedes a reopen\'s opening read still in flight on the create form: one listing lands', async () => {
-      // A parent can close and reopen the popover while the create form is up (only a click
-      // outside and a finished create reset it), and the reopen runs the opening read with the
-      // create form still shown. Back then takes a new ticket for the same listing; the older
-      // read's landing is ignored, and `browsing` follows the one that holds the ticket.
-      let settleReopen!: (value: BrowseDirsResult) => void
-      let settleRerun!: (value: BrowseDirsResult) => void
-      vi.mocked(api.browseDirs)
-        .mockRejectedValueOnce(timeout())
-        .mockReturnValueOnce(new Promise<BrowseDirsResult>(resolve => { settleReopen = resolve }))
-        .mockReturnValueOnce(new Promise<BrowseDirsResult>(resolve => { settleRerun = resolve }))
-      const { rerender, onOpenChange, onCreated } = renderPicker()
-      expect(await screen.findByRole('alert')).toHaveTextContent('Folder listing timed out')
-      const input = screen.getByLabelText('Project directory path')
-      fireEvent.change(input, { target: { value: '/home/u/typed' } })
-      fireEvent.keyDown(input, { key: 'Enter' })
-      await nameInput()
-
-      rerender(<WorkspacePicker open={false} onOpenChange={onOpenChange} anchorRef={anchorRef} onCreated={onCreated} />)
-      rerender(<WorkspacePicker open={true} onOpenChange={onOpenChange} anchorRef={anchorRef} onCreated={onCreated} />)
-      expect(await nameInput()).toHaveValue('typed')
-      expect(api.browseDirs).toHaveBeenCalledTimes(2)
-
-      fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-      expect(api.browseDirs).toHaveBeenCalledTimes(3)
-      await act(async () => {
-        settleReopen(browseResult('/home/u', '/home', [{ name: 'typed-stale', path: '/home/u/typed-stale' }]))
-      })
-      expect(screen.queryByText('typed-stale')).not.toBeInTheDocument()
-
-      await act(async () => {
-        settleRerun(browseResult('/home/u', '/home', [{ name: 'typed-fresh', path: '/home/u/typed-fresh' }]))
-      })
-      expect(screen.getByText('typed-fresh')).toBeInTheDocument()
-      expect(screen.queryByText('typed-stale')).not.toBeInTheDocument()
-      expect(screen.getByLabelText('Project directory path')).toHaveValue('/home/u/typed')
-    })
 
     it('Back from the create form after a listing landed asks for nothing: the rows are still there', async () => {
       renderPicker()

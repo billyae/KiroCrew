@@ -174,7 +174,10 @@ describe('ProjectPicker: Windows drive roots', () => {
     await drain()
     vi.mocked(api.browseDirs).mockRejectedValue(new Error('404'))
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Z:\\' } })
+    // Advance past the 250ms auto-drill debounce, then flush react-query's own notify scheduler
+    // so the rejected listing's failure notice commits before the synchronous assertions below.
     await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(50) })
     expect(screen.getByTestId('pp-listing-error')).toBeTruthy()
     expect(screen.getByRole('alert').textContent).toContain('Could not open Z:\\')
     // The field names Z:\, not the C:\ rows below — committing would plant it.

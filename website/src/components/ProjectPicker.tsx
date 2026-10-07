@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, RefObject } from 'react'
+import { useState, useEffect, useRef, useCallback, useId, RefObject } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useImeGuard } from '../hooks/useImeGuard'
 import { createPortal } from 'react-dom'
 import { FolderOpen, ChevronRight, ChevronLeft, Clock, Search } from 'lucide-react'
@@ -75,6 +76,21 @@ const RECENT_TAB_FAILED_KEYS: Record<SearchErrorCause, string> = {
 }
 type ListFailureKind = 'dir' | 'drives'
 
+/** One listing request. `gen` makes every user-initiated request a DISTINCT react-query key, so a
+ *  superseded read is the one no observer holds and react-query never applies its result -- the
+ *  guarantee the hand-rolled `listingSeq` ticket gave by hand. `kind` is a directory listing or
+ *  the Windows drive list; `preserveInput` keeps the path field as typed; `homeOnGone` falls back
+ *  to `$HOME` when the opening read of a caller's selection no longer lists; `carried` is a prior
+ *  refusal re-shown over that fallback. */
+interface ListReq {
+  gen: number
+  kind: ListFailureKind
+  path?: string
+  preserveInput?: boolean
+  homeOnGone?: boolean
+  carried?: { path: string; err: unknown }
+}
+
 /**
  * Does `path` name the listing on screen (`shown`, the pane's `browsePath`)? One comparison for
  * every site that asks -- the Select / Ctrl+Enter commit gate, the auto-drill's "already here"
@@ -133,47 +149,54 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   const [tab, setTab] = useState<'recent' | 'browse'>('recent')
   const [input, setInput] = useState('')
   const ime = useImeGuard()
-  const [browsePath, setBrowsePath] = useState('')
-  const [browseParent, setBrowseParent] = useState('')
-  const [browseDirs, setBrowseDirs] = useState<{ name: string; path: string }[]>([])
-  const [recentDirs, setRecentDirs] = useState<string[]>([])
+  // Stable per-instance id, folded into both react-query keys so two mounts of this picker (the
+  // always-mounted ChatPage chooser plus a modal's own) never share a cache entry -- the gen
+  // counters restart at 1 in every instance, so without this a fresh mount's gen-1 key would hit
+  // the other instance's cached gen-1 entry (CI Opus review on #14731).
+  const instanceId = useId()
   const [recentQuery, setRecentQuery] = useState('')
   const [browseSel, setBrowseSel] = useState(0)
-  // The listing read that failed last: a directory (`browse`) or the drive list
-  // (`browseDrives`). The related path, cause, and report live in the same state
-  // object so the notice and its agent hand-off always describe one failure.
+  // The listing shown on screen, committed from the query's data -- rows and `browsePath` come
+  // from here, never straight from the query, so a failed or in-flight read keeps the directory
+  // already on screen (the old code only overwrote these on success). `null` until the first
+  // read lands.
+  const [shown, setShown] = useState<{ path: string; parent: string; dirs: { name: string; path: string }[]; listing: 'dir' | 'drives' } | null>(null)
+  const browsePath = shown?.path ?? ''
+  const browseParent = shown?.parent ?? ''
+  const browseDirs = shown?.dirs ?? []
+  const listing = shown?.listing ?? 'dir'
+  const [recentDirs, setRecentDirs] = useState<string[]>([])
+  // Set once the user picks a tab by hand, so the recents read's auto-selection (which under
+  // react-query can commit a tick after a quick manual click) never yanks the tab back.
+  const userPickedTabRef = useRef(false)
+  // The listing read that failed last, committed from the query. The path, cause and report live
+  // in one object so the notice and its hand-off always describe one failure.
   const [listFailure, setListFailure] = useState<ListFailure | null>(null)
   const [recentFailure, setRecentFailure] = useState<RecentFailure | null>(null)
-  // A listing request (a directory or the drive list) is unsettled for the CURRENT ticket: set by
-  // every `browse` / `browseDrives`, cleared only by the settlement that still holds the ticket.
-  // It makes the notice's Retry an inert "Retrying…" for the re-ask, as WorkspacePicker's does.
-  // A keystroke retires the ticket without settling it, and clears the notice the control sits
-  // in on the same keystroke, so a stale `true` has nothing to make inert; the next request resets it.
+  // SYNCHRONOUS mirror of the listing read's in-flight state: react-query's `isFetching` notifies
+  // on a batched scheduler a tick late, but the Retry control must relabel to the inert
+  // "Retrying…" on the very click. A UX mirror, not the staleness ticket the migration removed --
+  // the query key decides which read wins.
   const [listingInFlight, setListingInFlight] = useState(false)
+  // Records whether the user has typed since the current listing request started; a listing that
+  // lands after a keystroke still lands its rows but must not seed the field over what was typed
+  // (the `inputEdits` guard this replaces).
+  const [fieldOwned, setFieldOwned] = useState(false)
   const listFailed = listFailure?.kind ?? null
-  const noteFailure = (kind: ListFailureKind, path: string, err: unknown) => {
-    setListFailure({
-      kind,
-      path,
-      cause: searchErrorCause(err),
-      // The read's OWN pinned report first: every bounded read journals the same deadline line,
-      // so a message match resolved to whichever picker read timed out LAST.
-      report: reportForError(err),
-    })
-  }
-  // Which kind of listing is on screen. The drive list (Windows only) has no
-  // path of its own, so the path field's hint switches to a drive-shaped
-  // example there instead of the POSIX one (UX review on #11424).
-  const [listing, setListing] = useState<'dir' | 'drives'>('dir')
-  // Every listing request (a directory or the drive list) takes the next
-  // ticket; a response only lands if its ticket is still the latest. Without
-  // this a slow drive list answered after a faster drill into a child would
-  // replace that child's rows with the drives (GPT review on #11424).
-  const listingSeq = useRef(0)
-  // Recent-project reads have their own sequence. Their settlement can only be
-  // retired by a newer recents read (for example, after close/reopen), never by
-  // borrowing the ticket from an unrelated directory or drive-list request.
-  const recentSeq = useRef(0)
+  const listGenRef = useRef(0)
+  // The generation RETIRED by leaving the pane (Select commits + closes, Escape, click-outside):
+  // its late result is abandoned so it cannot commit into a closed/left pane. The open effect
+  // clears `listFailure` on reopen, so the main hazard this guards is a late read landing between
+  // the exit and the next open.
+  const retiredGenRef = useRef(-1)
+  // The generation whose late FAILURE must be dropped because the user typed a different path
+  // over the read while it was in flight (the `inputEdits` guard this replaces): the notice would
+  // otherwise name a path the user replaced, flip `canCommit` false, and make Retry re-ask it. A
+  // late SUCCESS still lands its rows (the field is already the user's, so it is not re-seeded).
+  const editedGenRef = useRef(-1)
+  const recentGenRef = useRef(0)
+  const [listReq, setListReq] = useState<ListReq>({ gen: 0, kind: 'dir' })
+  const [recentGen, setRecentGen] = useState(0)
   // Read by the open effect only, so a caller whose field changes while the picker is up does
   // not re-run the open (which would also re-read recents and reset the tab).
   const startPathRef = useRef(startPath)
@@ -192,68 +215,122 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
     return anchorRectRef.current
   }, [btnRef])
 
-  // `homeOnGone`: the opening read of the caller's selection. A path that no longer lists
-  // (deleted, or refused as sensitive) leaves nothing to show, so the pane falls back to the
-  // `$HOME` listing under a fresh ticket -- and `carried` keeps that refusal, so the notice
-  // names the selection and says the list shows home instead (the opening path changing from
-  // the user's project to `~` is never silent). A timeout or other failure takes the notice
-  // with no fallback, and its Retry re-asks that path.
+  const listQuery = useQuery({
+    queryKey: ['pp-listing', instanceId, listReq.gen, listReq.kind, listReq.path ?? ''],
+    queryFn: () => (listReq.kind === 'drives' ? api.browseDrives() : api.browseDirs(listReq.path)),
+    // `gen > 0` holds the read until the open effect issues the real opening request.
+    enabled: open && listReq.gen > 0,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+  })
+  const recentQ = useQuery({
+    queryKey: ['pp-recents', instanceId, recentGen],
+    queryFn: () => api.recentProjects(),
+    enabled: open && recentGen > 0,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+  })
+
+  // Each listing request takes a fresh generation; a superseded read's result is applied to a
+  // cache entry no observer holds, so it cannot replace the live listing (the `listingSeq`
+  // ticket's job). `preserveInput` keeps the field; `homeOnGone` / `carried` carry the opening
+  // read's deleted-selection fallback.
   const browse = useCallback((path?: string, preserveInput = false, homeOnGone = false, carried?: { path: string; err: unknown }) => {
-    const ticket = ++listingSeq.current
+    listGenRef.current += 1
+    setFieldOwned(preserveInput)
     setListingInFlight(true)
-    api.browseDirs(path).then(d => {
-      if (ticket !== listingSeq.current) return
-      setListingInFlight(false)
-      setBrowsePath(d.path); setBrowseParent(d.parent); setBrowseDirs(d.dirs); setBrowseSel(0); setListing('dir')
-      if (carried) noteFailure('dir', carried.path, carried.err)
-      else setListFailure(null)
-      // Append the path delimiter after a browse/drill so the user can start
-      // typing the next segment immediately (#1196). Derive the separator from
-      // the returned path so a native Windows path (C:\Users\me) stays all-`\`
-      // instead of rendering the mixed C:\Users\me/ . A path already ending in
-      // its separator (e.g. a drive/filesystem root) is left as-is; the trailing
-      // separator is a no-op for the auto-drill effect below (which keys on `/`).
-      if (!preserveInput) {
-        // `\` is a separator ONLY on a Windows-shaped path (drive-letter `C:...`
-        // or UNC `\\...`); on POSIX it is a legal filename character, so always
-        // append `/` there (GPT 5.6: never treat a trailing `\` as a separator on
-        // a POSIX path). A path already ending in its separator is left as-is.
-        const sep = pathSeparator(d.path)
-        setInput(d.path.endsWith(sep) ? d.path : d.path + sep)
-      }
-      // Keep the combobox input focused so arrow/Enter nav continues after a drill.
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }).catch((err: unknown) => {
-      if (ticket !== listingSeq.current) return
-      const cause = searchErrorCause(err)
-      if (homeOnGone && path && (cause === 'root_missing' || cause === 'denied')) { browse(undefined, false, false, { path, err }); return }
-      setListingInFlight(false); noteFailure('dir', path ?? '', err)
-    })
+    setListReq({ gen: listGenRef.current, kind: 'dir', path, preserveInput, homeOnGone, carried })
   }, [])
-
-  // Windows only: the virtual level above every drive root. The backend cues it
-  // with `parent: ""` on a drive root (see parentIsDriveList); Back from there
-  // lists the mounted drives so the user can cross to D:\ without typing it.
   const browseDrives = useCallback(() => {
-    const ticket = ++listingSeq.current
+    listGenRef.current += 1
+    setFieldOwned(false)
     setListingInFlight(true)
-    api.browseDrives().then(d => {
-      if (ticket !== listingSeq.current) return
-      setListingInFlight(false)
-      setBrowsePath(''); setBrowseParent(''); setBrowseDirs(d.dirs); setBrowseSel(0); setListFailure(null); setListing('drives')
-      setInput('')
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }).catch((err: unknown) => {
-      if (ticket !== listingSeq.current) return
-      setListingInFlight(false); noteFailure('drives', '', err)
-    })
+    setListReq({ gen: listGenRef.current, kind: 'drives' })
   }, [])
 
-  // Retry re-asks EXACTLY the read that failed, through the same `browse` / `browseDrives` and so
-  // the same ticket: the failed path, the pathless opening read (`path: ''`), or the drive list.
-  // Only for a cause re-asking can fix -- the set WorkspacePicker offers it for; a refusal or a
-  // missing folder returns the same answer. A keystroke clears the notice, so Retry never re-asks
-  // a path the user has typed over.
+  // Commit the listing query's settled result ONCE per generation, synchronously as it lands. A
+  // superseded read belongs to a cache entry no observer holds, so it never reaches this; a new
+  // request takes a fresh generation and starts pending (`isFetching`), so no transient inter-key
+  // reading commits. A `dir` success replaces the shown listing, seeds the field with a trailing
+  // separator (#1196) unless the field is the user's, and refocuses the combobox; `drives`
+  // likewise. A `root_missing` / `denied` failure of a `homeOnGone` opening read re-issues the
+  // `$HOME` read carrying the refusal; any other failure is noted against the read's path.
+  const committedRef = useRef(-1)
+  if (committedRef.current !== listReq.gen && !listQuery.isFetching && listReq.gen > 0) {
+    const d = listQuery.data
+    if (listReq.gen === retiredGenRef.current) {
+      // Retired by an exit: abandon the late result, success or failure.
+      committedRef.current = listReq.gen
+      setListingInFlight(false)
+    } else if (d && !listQuery.isError) {
+      committedRef.current = listReq.gen
+      setListingInFlight(false)
+      setShown({ path: d.path, parent: d.parent, dirs: d.dirs, listing: listReq.kind })
+      setBrowseSel(0)
+      if (listReq.kind === 'dir') {
+        // The carried refusal (a deleted startPath that fell back to $HOME) is shown only if the
+        // user has NOT typed over this fallback read; otherwise it would disable Select for the
+        // path they just typed (editedGenRef marks the typed-over generation).
+        if (listReq.carried && listReq.gen !== editedGenRef.current) setListFailure({ kind: 'dir', path: listReq.carried.path, cause: searchErrorCause(listReq.carried.err), report: reportForError(listReq.carried.err) })
+        else if (listFailure) setListFailure(null)
+        if (!listReq.preserveInput && !fieldOwned) {
+          const sep = pathSeparator(d.path)
+          setInput(d.path.endsWith(sep) ? d.path : d.path + sep)
+        }
+      } else {
+        if (listFailure) setListFailure(null)
+        if (!fieldOwned) setInput('')
+      }
+      requestAnimationFrame(() => inputRef.current?.focus())
+    } else if (listQuery.isError) {
+      const err = listQuery.error
+      const cause = searchErrorCause(err)
+      if (listReq.kind === 'dir' && listReq.homeOnGone && listReq.path && (cause === 'root_missing' || cause === 'denied')) {
+        committedRef.current = listReq.gen
+        // The opening read of a deleted selection fell back to $HOME. If the user typed over that
+        // opening read while it was in flight, the fallback must NOT re-seed the field or carry
+        // the refusal (both would undo the keystroke): preserve the typed field and drop the
+        // carried notice. Otherwise the fallback seeds $HOME and names the gone selection.
+        const typed = listReq.gen === editedGenRef.current
+        browse(undefined, typed, false, typed ? undefined : { path: listReq.path, err })
+      } else {
+        committedRef.current = listReq.gen
+        setListingInFlight(false)
+        // A late failure of a read the user has typed OVER names a path they are replacing: drop
+        // it rather than resurface the notice and refuse the typed path (the `inputEdits` guard).
+        if (listReq.gen !== editedGenRef.current) {
+          setListFailure({ kind: listReq.kind, path: listReq.kind === 'drives' ? '' : (listReq.path ?? ''), cause, report: reportForError(err) })
+        }
+      }
+    }
+  }
+
+  // Commit the recents read once per generation. The reopen keeps the last open's rows until this
+  // lands (so "No recent projects" never blinks over the round trip); a rejection clears the rows
+  // under the same commit, so no old rows show under the notice.
+  const recentCommittedRef = useRef(-1)
+  if (recentCommittedRef.current !== recentGen && !recentQ.isFetching && recentGen > 0) {
+    if (recentQ.data && !recentQ.isError) {
+      recentCommittedRef.current = recentGen
+      const dirs = recentQ.data.dirs || []
+      setRecentDirs(dirs)
+      setRecentFailure(null)
+      if (!userPickedTabRef.current) setTab(dirs.length ? 'recent' : 'browse')
+    } else if (recentQ.isError) {
+      recentCommittedRef.current = recentGen
+      setRecentDirs([])
+      setRecentFailure({ cause: searchErrorCause(recentQ.error), report: reportForError(recentQ.error) })
+      if (!userPickedTabRef.current) setTab('browse')
+    }
+  }
+
+
+  // Retry re-asks EXACTLY the read that failed. The notice lives in committed `listFailure` state,
+  // not in the query, so it stays up through the re-ask; the fresh generation re-issues the same
+  // path or the drive list, and its success commit clears the notice. Only offered for a cause
+  // re-asking can fix.
   const canRetryListing = listFailure?.cause === 'timed_out' || listFailure?.cause === 'failed'
   const retryListing = () => {
     if (listingInFlight || !listFailure) return
@@ -300,30 +377,20 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   useEffect(() => {
     if (!open) return
     setRecentQuery('')
+    userPickedTabRef.current = false
     // The mount outlives a close (ChatPage toggles `open`), so the last open's rows are
-    // still in state here and stay on screen until this open's read answers. They are NOT
-    // cleared up front: with the Recent tab persisted, an empty list would paint "No recent
-    // projects" for the whole round trip (the full browse bound on a wedged gateway) and the
-    // search box, gated on rows, would remount and take focus when they land. Recents rows
-    // and the recents notice still move together: the `.catch` below clears the rows under
-    // the same ticket that sets the notice, so a rejected reopen never shows old rows under it.
+    // still in state here and stay on screen until this open's read answers. Recents rows and
+    // the recents notice still move together: the commit above clears the rows under the same
+    // generation that sets the notice, so a rejected reopen never shows old rows under it.
     setListFailure(null)
     setRecentFailure(null)
-    const ticket = ++recentSeq.current
+    recentGenRef.current += 1
+    setRecentGen(recentGenRef.current)
     const start = startPathRef.current.trim()
     if (start) browse(start, false, true)
     else browse()
-    api.recentProjects().then(d => {
-      if (ticket !== recentSeq.current) return
-      setRecentDirs(d.dirs || [])
-      setTab(d.dirs?.length ? 'recent' : 'browse')
-    }).catch((err: unknown) => {
-      if (ticket !== recentSeq.current) return
-      setRecentDirs([])
-      setRecentFailure({ cause: searchErrorCause(err), report: reportForError(err) })
-      setTab('browse')
-    })
-  }, [open, browse])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -336,6 +403,7 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
         if (live && typeof (live as Element).contains === 'function' && (live as Element).contains(target)) return
         const r = getAnchorRect()
         if (r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return
+        retiredGenRef.current = listGenRef.current
         onOpenChange(false)
       }
       document.addEventListener('mousedown', handler)
@@ -352,6 +420,7 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
     // trailing `\` is preserved (GPT 5.6). Bare roots stay intact: POSIX `/` and a
     // Windows drive root `C:\` / `C:/` (stripping `C:/` to `C:` would yield a
     // drive-RELATIVE path, not the drive root).
+    retiredGenRef.current = listGenRef.current
     onSelect(stripTrailingSeparator(path)); onOpenChange(false)
   }
   const rq = recentQuery.trim().toLowerCase()
@@ -492,10 +561,10 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
     })()}>
       {/* Tabs */}
       <div className="flex border-b border-border">
-        <button className={`flex-1 px-3 py-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors ${tab === 'recent' ? 'text-accent border-b-2 border-accent' : 'text-muted hover:text-text'}`} onMouseDown={e => { e.preventDefault(); setTab('recent') }}>
+        <button className={`flex-1 px-3 py-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors ${tab === 'recent' ? 'text-accent border-b-2 border-accent' : 'text-muted hover:text-text'}`} onMouseDown={e => { e.preventDefault(); userPickedTabRef.current = true; setTab('recent') }}>
           <Clock size={12} /> {i18nT('components.projectPicker.recent')}
         </button>
-        <button className={`flex-1 px-3 py-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors ${tab === 'browse' ? 'text-accent border-b-2 border-accent' : 'text-muted hover:text-text'}`} onMouseDown={e => { e.preventDefault(); setTab('browse') }}>
+        <button className={`flex-1 px-3 py-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors ${tab === 'browse' ? 'text-accent border-b-2 border-accent' : 'text-muted hover:text-text'}`} onMouseDown={e => { e.preventDefault(); userPickedTabRef.current = true; setTab('browse') }}>
           <FolderOpen size={12} /> {i18nT('components.projectPicker.browse')}
         </button>
       </div>
@@ -592,10 +661,13 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
               value={input}
               onChange={e => {
                 setInput(e.target.value); setListFailure(null)
-                // A keystroke retires every listing still in flight: a drive list
-                // answering now would run `setInput('')` and erase what was just
-                // typed before its own auto-drill fires (GPT review on #11424).
-                listingSeq.current++
+                // A keystroke claims the FIELD: a listing (a drive list, a slow drill) that lands
+                // after it still lands its rows but must not run `setInput` over what was typed
+                // (the `inputEdits` guard this replaces). It also drops the listing notice, since
+                // typing is the recovery, and marks the read in flight as typed-over so its late
+                // FAILURE is dropped rather than naming the replaced path.
+                setFieldOwned(true)
+                editedGenRef.current = listReq.gen
               }}
               {...ime.bindComposition()}
               onKeyDown={e => {
@@ -624,7 +696,7 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
                   // whole decline: native consumption per the latch contract,
                   // and the synthetic propagation stop React ancestors read.
                   if (!ime.claimKey(e)) return
-                  e.preventDefault(); onOpenChange(false); btnRef?.current?.focus()
+                  e.preventDefault(); retiredGenRef.current = listGenRef.current; onOpenChange(false); btnRef?.current?.focus()
                 }
               }}
               className="flex-1 min-w-0 bg-bg-elevated border border-border rounded px-2 py-1.5 text-[13px] font-mono text-text placeholder:text-muted focus:outline-hidden focus-visible:border-accent"

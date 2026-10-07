@@ -752,7 +752,9 @@ describe('ProjectPicker: Retry beside a failed listing', () => {
     expect(browse).toHaveBeenCalledTimes(3)
 
     await act(async () => { land({ path: '/home/u/slow', parent: '/home/u', dirs: [] }) })
-    expect(screen.queryByTestId('pp-listing-error')).toBeNull()
+    // The re-ask resolves through react-query (async notify), so the notice clears via waitFor
+    // rather than a synchronous queryByTestId; the assertion is unchanged.
+    await waitFor(() => expect(screen.queryByTestId('pp-listing-error')).toBeNull())
     expect(browse).toHaveBeenCalledTimes(3)
   })
 

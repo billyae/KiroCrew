@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import FolderConfigModal from '../components/FolderConfigModal'
 import { ApiError } from '../api/apiError'
 import { ChatFolder } from '../types'
@@ -20,18 +21,24 @@ const AGENTS = [{ name: 'kirocrew' }, { name: 'kirocrew-dev' }]
 function open(props: Partial<React.ComponentProps<typeof FolderConfigModal>> = {}) {
   const onSubmit = vi.fn().mockResolvedValue(undefined)
   const onClose = vi.fn()
+  // ProjectPicker (opened from the Browse control) now reads through react-query's useQuery, so
+  // it needs a QueryClientProvider ancestor — the app provides one at the root (main.tsx); this
+  // isolated render supplies its own. retry:false keeps a mocked rejection from a backoff ladder.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const utils = render(
-    <FolderConfigModal
-      open={true}
-      mode="create"
-      parentId=""
-      folders={[]}
-      installedAgents={AGENTS}
-      onClose={onClose}
-      onSubmit={onSubmit}
-      onRetryTags={vi.fn()}
-      {...props}
-    />
+    <QueryClientProvider client={queryClient}>
+      <FolderConfigModal
+        open={true}
+        mode="create"
+        parentId=""
+        folders={[]}
+        installedAgents={AGENTS}
+        onClose={onClose}
+        onSubmit={onSubmit}
+        onRetryTags={vi.fn()}
+        {...props}
+      />
+    </QueryClientProvider>
   )
   return { onSubmit, onClose, ...utils }
 }
