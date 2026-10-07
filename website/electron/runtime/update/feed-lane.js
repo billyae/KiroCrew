@@ -16,7 +16,7 @@ const FORCE_EXIT_AFTER_MS = 5 * 1000; // failsafe: guarantee exit after quitAndI
  * electron-updater events, points the feed, and arms the launch check and the
  * poll, in that order.
  *
- * @returns {{check: Function, download: Function, install: Function, getInfo: Function, isReady: Function, stillLatest: Function}}
+ * @returns {{check: Function, download: Function, install: Function, getInfo: Function, isReady: Function}}
  */
 function createFeedLane({
   app,
@@ -594,7 +594,13 @@ function createFeedLane({
     // handler's job is to MAP the verdict onto this lane's state transitions
     // and emits; the decision itself -- direction gate, supersede, retraction
     // -- no longer lives inline here.
-    const verdict = foundVersion ? feedVerdict(foundVersion) : "offer";
+    // A malformed `update-available` with no version is still routed through
+    // the verdict (candidate=null) rather than short-circuited to "offer": the
+    // old inline path discarded a held stage in this case (foundVersion !==
+    // stagedVersion fell to the superseded branch), and the pure function's
+    // "retracted" answer for a null candidate with a stage held preserves that
+    // -- a stage must never survive a feed response that names no version.
+    const verdict = feedVerdict(foundVersion || null);
     // Direction gate — the fix for the "update to an OLDER version" nag.
     // electron-updater fires this for ANY feed version that DIFFERS from the
     // running one, because allowDowngrade=true — so on a build running ahead of
@@ -635,6 +641,18 @@ function createFeedLane({
       // Superseded: drop the stale stage so the next download takes the NEWEST
       // build rather than installing an already-old one.
       log.info(`[update] staged ${stagedVersion} superseded by ${foundVersion} — discarding stage`);
+      updateReady = false;
+      stagedVersion = null;
+      stagedNotes = "";
+      app.removeListener("before-quit", deferredInstallOnQuit);
+    }
+    if (verdict === "retracted") {
+      // A null-version `update-available` with a stage held: the feed named no
+      // version, so the stage can no longer be confirmed as the latest. Discard
+      // it (the pre-refactor inline path did the same via the superseded
+      // branch), then fall through to the found/notify path with the null
+      // version the handler already carried.
+      log.info("[update] update-available reported no version while a stage was held — discarding stage");
       updateReady = false;
       stagedVersion = null;
       stagedNotes = "";
@@ -728,15 +746,6 @@ function createFeedLane({
     install: () => applyUpdateAndRestart(),
     getInfo,
     isReady: () => updateReady,
-    // The still-latest verdict as a SIDE-EFFECT-FREE query. A caller that has
-    // read the feed quietly (no emits, no download, no shared in-flight state)
-    // passes the version the feed offered -- or `null` for the feed's "nothing
-    // newer" answer -- and gets the same verdict the live update-available /
-    // update-not-available handlers act on, via the one pure function they all
-    // share (classifyFeedVerdict). It reads the lane's current staged/channel
-    // facts but changes nothing, so it is safe to call from a freshness gate
-    // that must not drive the real update lifecycle.
-    stillLatest: (candidate) => feedVerdict(candidate ?? null),
   };
 }
 

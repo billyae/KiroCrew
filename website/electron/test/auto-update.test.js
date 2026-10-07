@@ -2216,6 +2216,34 @@ test("a NEWER version discovered while one is staged supersedes the stale stage"
   assert.strictEqual(calls.downloadUpdate, 1);
 });
 
+// Point from the #10333 review: before the pure-function extraction, an
+// `update-available` carrying no `info.version` while a stage was held fell
+// into the supersede block (foundVersion !== stagedVersion) and discarded the
+// stage. The extraction must keep that fail-safe: a feed response that names
+// no version can no longer confirm the stage is the latest, so the stage must
+// not survive to install on the next quit. The verdict for a null candidate
+// with a stage held is "retracted", which the handler maps to the same discard.
+test("update-available with no version while a stage is held discards the stale stage", async () => {
+  const { deps, emit, states, stateNames } = makeDeps({ appVersion: "1.0.0" });
+  const u = initAutoUpdate(deps);
+  emit("update-downloaded", { version: "1.1.0", releaseNotes: "staged" });
+  assert.strictEqual(u.isReady(), true, "precondition: an update is staged");
+  states.length = 0;
+  await u.check();
+  // A malformed feed reply: update-available fires with no parseable version.
+  emit("update-available", {});
+  assert.strictEqual(
+    u.isReady(),
+    false,
+    "a version-less feed reply must discard the held stage, not keep it armed for install on quit",
+  );
+  assert.ok(
+    !stateNames().includes("downloaded"),
+    "the retracted stage must not be re-surfaced as installable",
+  );
+});
+
+
 // ---------------------------------------------------------------------------
 // Background poll with a staged update. The supersede handling above is only
 // reachable if a check actually RUNS while the stage is armed -- and the only
@@ -2882,7 +2910,7 @@ test("every lane hands back the handle shape its callers read", () => {
     { keys: stub, disabled: "externally-managed" });
   assert.deepStrictEqual(keys({ isPackaged: false }), { keys: stub, disabled: "dev" });
   assert.deepStrictEqual(keys({ osPlatform: "freebsd" }), { keys: stub, disabled: "platform" });
-  assert.deepStrictEqual(keys({ appVersion: "1.0.0" }).keys, ["check", "download", "install", "getInfo", "isReady", "stillLatest"]);
+  assert.deepStrictEqual(keys({ appVersion: "1.0.0" }).keys, ["check", "download", "install", "getInfo", "isReady"]);
 
   const restoreTimers = (() => {
     const originalSetTimeout = global.setTimeout;
