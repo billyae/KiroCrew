@@ -601,6 +601,13 @@
       "description": "Show a favicon and page title instead of the raw URL. This machine then fetches every link the model outputs, so each linked site sees a request from your IP address."
     },
     {
+      "id": "chat.list-agent-sops-in-the-menu",
+      "label": "List Agent SOPs in the / menu",
+      "tab": "chat",
+      "route": "/settings/chat/composer?highlight=chat.list-agent-sops-in-the-menu",
+      "description": "Lists your installed Agent SOPs (standard procedures) and saved prompts when you type / in the message box."
+    },
+    {
       "id": "chat.mcp-apps-in-side-panel",
       "label": "MCP Apps in Side Panel",
       "tab": "chat",

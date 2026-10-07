@@ -8236,6 +8236,8 @@
     "slashCommandMenu": {
       "commands_load_failed_ctrl_enter_sends": "无法加载命令 —— 按 Ctrl+Enter 直接发送消息",
       "commands_load_failed_enter_sends": "无法加载命令 —— 按 Enter 直接发送消息",
+      "prompt_inserts_mention": "插入 @提及",
+      "prompts_load_failed": "无法加载 SOP 和已保存的提示词",
       "desc_agent": "切换或管理当前代理",
       "desc_changelog": "显示版本更新日志",
       "desc_chat": "保存或加载聊天会话",
@@ -15031,6 +15033,8 @@
         "spellcheck_input_desc": "在消息输入框中用红色波浪线标出拼写有误的词。想在输入时去掉红色下划线就把它关掉。",
         "inline_markdown_input": "输入时显示 Markdown 样式",
         "inline_markdown_input_desc": "在消息输入框中边输入边显示粗体、斜体、删除线和行内代码。开启后，消息输入框还会切换到仍处于测试阶段的富文本编辑器。关闭即可恢复为普通输入框。Markdown 标记仍然可见，发送的消息不会改变。",
+        "show_sop_prompts": "在 / 菜单中列出智能体 SOP",
+        "show_sop_prompts_desc": "在消息框中输入 / 时，列出你已安装的智能体 SOP(标准流程)和已保存的提示词。",
         "show_pasted_text_in_full": "完整显示粘贴内容",
         "show_pasted_text_in_full_desc": "在消息输入框中把长内容保持为可编辑的文本，而不是折叠成一个粘贴块。关闭时 {{chord}} 仍可对单次粘贴这样做。粘贴内容非常大时输入可能变慢。",
         "smooth": "平滑",

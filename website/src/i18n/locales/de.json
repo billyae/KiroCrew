@@ -8357,6 +8357,8 @@
     "slashCommandMenu": {
       "commands_load_failed_ctrl_enter_sends": "Befehle konnten nicht geladen werden — Ctrl+Enter sendet die Nachricht",
       "commands_load_failed_enter_sends": "Befehle konnten nicht geladen werden — Enter sendet die Nachricht",
+      "prompt_inserts_mention": "fügt @-Erwähnung ein",
+      "prompts_load_failed": "SOPs und gespeicherte Prompts konnten nicht geladen werden",
       "desc_agent": "Aktiven Agenten wechseln oder verwalten",
       "desc_changelog": "Das Änderungsprotokoll der Version anzeigen",
       "desc_chat": "Eine Chat-Sitzung speichern oder laden",
@@ -15284,6 +15286,8 @@
         "spellcheck_input_desc": "Unterstreicht falsch geschriebene Wörter im Nachrichtenfeld mit einer roten Wellenlinie. Schalte es aus, um die roten Unterstreichungen beim Tippen zu stoppen.",
         "inline_markdown_input": "Markdown beim Tippen formatieren",
         "inline_markdown_input_desc": "Zeigt Fett, Kursiv, Durchgestrichen und Inline-Code schon beim Tippen im Nachrichtenfeld an. Wenn du es einschaltest, wechselt das Nachrichtenfeld außerdem zu einem Rich-Text-Editor, der noch in der Beta ist; schalte es aus, um zum einfachen Eingabefeld zurückzukehren. Die Markdown-Zeichen bleiben sichtbar, und die gesendete Nachricht bleibt unverändert.",
+        "show_sop_prompts": "Agent-SOPs im /-Menü anzeigen",
+        "show_sop_prompts_desc": "Listet deine installierten Agent-SOPs (Standardverfahren) und gespeicherten Prompts auf, wenn du / in das Nachrichtenfeld eingibst.",
         "show_pasted_text_in_full": "Eingefügten Text vollständig anzeigen",
         "show_pasted_text_in_full_desc": "Langen eingefügten Text im Nachrichtenfeld als bearbeitbaren Text behalten, statt ihn zu einem Einfüge-Chip zusammenzufalten. Wenn diese Option deaktiviert ist, behält {{chord}} den Inhalt eines einzelnen Einfügevorgangs als Text bei. Bei sehr großem eingefügtem Text kann die Eingabe langsam werden.",
         "smooth": "Geglättet",

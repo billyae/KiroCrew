@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useComposerSpellcheck } from '../hooks/useComposerSpellcheck'
 import { useComposerInlineMarkdown } from '../hooks/useComposerInlineMarkdown'
 import { useComposerSendMode } from '../hooks/useComposerSendMode'
+import { useComposerShowSopPrompts } from '../hooks/useComposerShowSopPrompts'
 import TrustDropdown from './TrustDropdown'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { isTouchDevice } from '../utils/isTouchDevice'
@@ -306,6 +307,9 @@ function ChatInput({
   // would otherwise send on plain Enter for a user who chose Ctrl/Cmd+Enter.
   const storedSendMode = useComposerSendMode()
   const sendOnEnter = sendOnEnterProp ?? storedSendMode
+  // Opt-in: list installed Agent SOPs / saved prompts in the `/` menu (#9924).
+  // Default off, read live from the chat config like the prefs above.
+  const showSopPrompts = useComposerShowSopPrompts()
 
   // Stop button: killing-state escape hatch (re-enable after 15s)
   const { escaped: killingEscaped } = useStopEscapeHatch(stopState)
@@ -876,7 +880,7 @@ function ChatInput({
         <SketchDialog open={sketchOpen} onOpenChange={setSketchOpen} onInsert={onUploadFiles} returnFocusRef={composerAnchorRef} />
       )}
 
-      {!terminal.active && <ComposerPickerMenus pickers={pickers} value={value} onChange={onChange} composerAnchorRef={composerAnchorRef} sendOnEnter={sendOnEnter} typedCommandMenus={typedCommandMenus} project={project} agentName={agentName} onFileSelect={onFileSelect} onFileOpen={onFileOpen} />}
+      {!terminal.active && <ComposerPickerMenus pickers={pickers} value={value} onChange={onChange} composerAnchorRef={composerAnchorRef} sendOnEnter={sendOnEnter} showSopPrompts={showSopPrompts} typedCommandMenus={typedCommandMenus} project={project} agentName={agentName} onFileSelect={onFileSelect} onFileOpen={onFileOpen} />}
 
       {/* Unified input container — drag-to-resize targets the inner div. */}
       {/* The composer's SHOWN state is initial === animate ({opacity:1,height:auto}),

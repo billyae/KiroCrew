@@ -16,6 +16,27 @@ interface SlashCommand {
    * sends `""` for a command missing from its description map.
    */
   description?: string
+  /**
+   * What this row is and how selecting it feeds the composer.
+   *
+   * - `'command'` (default, omitted) — a slash command. Selecting inserts the
+   *   literal token (`/compact `) and the backend/intercept layer acts on it.
+   * - `'prompt'` — an Agent SOP / saved prompt discovered from `/api/prompts`.
+   *   The composer has no `/`-grammar that invokes a prompt; the invocation
+   *   path is the `@<fullName>` mention the submit path expands via
+   *   `_expand_prompt_mention()` (the same token the Cmd-K palette and the
+   *   PromptsTab insert). So selecting a prompt row inserts `@<fullName> `, NOT
+   *   a slash token. These rows are surfaced in the `/` menu purely for
+   *   discovery (issue #9924) and never touch `GET /api/slash-commands`.
+   */
+  kind?: 'command' | 'prompt'
+  /**
+   * For a `'prompt'` row only: the mention token to insert, e.g.
+   * `agent-sop:pdd` for a package SOP or the bare stem for a user prompt. The
+   * row both DISPLAYS and INSERTS `@<fullName>` (` ` appended on insert), while
+   * it is FILTERED by the bare `fullName` so typing `/agent-sop:` finds it.
+   */
+  fullName?: string
 }
 
 /**
@@ -87,12 +108,32 @@ const COMMAND_DESC_KEY: Record<string, string> = {
  * text rather than rendering a raw key.
  */
 function commandDescription(cmd: SlashCommand): string {
+  // Prompt rows (#9924) carry the SOP's own description from /api/prompts and
+  // have no COMMAND_DESC_KEY entry, so use it directly rather than resolving a
+  // catalog key that does not exist for them.
+  if (cmd.kind === 'prompt') return cmd.description ?? ''
   // `hasOwnProperty`, not `in`: the names come from the API, so a backend
   // reporting `toString` or `constructor` would otherwise resolve to an
   // inherited Object.prototype member and hand a function to i18next.
   return Object.prototype.hasOwnProperty.call(COMMAND_DESC_KEY, cmd.name)
     ? i18nT(COMMAND_DESC_KEY[cmd.name])
     : cmd.description ?? ''
+}
+
+/** The token selecting a row inserts into the composer. A command inserts its
+ *  own literal slash token; a prompt inserts the `@<fullName>` mention the
+ *  submit path expands (`_expand_prompt_mention()`), matching the Cmd-K palette
+ *  and PromptsTab — there is no `/`-grammar that invokes a prompt. Both get a
+ *  trailing space so the caret lands ready for an argument. */
+function insertionFor(cmd: SlashCommand): string {
+  return cmd.kind === 'prompt' ? `@${cmd.fullName} ` : `${cmd.name} `
+}
+
+/** The text a row is FILTERED and SORTED by: for a prompt it is the fullName
+ *  the user types after `/` (`agent-sop:pdd`), for a command the token minus
+ *  its leading slash (`compact`). */
+function filterToken(cmd: SlashCommand): string {
+  return cmd.kind === 'prompt' ? (cmd.fullName ?? '') : cmd.name.slice(1)
 }
 
 // Offline fallback shown before the API query resolves (or if it fails).
@@ -125,6 +166,20 @@ interface Props {
    * Enter is a newline, so the announcement must name Ctrl+Enter instead.
    */
   sendOnEnter?: SendMode
+  /**
+   * Opt in to surfacing Agent SOP / saved-prompt rows in the `/` menu (#9924).
+   *
+   * Default `false`: adding SOP rows changes what EVERY user's `/` menu lists,
+   * and that is a product-shape change the base carries no RFC for (First
+   * Principles BLOCK on this PR). So the discovery rows are the user's call —
+   * gated behind the `showSopPrompts` chat setting (default off), exactly like
+   * `inlineMarkdown` / `doubleClickToEdit` and the other opt-ins that alter a
+   * surface everyone sees. When this is false the `/api/prompts` query is left
+   * disabled and the menu renders only the curated slash commands — byte-for-
+   * byte the pre-#9924 default. Flipping the setting on is what asks for the
+   * rows; nothing a client with no stored config inherits.
+   */
+  showPromptRows?: boolean
 }
 
 /**
@@ -147,18 +202,98 @@ const FRONTEND_COMMAND_NAMES = ['/btw', '/kb', '/onboarding', '/plain'] as const
 
 const FRONTEND_COMMANDS: SlashCommand[] = FRONTEND_COMMAND_NAMES.map(name => ({ name }))
 
-export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, open = true, sendOnEnter = 'enter' }: Props) {
+/**
+ * Stable fallback for the `/api/prompts` query (GPT 6.1 F2, upheld).
+ *
+ * A `useQuery(... )` default written inline as `= []` mints a FRESH array on
+ * every render while `promptData` is undefined — the initial load, a failed
+ * load, or a disabled query. That new reference invalidates the `promptCommands`
+ * / `commands` / `filtered` memos each render, so the ordering effect calls
+ * `setDisplayed` with another new array and schedules yet another render — an
+ * unbounded update loop that fires on every composer mount, even while the menu
+ * is closed. Pointing the default at this ONE frozen module-level value keeps
+ * the reference stable across renders, so the memos settle. `readonly []`
+ * widens cleanly to the `unknown[]` the query is typed as.
+ */
+const EMPTY_PROMPTS: readonly unknown[] = Object.freeze([])
+
+export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, open = true, sendOnEnter = 'enter', showPromptRows = false }: Props) {
   const { data: apiCommands = FALLBACK_COMMANDS, isFetching, isError } = useQuery<SlashCommand[]>({
     queryKey: ['slash-commands'],
     queryFn: ({ signal }) => api.slashCommands(signal),
     enabled: typeof api.slashCommands === 'function',
   })
+
+  // Agent SOPs / saved prompts, surfaced in the `/` menu for discovery (#9924).
+  // Reuses the SAME ['prompts'] react-query entry the Cmd-K palette and the
+  // PromptsTab share, so it is usually already warm and reopening the menu is
+  // free. These rows are a DISCOVERY surface only: they are never sent to or
+  // merged into GET /api/slash-commands (whose curated/blocked-list invariants
+  // stay untouched), and selecting one inserts the existing `@<fullName>`
+  // invocation mention rather than a new slash grammar.
+  //
+  // Gated on `showPromptRows` (the opt-in chat setting, default off): when the
+  // user has not opted in the query is DISABLED, so no `/api/prompts` request
+  // fires and the menu lists only curated commands — the pre-#9924 default for
+  // every user. The `= EMPTY_PROMPTS` default is the ONE frozen module-level
+  // array (not an inline `[]`), so a disabled or not-yet-resolved query hands a
+  // stable reference to the memos below and never re-triggers the ordering
+  // effect in a loop (GPT 6.1 F2).
+  const { data: promptData = EMPTY_PROMPTS, isError: promptError } = useQuery<unknown[]>({
+    queryKey: ['prompts'],
+    queryFn: () => api.prompts(),
+    enabled: showPromptRows && typeof api.prompts === 'function',
+    staleTime: 30_000,
+  })
+  const promptCommands = useMemo<SlashCommand[]>(() => {
+    // Gate on `showPromptRows`, not only on the query's `enabled` (GPT 6.1 F2):
+    // `enabled: false` stops a FETCH but does not clear a CACHE entry a sibling
+    // surface (PromptsTab, the Cmd-K palette) already warmed under the shared
+    // `['prompts']` key. Reading `promptData` unconditionally would then leak
+    // those cached SOPs into the `/` menu of a user who never opted in. Returning
+    // early when the setting is off keeps the opt-in honest regardless of cache.
+    if (!showPromptRows) return []
+    const rows: SlashCommand[] = []
+    for (const p of promptData) {
+      // /api/prompts is loosely typed at the client layer; pin the two fields
+      // this reads and skip any entry missing a usable fullName.
+      const fullName = (p as { fullName?: unknown }).fullName
+      if (typeof fullName !== 'string' || fullName === '') continue
+      const description = (p as { description?: unknown }).description
+      rows.push({
+        // DISPLAY token: `@<fullName>` — the SAME string insertionFor() inserts,
+        // so the row shows exactly what lands in the composer (UX BLOCK: a row
+        // must not label one token and insert another). The leading `@` also
+        // visually sets a prompt mention apart from a `/command`; the badge
+        // rendered on the row names the kind and what selecting it does. `name`
+        // is only the row's display label and dedup/`key`; filtering and sorting
+        // use filterToken() (the bare fullName), so typing `/agent-sop:` finds it.
+        name: `@${fullName}`,
+        kind: 'prompt',
+        fullName,
+        description: typeof description === 'string' ? description : '',
+      })
+    }
+    return rows
+  }, [promptData, showPromptRows])
+
   const commands = useMemo(() => {
     const names = new Set(apiCommands.map(c => c.name))
-    return [...apiCommands, ...FRONTEND_COMMANDS.filter(c => !names.has(c.name))].sort((a, b) => a.name.localeCompare(b.name))
-  }, [apiCommands])
+    const base = [...apiCommands, ...FRONTEND_COMMANDS.filter(c => !names.has(c.name))]
+    // Prompt rows last in the base list; the final sort below is on the filter
+    // token, which interleaves them deterministically with commands anyway.
+    // Explicit 'en-US' locale (not host locale): these are ASCII command/prompt
+    // tokens and the order must be the same for every user, independent of the
+    // browser's language (the i18n host-locale gate).
+    return [...base, ...promptCommands].sort((a, b) => filterToken(a).localeCompare(filterToken(b), 'en-US'))
+  }, [apiCommands, promptCommands])
 
-  const match = input.match(/^\/([a-z]*)$/)
+  // Trigger: widened from /^\/([a-z]*)$/ to admit the `:`, `-`, `_` and digits
+  // that appear in SOP fullNames (`agent-sop:pdd`), so typing `/agent-sop:`
+  // keeps the menu open and narrows to prompts (#9924). Still anchored to a
+  // bare `/`-prefixed single token with no whitespace, so it never fires on a
+  // sentence that merely contains a slash.
+  const match = input.match(/^\/([a-z0-9:_-]*)$/)
   const visible = open && !!match
   const filter = match?.[1] ?? ''
 
@@ -170,7 +305,7 @@ export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, 
   const choose = useCallback((idx: number) => {
     const r = resultsRef.current
     const c = r[idx >= r.length ? 0 : idx]
-    if (c) onSelect(c.name + ' ')
+    if (c) onSelect(insertionFor(c))
   }, [onSelect])
 
   // Filter computed synchronously (not inside the ordering effect) so the
@@ -178,7 +313,7 @@ export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, 
   // derived from the `displayed` state would lag one effect flush behind and
   // could release Enter while matches exist.
   const filtered = useMemo(
-    () => (visible ? commands.filter(c => c.name.slice(1).startsWith(filter)) : []),
+    () => (visible ? commands.filter(c => filterToken(c).startsWith(filter)) : []),
     [visible, filter, commands]
   )
 
@@ -254,8 +389,19 @@ export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, 
     <div
       className="fixed z-[9999] bg-card border border-border rounded-lg shadow-lg overflow-y-auto py-1 animate-slide-up"
       role="listbox"
-      style={{ ...(above ? { bottom } : { top }), left, width: Math.min(width, 380), maxHeight }}
+      style={{ ...(above ? { bottom } : { top }), left, width: Math.min(width, 480), maxHeight }}
     >
+      {/* Surface a failed SOP/prompt load instead of letting it read as "no
+          matches" (GPT 6.1 F1, errors-use-error-notice). Only when the user
+          opted in AND the prompt query errored. This is a NON-interactive status
+          row: it never hands off focus and never touches the composer draft, so
+          a failed side-fetch cannot cost the user their typed message. The
+          curated commands below still render; only the SOP rows are missing. */}
+      {showPromptRows && promptError && (
+        <div role="status" className="px-3 py-2 text-[12px] text-danger border-b border-border">
+          {i18nT('components.slashCommandMenu.prompts_load_failed')}
+        </div>
+      )}
       {displayed.length === 0
         // Settled zero-match: Enter's meaning flips (pick → send), and the
         // menu vanishing on its own would leave that flip invisible — announce
@@ -272,12 +418,27 @@ export default function SlashCommandMenu({ input, anchorRef, onSelect, onClose, 
           tabIndex={-1}
           key={cmd.name}
           ref={el => { itemRefs.current[i] = el }}
-          className={`w-full text-left px-3 py-2 flex items-center gap-3 cursor-pointer transition-colors ${i === selected ? 'bg-accent-subtle text-text' : 'text-muted hover:bg-bg-hover hover:text-text'}`}
+          className={`w-full text-left px-3 py-2 flex items-start gap-3 cursor-pointer transition-colors ${i === selected ? 'bg-accent-subtle text-text' : 'text-muted hover:bg-bg-hover hover:text-text'}`}
           onMouseEnter={() => setSelected(i)}
-          onMouseDown={e => { e.preventDefault(); onSelect(cmd.name + ' ') }}
+          onMouseDown={e => { e.preventDefault(); onSelect(insertionFor(cmd)) }}
         >
-          <span className="text-[13px] font-mono font-semibold text-accent shrink-0">{cmd.name}</span>
-          <span className="text-[12px] truncate">{commandDescription(cmd)}</span>
+          <span className="text-[13px] font-mono font-semibold text-accent shrink-0 leading-5">{cmd.name}</span>
+          <span className="min-w-0 flex flex-col gap-0.5">
+            {cmd.kind === 'prompt' && (
+              // Say what the row IS and what picking it DOES, not just "Prompt"
+              // (UX BLOCK: the reader could not tell whether picking runs the SOP
+              // or only inserts text). This badge reads "SOP · inserts @mention",
+              // so the row's action is explicit. Built from an existing
+              // translated label + a short new key, so no cryptic tag is left.
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-bg-hover text-muted self-start">
+                {i18nT('pages.overview.agentTemplatesTab.prompt')} · {i18nT('components.slashCommandMenu.prompt_inserts_mention')}
+              </span>
+            )}
+            {/* Description wraps to a second line rather than truncating, so the
+                only explanation a reader gets for an SOP is not cut off mid-word
+                (UX BLOCK). `break-words` guards a long unbroken token. */}
+            <span className="text-[12px] leading-5 break-words">{commandDescription(cmd)}</span>
+          </span>
         </button>
       ))}
     </div>,

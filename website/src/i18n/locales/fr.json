@@ -8478,6 +8478,8 @@
     "slashCommandMenu": {
       "commands_load_failed_ctrl_enter_sends": "Impossible de charger les commandes — Ctrl+Enter envoie le message",
       "commands_load_failed_enter_sends": "Impossible de charger les commandes — Enter envoie le message",
+      "prompt_inserts_mention": "insère la @mention",
+      "prompts_load_failed": "Impossible de charger les SOP et les prompts enregistrés",
       "desc_agent": "Changer ou gérer l’agent actif",
       "desc_changelog": "Afficher le journal des modifications de la version",
       "desc_chat": "Enregistrer ou charger une session de chat",
@@ -15537,6 +15539,8 @@
         "spellcheck_input_desc": "Souligne les mots mal orthographiés dans la zone de message d'un trait rouge ondulé. Désactive-le pour arrêter les soulignements rouges pendant que tu écris.",
         "inline_markdown_input": "Mettre en forme le Markdown pendant la saisie",
         "inline_markdown_input_desc": "Affiche le gras, l'italique, le barré et le code en ligne dans la zone de message pendant que tu écris. L'activer fait aussi passer la zone de message à un éditeur de texte enrichi encore en bêta ; désactive-le pour revenir à la zone de saisie simple. Les marqueurs Markdown restent visibles et le message envoyé ne change pas.",
+        "show_sop_prompts": "Afficher les SOP d'agent dans le menu /",
+        "show_sop_prompts_desc": "Répertorie vos SOP d'agent installés (procédures standard) et vos prompts enregistrés lorsque vous tapez / dans la zone de message.",
         "show_pasted_text_in_full": "Afficher le texte collé en entier",
         "show_pasted_text_in_full_desc": "Conserver un collage long comme texte modifiable dans le champ de message, au lieu de le replier en pastille de collage. Lorsque cette option est désactivée, {{chord}} conserve un seul collage sous forme de texte. Un collage très volumineux peut ralentir la saisie.",
         "smooth": "Fluide",

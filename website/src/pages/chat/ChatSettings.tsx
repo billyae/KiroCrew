@@ -94,6 +94,14 @@ export interface ChatConfig {
    *  sidebar, session list, status lines, toolbars — is unaffected, same as
    *  `contentWidth`. */
   messageFontSize: number
+  /** Opt in to listing installed Agent SOPs / saved prompts in the composer's
+   *  `/` autocomplete (#9924). Default false: it adds rows to EVERY user's `/`
+   *  menu — a product-shape change the base has no RFC for — so it is the user's
+   *  call rather than something a client with no stored config inherits. When
+   *  off, the `/` menu lists only the curated slash commands (the pre-#9924
+   *  default) and no `/api/prompts` request fires from the menu. Picking a
+   *  surfaced row inserts the existing `@<fullName>` mention, not a new grammar. */
+  showSopPrompts: boolean
 }
 
 export type FileChipStyle = 'expanded' | 'minimal'
@@ -113,7 +121,7 @@ const LS_KEY = 'mc-chat-config'
  *  it. The sidebar's view toggle persists this flag BEFORE creating its first
  *  column, so a deliberate board user always has an explicit `true` stored and
  *  is unaffected by the default. */
-const DEFAULTS: ChatConfig = { historyExpanded: true, showTimestamps: true, showTurnStats: true, sendOnEnter: 'enter', collapseAllSteps: true, confirmCloseSession: false, simplifiedToolNames: true, contentWidth: 'compact', tagColumnsEnabled: false, fileChipStyle: 'expanded', followUpLayout: 'scroll', streamMode: 'smooth', showContextPct: false, showContextTokens: false, pinLastPrompt: true, hideEmptyFolderBody: false, spellcheck: true, inlineMarkdown: false, showFullPastes: false, doubleClickToEdit: false, dimInactivePanes: true, minimapSide: 'left', messageFontSize: DEFAULT_MESSAGE_FONT_SIZE }
+const DEFAULTS: ChatConfig = { historyExpanded: true, showTimestamps: true, showTurnStats: true, sendOnEnter: 'enter', collapseAllSteps: true, confirmCloseSession: false, simplifiedToolNames: true, contentWidth: 'compact', tagColumnsEnabled: false, fileChipStyle: 'expanded', followUpLayout: 'scroll', streamMode: 'smooth', showContextPct: false, showContextTokens: false, pinLastPrompt: true, hideEmptyFolderBody: false, spellcheck: true, inlineMarkdown: false, showFullPastes: false, doubleClickToEdit: false, dimInactivePanes: true, minimapSide: 'left', messageFontSize: DEFAULT_MESSAGE_FONT_SIZE, showSopPrompts: false }
 
 const clampMessageFontSize = (n: number): number =>
   Math.max(MIN_MESSAGE_FONT_SIZE, Math.min(MAX_MESSAGE_FONT_SIZE, Math.round(n)))
@@ -164,6 +172,9 @@ export function loadChatConfig(): ChatConfig {
     // Coerced, not trusted: a stored non-boolean must not attach the
     // double-click gesture that replaces word selection on the bubble.
     if (typeof cfg.doubleClickToEdit !== 'boolean') cfg.doubleClickToEdit = false
+    // Coerced, not trusted: a stored non-boolean must not decide whether the
+    // `/` menu lists SOP rows (a change to every user's menu).
+    if (typeof cfg.showSopPrompts !== 'boolean') cfg.showSopPrompts = false
     if (typeof cfg.dimInactivePanes !== 'boolean') cfg.dimInactivePanes = true
     if (cfg.minimapSide !== 'left' && cfg.minimapSide !== 'right') cfg.minimapSide = 'left'
     cfg.messageFontSize = typeof cfg.messageFontSize === 'number' ? clampMessageFontSize(cfg.messageFontSize) : DEFAULT_MESSAGE_FONT_SIZE

@@ -1090,6 +1090,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.list-agent-sops-in-the-menu",
+    "label": "List Agent SOPs in the / menu",
+    "labelKey": "pages.settings.chatPanel.show_sop_prompts",
+    "description": "Lists your installed Agent SOPs (standard procedures) and saved prompts when you type / in the message box.",
+    "tab": "chat",
+    "type": "toggle",
+    "occurrence": 1,
+    "params": {
+      "sub": "composer"
+    }
+  },
+  {
     "id": "chat.mcp-apps-in-side-panel",
     "label": "MCP Apps in Side Panel",
     "labelKey": "pages.settings.chatPanel.mcp_apps_in_side_panel",
