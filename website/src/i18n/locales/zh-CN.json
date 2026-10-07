@@ -10928,7 +10928,12 @@
         "search_names": "搜索文件名",
         "tree_mode": "文件列表模式",
         "content_engine_slow": "此主机没有 ripgrep，因此搜索使用了较慢的内置扫描。",
-        "content_one_row_per_file": "每个文件一行"
+        "content_one_row_per_file": "每个文件一行",
+        "ctx_add_bookmark": "收藏",
+        "ctx_remove_bookmark": "取消收藏",
+        "bookmarks_title": "收藏",
+        "bookmark_remove": "取消收藏",
+        "bookmarks_unavailable": "书签不可用 — 浏览器存储已禁用"
       },
       "filesHome": {
         "no_project_dir": "此聊天未设置项目目录",

@@ -10928,7 +10928,12 @@
         "search_names": "파일 이름 검색",
         "tree_mode": "파일 목록 모드",
         "content_engine_slow": "이 호스트에는 ripgrep이 없으므로 검색이 더 느린 내장 스캔으로 실행되었습니다.",
-        "content_one_row_per_file": "파일당 한 행"
+        "content_one_row_per_file": "파일당 한 행",
+        "ctx_add_bookmark": "북마크",
+        "ctx_remove_bookmark": "북마크 해제",
+        "bookmarks_title": "북마크",
+        "bookmark_remove": "북마크 해제",
+        "bookmarks_unavailable": "북마크를 사용할 수 없습니다 — 브라우저 저장소가 비활성화되어 있습니다"
       },
       "filesHome": {
         "no_project_dir": "이 채팅에는 프로젝트 디렉터리가 설정되어 있지 않습니다",

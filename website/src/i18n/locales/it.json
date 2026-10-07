@@ -11272,7 +11272,12 @@
         "search_names": "Cerca nei nomi dei file",
         "tree_mode": "Modalità elenco file",
         "content_engine_slow": "Questo host non ha ripgrep, quindi la ricerca ha usato la scansione interna più lenta.",
-        "content_one_row_per_file": "una riga per file"
+        "content_one_row_per_file": "una riga per file",
+        "ctx_add_bookmark": "Aggiungi ai segnalibri",
+        "ctx_remove_bookmark": "Rimuovi dai segnalibri",
+        "bookmarks_title": "Segnalibri",
+        "bookmark_remove": "Rimuovi dai segnalibri",
+        "bookmarks_unavailable": "Segnalibri non disponibili: l’archiviazione del browser è disattivata"
       },
       "filesHome": {
         "no_project_dir": "Nessuna directory di progetto impostata per questa chat",

@@ -20,7 +20,7 @@ import type {
   ContextMenuOpenContext as FileTreeContextMenuOpenContext,
 } from '@pierre/trees'
 import { FileTree, useFileTree } from '@pierre/trees/react'
-import { AtSign, Download, FileDiff, FolderDot, FolderLock, FolderOpen, Undo2 } from 'lucide-react'
+import { AtSign, Download, FileDiff, FolderDot, FolderLock, FolderOpen, Star, StarOff, Undo2 } from 'lucide-react'
 import { api } from '../api/client'
 import ErrorNotice from '../components/ErrorNotice'
 import { MOVE_UNDO_MS } from '../components/MoveUndoBar'
@@ -29,6 +29,7 @@ import { useMenuKeyboard } from '../hooks/useMenuKeyboard'
 import { i18nT } from '../i18n/t'
 import { useFileMenuItems, visibleFileMenuItems, invokeFileMenuItem, FileMenuItemIcon, FileMenuItemLabel, type ContributedFileMenuItem, type ReportFileMenuError } from '../apps/fileMenuContributions'
 import { downloadFileToDisk } from '../utils/fileReadUrl'
+import { isBookmarked, toggleBookmark } from './fileBookmarks'
 import { findReport, type ErrorReport } from '../utils/errorReport'
 import {
   gitFilterRefusalCause,
@@ -122,10 +123,13 @@ function expandedDirectoriesOf(
  *  contributes for the `tree-context` surface (row click already opens a file,
  *  so the menu deliberately carries no Open duplicate). Every action closes the
  *  menu itself so focus returns to the row. */
-function TreeContextMenu({ item, context, root, onAddToContext, contribItems, onError }: {
+function TreeContextMenu({ item, context, root, projectDir, onAddToContext, contribItems, onError }: {
   item: FileTreeContextMenuItem
   context: FileTreeContextMenuOpenContext
   root: string
+  /** The chat's project directory — the key the bookmark store is scoped by
+   *  (a bookmark is a path and only resolves inside its own project). */
+  projectDir: string
   onAddToContext?: (absPath: string, kind: TreeEntryKind) => void
   /** Contributed `tree-context` rows, resolved by the PARENT (which already holds
    *  the `['apps']` query) and passed down. Deliberately a prop rather than a hook
@@ -152,6 +156,14 @@ function TreeContextMenu({ item, context, root, onAddToContext, contribItems, on
   // root-relative-looking path instead of project-relative).
   const abs = `${normalizeWindowsPath(root).replace(/\/$/, '')}/${item.path}`
   const rows = visibleFileMenuItems(contribItems, { path: abs, kind: isDir ? 'dir' : 'file' })
+  // The path form the BOOKMARK stores: built from the RAW root, exactly as the
+  // tree's own open path does (`${root}/${focused.getPath()}` in the
+  // open-on-selection effect) and as the selection echo compares
+  // (`selectedPath.startsWith(`${root}/`)`). `abs` above forward-slashes a
+  // Windows root for the mention host; a bookmark must instead round-trip
+  // through the open path unchanged, so a bookmark-opened file still matches
+  // the tree's selection highlight and the viewer's tab dedupe on Windows.
+  const bookmarkAbs = `${root.replace(/\/$/, '')}/${item.path}`
   // "Add to chat" on a folder writes an `@path/` folder reference, which cannot
   // carry whitespace or `@`; for such a folder the row is shown disabled with
   // the reason rather than inserting a reference that never reaches the send
@@ -285,7 +297,14 @@ function TreeContextMenu({ item, context, root, onAddToContext, contribItems, on
   // machine running the browser). Directories do not: the ask is file rows
   // only, and /api/file-download serves a single file, not a folder.
   const canDownload = !isDir
-  if (!hasBuiltinChatRow && !canDownload && rows.length === 0) return null
+  // Bookmark toggle: files only, same as Download. A bookmark is a one-click
+  // shortcut to this file from the rail's Bookmarks section (issue #6325); a
+  // directory is navigated, not opened, so it is not bookmarkable. Read once
+  // when the menu opens — the menu closes on activation, so it never needs to
+  // reflect a live toggle of its own.
+  const canBookmark = !isDir
+  const bookmarked = canBookmark && isBookmarked(projectDir, bookmarkAbs)
+  if (!hasBuiltinChatRow && !canDownload && !canBookmark && rows.length === 0) return null
   return createPortal(
     <div
       ref={menuRef}
@@ -342,6 +361,30 @@ function TreeContextMenu({ item, context, root, onAddToContext, contribItems, on
           {i18nT('pages.chat.fileBrowserRail.ctx_download')}
         </div>
       )}
+      {/* Built-in Bookmark toggle for a file row. Adds (or removes) the file
+          from the rail's per-project Bookmarks section (issue #6325), a flat
+          one-click shortcut list independent of the folder tree. Files only,
+          like Download — a directory is navigated, not opened. Its ref owns
+          focus entry only when no Add-to-chat and no Download row sit above
+          it. */}
+      {canBookmark && (
+        <div
+          ref={!hasBuiltinChatRow && !canDownload ? firstItemRef : undefined}
+          role="menuitem"
+          tabIndex={-1}
+          data-testid="file-tree-bookmark-toggle"
+          className={itemCls}
+          onClick={activate(() => toggleBookmark(projectDir, bookmarkAbs))}
+          onKeyDown={activate(() => toggleBookmark(projectDir, bookmarkAbs))}
+        >
+          {bookmarked
+            ? <StarOff className="lucide-inline text-muted" />
+            : <Star className="lucide-inline text-muted" />}
+          {bookmarked
+            ? i18nT('pages.chat.fileBrowserRail.ctx_remove_bookmark')
+            : i18nT('pages.chat.fileBrowserRail.ctx_add_bookmark')}
+        </div>
+      )}
       {/* App-contributed rows (contributes.fileMenuItems, surface 'tree-context').
           An installed app declares these in its manifest; core POSTs the node
           context to the app's endpoint on activation and never imports app code.
@@ -362,7 +405,7 @@ function TreeContextMenu({ item, context, root, onAddToContext, contribItems, on
         return (
           <div
             key={`${mi.app}:${mi.id}`}
-            ref={!hasBuiltinChatRow && !canDownload && idx === 0 ? firstItemRef : undefined}
+            ref={!hasBuiltinChatRow && !canDownload && !canBookmark && idx === 0 ? firstItemRef : undefined}
             role="menuitem"
             tabIndex={-1}
             className={itemCls}
@@ -1029,6 +1072,12 @@ export function PierreWorkspaceTreeImpl({ projectDir, onFileOpen, onAddToContext
   onAddToContextRef.current = onAddToContext
   const rootRef = useRef(root)
   rootRef.current = root
+  // Live `projectDir` for the context-menu renderer below, which is a
+  // `useCallback([])` (a new identity would remount the slotted menu
+  // mid-interaction). The bookmark store is keyed by it, so it comes through a
+  // ref like `root` rather than being captured stale in the empty dep array.
+  const projectDirRef = useRef(projectDir)
+  projectDirRef.current = projectDir
 
   // Tag every row drag with the dashboard's tree-entry payload so the composer
   // can tell it from an OS file drag or a text drag. Native listener: the rows
@@ -1110,6 +1159,7 @@ export function PierreWorkspaceTreeImpl({ projectDir, onFileOpen, onAddToContext
           item={item}
           context={ctx}
           root={rootRef.current}
+          projectDir={projectDirRef.current}
           onAddToContext={onAddToContextRef.current}
           contribItems={treeItemsRef.current}
           onError={setActionError}

@@ -11100,7 +11100,12 @@
         "search_names": "Dateinamen durchsuchen",
         "tree_mode": "Dateilisten-Modus",
         "content_engine_slow": "Auf diesem Host ist ripgrep nicht vorhanden, daher wurde die langsamere integrierte Suche verwendet.",
-        "content_one_row_per_file": "eine Zeile pro Datei"
+        "content_one_row_per_file": "eine Zeile pro Datei",
+        "ctx_add_bookmark": "Lesezeichen",
+        "ctx_remove_bookmark": "Lesezeichen entfernen",
+        "bookmarks_title": "Lesezeichen",
+        "bookmark_remove": "Lesezeichen entfernen",
+        "bookmarks_unavailable": "Lesezeichen nicht verfügbar – der Browserspeicher ist deaktiviert"
       },
       "filesHome": {
         "no_project_dir": "Für diesen Chat ist kein Projektverzeichnis festgelegt",

@@ -34,13 +34,11 @@
  *
  * Usage (from website/): node capture/shoot-tree-download-menu.mjs [outDir]
  */
-import { chromium } from 'playwright'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { serveDist } from '../scripts/lib/serve-dist.mjs'
 import { logPageProblems, stubDashboardApi, json } from '../scripts/lib/stub-dashboard-api.mjs'
-import { chromiumExecutable } from '../scripts/lib/chromium-executable.mjs'
+import { treeProjectRoutes, makeRecorder, openRowMenu, waitTreeText, filesSlotFixture, bootCapture } from '../scripts/lib/tree-capture-harness.mjs'
 
 const OUT = process.argv[2] || '../temp-screenshots/tree-download-menu'
 const PROJECT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -70,37 +68,15 @@ const MD_PATH = `${resolve(dirname(fileURLToPath(import.meta.url)), '../..')}/${
 const MD_CONTENT = '# Side panel\n\nThis file is flagged in this fixture so the viewer Download exercises the credential-scan refusal path.\n'
 
 
-const slots = [{
-  key: SLOT, title: 'Tree download', running: false, last_message: 'Tree download',
-  messages: 1, agent: 'kirocrew', memory_mode: 'persistent', project: PROJECT,
-  modified: Math.floor(Date.now() / 1000), source_links: [], source_links_total: 0,
-}]
-const slotDetail = { running: false, has_more: false, total: 0, queue: [], messages: [] }
-
-const FILES_TAB = { id: 'files', kind: 'files', title: 'Files' }
-const bucket = (tabs, activeId) => JSON.stringify({ activeId, tabs })
-
-function pngSize(path) {
-  const b = readFileSync(path)
-  return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) }
-}
+const { slots, slotDetail, filesTab: FILES_TAB, bucket } = filesSlotFixture({ slot: SLOT, title: 'Tree download', project: PROJECT })
 
 async function main() {
-  const { srv, base } = await serveDist()
-  const executablePath = chromiumExecutable()
-  console.log('chromium:', executablePath || '(playwright default)')
-  const browser = await chromium.launch({ executablePath })
-  const context = await browser.newContext({ viewport: { width: 1200, height: 820 }, deviceScaleFactor: 2 })
-  const page = await context.newPage()
+  const { srv, base, browser, page } = await bootCapture()
 
   const extra = async (path, route) => {
     if (path === '/api/chat/slots') return json(route, slots), true
     if (/^\/api\/chat\/slots\/[^/]+/.test(path)) return json(route, slotDetail), true
-    if (path === '/api/project/tree') return json(route, { root: PROJECT, paths: TREE_PATHS, repo: true, truncated: false }), true
-    if (path === '/api/project/git/status') return json(route, { repo: true, repoRoot: PROJECT, branch: 'main', ahead: 0, behind: 0, files: [] }), true
-    if (path === '/api/project/git') return json(route, { path: PROJECT, repo: true, repoRoot: PROJECT, branch: 'main', detached: false, head: 'a1b2c3d' }), true
-    if (path === '/api/project/git/log') return json(route, { repo: true, commits: [] }), true
-    if (path === '/api/recent-projects') return json(route, { dirs: [PROJECT] }), true
+    if (treeProjectRoutes(path, route, { project: PROJECT, paths: TREE_PATHS, json })) return true
     // Cold-tab hydration reads file-read as TEXT (the shared map's catch-all
     // would hand it JSON []); serve the MD body for the viewer frame.
     if (path === '/api/file-read') {
@@ -123,17 +99,7 @@ async function main() {
   logPageProblems(page)
 
   const wrote = []
-  function record(file, note) {
-    const { w, h } = pngSize(file)
-    const bytes = readFileSync(file).length
-    const mbpp = Math.round((bytes * 1000) / (w * h))
-    const over = w > MAX_EDGE || h > MAX_EDGE
-    const blank = mbpp < MIN_MBPP
-    console.log(`wrote ${file}  ${w}x${h}  ${bytes}B  ${mbpp} mB/px${over ? '  OVER' : ''}${blank ? '  BLANK' : ''}  ${note}`)
-    wrote.push({ file, over, blank })
-    if (blank) throw new Error(`frame ${file}: ${mbpp} mB/px below ${MIN_MBPP} blank floor`)
-    if (over) throw new Error(`frame ${file}: over ${MAX_EDGE}px`)
-  }
+  const record = makeRecorder({ wrote, maxEdge: MAX_EDGE, minMbpp: MIN_MBPP })
 
   async function load() {
     await page.addInitScript(([slot, tabsJson, project]) => {
@@ -177,39 +143,14 @@ async function main() {
   }
 
   const panel = () => page.locator('div:has(> .side-panel-strip)').last()
-  const waitTreeText = async (name) => page.waitForFunction(
-    n => (document.querySelector('file-tree-container')?.shadowRoot?.textContent ?? '').replace(/…/g, '').includes(n),
-    name, { timeout: 20000 })
-
-  /** Screen-space center of the row whose label (truncation markers dropped)
-   *  contains `label`, measured inside the shadow root. */
-  const rowCenter = (label) => page.evaluate((lbl) => {
-    const root = document.querySelector('file-tree-container')?.shadowRoot
-    if (!root) return null
-    const norm = s => (s || '').replace(/…/g, '').replace(/\s+/g, '')
-    const candidates = [...root.querySelectorAll('*')].filter(r => norm(r.textContent).includes(lbl))
-    if (!candidates.length) return { notFound: true, sample: norm(root.textContent).slice(0, 120) }
-    candidates.sort((a, b) => a.textContent.length - b.textContent.length)
-    const rect = candidates[0].getBoundingClientRect()
-    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
-  }, label)
-
-  const openRowMenu = async (label) => {
-    const c = await rowCenter(label)
-    if (!c || c.notFound) return { ok: false, c }
-    await page.mouse.move(c.x, c.y)
-    await page.waitForTimeout(150)
-    await page.mouse.click(c.x, c.y, { button: 'right' })
-    return { ok: true, c }
-  }
 
   await load()
   await panel().waitFor({ state: 'visible', timeout: 20000 })
-  await waitTreeText('README.md')
+  await waitTreeText(page, 'README.md')
   await page.waitForTimeout(1200)
 
   // ── Frame 20: FILE row → Add to chat + Download ─────────────────────────────
-  let r = await openRowMenu('README.md')
+  let r = await openRowMenu(page, 'README.md')
   console.log('openRowMenu(README.md)', JSON.stringify(r))
   await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: 8000 })
   await page.waitForTimeout(400)
@@ -226,7 +167,7 @@ async function main() {
   await page.waitForTimeout(300)
 
   // ── Frame 21: DIRECTORY row → Add to chat only, no Download ─────────────────
-  r = await openRowMenu('docs')
+  r = await openRowMenu(page, 'docs')
   console.log('openRowMenu(docs)', JSON.stringify(r))
   await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: 8000 })
   await page.waitForTimeout(400)
@@ -244,7 +185,7 @@ async function main() {
   await page.waitForTimeout(300)
 
   // ── Frame 22: Download REFUSED — the gate's 400 surfaces, no bytes ─────────
-  r = await openRowMenu(FLAGGED_ROW)
+  r = await openRowMenu(page, FLAGGED_ROW)
   console.log('openRowMenu(' + FLAGGED_ROW + ')', JSON.stringify(r))
   await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: 8000 })
   await page.getByRole('menuitem', { name: 'Download' }).first().click()

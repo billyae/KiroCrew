@@ -4708,7 +4708,12 @@
         "search_names": "Search file names",
         "tree_mode": "File list mode",
         "content_engine_slow": "This host has no ripgrep, so the search took the slower built-in scan.",
-        "content_one_row_per_file": "one row per file"
+        "content_one_row_per_file": "one row per file",
+        "ctx_add_bookmark": "Bookmark",
+        "ctx_remove_bookmark": "Remove bookmark",
+        "bookmarks_title": "Bookmarks",
+        "bookmark_remove": "Remove bookmark",
+        "bookmarks_unavailable": "Bookmarks unavailable — browser storage is disabled"
       },
       "filesHome": {
         "no_project_dir": "No project directory is set for this chat",

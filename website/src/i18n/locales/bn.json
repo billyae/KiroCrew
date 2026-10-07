@@ -11100,7 +11100,12 @@
         "search_names": "ফাইলের নাম খুঁজুন",
         "tree_mode": "ফাইল তালিকা মোড",
         "content_engine_slow": "এই হোস্টে ripgrep নেই, তাই অনুসন্ধানটি ধীরগতির অন্তর্নির্মিত স্ক্যানে চালানো হয়েছে।",
-        "content_one_row_per_file": "প্রতি ফাইলে একটি সারি"
+        "content_one_row_per_file": "প্রতি ফাইলে একটি সারি",
+        "ctx_add_bookmark": "বুকমার্ক করো",
+        "ctx_remove_bookmark": "বুকমার্ক সরাও",
+        "bookmarks_title": "বুকমার্ক",
+        "bookmark_remove": "বুকমার্ক সরাও",
+        "bookmarks_unavailable": "বুকমার্ক অনুপলব্ধ — ব্রাউজার স্টোরেজ বন্ধ আছে"
       },
       "filesHome": {
         "no_project_dir": "এই চ্যাটের জন্য কোনো প্রজেক্ট ডিরেক্টরি সেট করা নেই",

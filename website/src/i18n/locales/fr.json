@@ -11272,7 +11272,12 @@
         "search_names": "Rechercher dans les noms de fichiers",
         "tree_mode": "Mode liste de fichiers",
         "content_engine_slow": "Cet hôte n'a pas ripgrep, la recherche a donc utilisé le balayage interne plus lent.",
-        "content_one_row_per_file": "une ligne par fichier"
+        "content_one_row_per_file": "une ligne par fichier",
+        "ctx_add_bookmark": "Ajouter aux favoris",
+        "ctx_remove_bookmark": "Retirer des favoris",
+        "bookmarks_title": "Favoris",
+        "bookmark_remove": "Retirer des favoris",
+        "bookmarks_unavailable": "Favoris indisponibles — le stockage du navigateur est désactivé"
       },
       "filesHome": {
         "no_project_dir": "Aucun répertoire de projet n'est défini pour cette discussion",

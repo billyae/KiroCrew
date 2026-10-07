@@ -11444,7 +11444,12 @@
         "search_names": "Искать в именах файлов",
         "tree_mode": "Режим списка файлов",
         "content_engine_slow": "На этом хосте нет ripgrep, поэтому поиск выполнен более медленным встроенным способом.",
-        "content_one_row_per_file": "по одной строке на файл"
+        "content_one_row_per_file": "по одной строке на файл",
+        "ctx_add_bookmark": "В закладки",
+        "ctx_remove_bookmark": "Убрать из закладок",
+        "bookmarks_title": "Закладки",
+        "bookmark_remove": "Убрать из закладок",
+        "bookmarks_unavailable": "Закладки недоступны — хранилище браузера отключено"
       },
       "filesHome": {
         "no_project_dir": "Для этого чата не задан каталог проекта",

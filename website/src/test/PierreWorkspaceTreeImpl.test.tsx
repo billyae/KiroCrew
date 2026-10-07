@@ -40,6 +40,7 @@ import {
   __resetTreeExpansionMemoryForTests,
 } from '../pierre/treeExpansionMemory'
 import { __resetTreeUnreadableDismissalsForTests, recallDismissedUnreadable, rememberDismissedUnreadable } from '../pierre/treeUnreadableDismissals'
+import { __resetFileBookmarksForTests, recallBookmarks, toggleBookmark } from '../pierre/fileBookmarks'
 import { MOVE_UNDO_MS } from '../components/MoveUndoBar'
 import { treeMock } from './__mocks__/pierreTreesReact'
 import type { MenuItem, MenuContext, VisibleRow } from './__mocks__/pierreTreesReact'
@@ -2225,11 +2226,11 @@ describe('PierreWorkspaceTreeImpl — row context menu Download', () => {
     }
   })
 
-  it('shows Download as the ONLY row on a file with no host onAddToContext', async () => {
+  it('shows Download and Bookmark on a file with no host onAddToContext', async () => {
     // The reachable shape on a hostless render site (e.g. the Members DM file
     // tree, which mounts the panel with no onAddToContext): the file row menu
-    // holds Download alone -- no Add to chat above it. This is shipped UI, not a
-    // defensive dead path, so the single-row Download layout must render.
+    // holds Download and Bookmark -- no Add to chat above them. Both are
+    // file-only built-ins, shipped UI, so the no-host layout must render them.
     const cap = captureDownload({ ok: true })
     try {
       renderTree()
@@ -2237,8 +2238,9 @@ describe('PierreWorkspaceTreeImpl — row context menu Download', () => {
 
       openMenu({ kind: 'file', name: 'b.ts', path: 'src/a/b.ts' })
       const items = screen.getAllByRole('menuitem')
-      expect(items).toHaveLength(1)
+      expect(items).toHaveLength(2)
       expect(items[0]).toHaveTextContent('Download')
+      expect(items[1]).toHaveTextContent('Bookmark')
       expect(screen.queryByRole('menuitem', { name: 'Add to chat' })).not.toBeInTheDocument()
     } finally {
       cap.restore()
@@ -2263,6 +2265,69 @@ describe('PierreWorkspaceTreeImpl — row context menu Download', () => {
     render(<>{node}</>)
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
+  })
+})
+
+describe('PierreWorkspaceTreeImpl — row context menu Bookmark', () => {
+  // The Bookmark toggle (issue #6325): a file-only row that adds or removes the
+  // file from the rail's per-project bookmark list. These pin: it is offered on
+  // files and not directories, the label reflects the current state, and
+  // clicking it toggles the stored list for the tree's projectDir.
+  beforeEach(() => {
+    localStorage.clear()
+    __resetFileBookmarksForTests()
+  })
+
+  const openMenu = (item: MenuItem) => {
+    const context: MenuContext = {
+      anchorElement: document.createElement('div'),
+      anchorRect: document.createElement('div').getBoundingClientRect(),
+      close: vi.fn(),
+      restoreFocus: vi.fn(),
+    }
+    const node = treeMock.fileTreeProps.at(-1)!.renderContextMenu!(item, context)
+    return render(<>{node}</>)
+  }
+
+  it('offers Bookmark on a file row', async () => {
+    renderTree({ onAddToContext: vi.fn() })
+    await waitForTree()
+
+    openMenu({ kind: 'file', name: 'b.ts', path: 'src/a/b.ts' })
+    expect(screen.getByTestId('file-tree-bookmark-toggle')).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Bookmark' })).toBeInTheDocument()
+  })
+
+  it('does not offer Bookmark on a directory row', async () => {
+    renderTree({ onAddToContext: vi.fn() })
+    await waitForTree()
+
+    openMenu({ kind: 'directory', name: 'a', path: 'src/a' })
+    // A directory is navigated, not opened, so it is not bookmarkable.
+    expect(screen.queryByTestId('file-tree-bookmark-toggle')).not.toBeInTheDocument()
+  })
+
+  it('adds the file to the project bookmarks on click', async () => {
+    renderTree({ onAddToContext: vi.fn() })
+    await waitForTree()
+
+    openMenu({ kind: 'file', name: 'b.ts', path: 'src/a/b.ts' })
+    fireEvent.click(screen.getByTestId('file-tree-bookmark-toggle'))
+
+    expect(recallBookmarks(ROOT)).toEqual([`${ROOT}/src/a/b.ts`])
+  })
+
+  it('shows "Remove bookmark" and removes it when already bookmarked', async () => {
+    renderTree({ onAddToContext: vi.fn() })
+    await waitForTree()
+    toggleBookmark(ROOT, `${ROOT}/src/a/b.ts`)
+
+    openMenu({ kind: 'file', name: 'b.ts', path: 'src/a/b.ts' })
+    const row = screen.getByTestId('file-tree-bookmark-toggle')
+    expect(row).toHaveTextContent('Remove bookmark')
+
+    fireEvent.click(row)
+    expect(recallBookmarks(ROOT)).toEqual([])
   })
 })
 
@@ -2338,31 +2403,39 @@ describe('PierreWorkspaceTreeImpl — row context menu keyboard contract (#6231)
     expect(onAddToContext).toHaveBeenCalledWith(`${ROOT}/src/a/b.ts`, 'file')
   })
 
-  it('moves focus between Add to chat and Download with ArrowDown/ArrowUp', async () => {
-    // The real two-item case: a FILE row with a host holds Add to chat AND
-    // Download, so the arrows do actual roving focus (not the degenerate
-    // one-item no-op above). ArrowDown steps to the next item and ArrowUp wraps
-    // back, both consumed so neither scrolls the tree behind the open menu.
+  it('moves focus across Add to chat, Download and Bookmark with ArrowDown/ArrowUp', async () => {
+    // The real multi-item case: a FILE row with a host holds Add to chat,
+    // Download AND Bookmark, so the arrows do actual roving focus (not the
+    // degenerate one-item no-op above). ArrowDown steps to the next item and
+    // ArrowUp wraps across the ends, all consumed so none scrolls the tree
+    // behind the open menu.
     renderTree({ onAddToContext: vi.fn() })
     await waitForTree()
     openMenu({ kind: 'file', name: 'b.ts', path: 'src/a/b.ts' })
 
     const add = screen.getByRole('menuitem', { name: 'Add to chat' })
     const download = screen.getByRole('menuitem', { name: 'Download' })
+    const bookmark = screen.getByRole('menuitem', { name: 'Bookmark' })
     // Focus enters on the first row.
     expect(add).toHaveFocus()
 
-    // ArrowDown -> Download, claimed (false = preventDefault called).
+    // ArrowDown -> Download, claimed (false = preventDefault called). The
+    // roving-focus hook acts on the CURRENTLY focused item, so each step fires
+    // on whatever row now holds focus.
     expect(fireEvent.keyDown(add, { key: 'ArrowDown' })).toBe(false)
     expect(download).toHaveFocus()
 
-    // ArrowUp -> back to Add to chat, claimed.
-    expect(fireEvent.keyDown(download, { key: 'ArrowUp' })).toBe(false)
+    // ArrowDown -> Bookmark, claimed.
+    expect(fireEvent.keyDown(download, { key: 'ArrowDown' })).toBe(false)
+    expect(bookmark).toHaveFocus()
+
+    // ArrowDown from the last item wraps to the first (Add to chat).
+    expect(fireEvent.keyDown(bookmark, { key: 'ArrowDown' })).toBe(false)
     expect(add).toHaveFocus()
 
-    // ArrowUp from the first item wraps to the last (Download).
+    // ArrowUp from the first item wraps to the last (Bookmark).
     expect(fireEvent.keyDown(add, { key: 'ArrowUp' })).toBe(false)
-    expect(download).toHaveFocus()
+    expect(bookmark).toHaveFocus()
   })
 })
 

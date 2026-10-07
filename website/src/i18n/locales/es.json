@@ -11272,7 +11272,12 @@
         "search_names": "Buscar nombres de archivo",
         "tree_mode": "Modo de lista de archivos",
         "content_engine_slow": "Este host no tiene ripgrep, por lo que la búsqueda usó el escaneo interno más lento.",
-        "content_one_row_per_file": "una fila por archivo"
+        "content_one_row_per_file": "una fila por archivo",
+        "ctx_add_bookmark": "Añadir a marcadores",
+        "ctx_remove_bookmark": "Quitar de marcadores",
+        "bookmarks_title": "Marcadores",
+        "bookmark_remove": "Quitar de marcadores",
+        "bookmarks_unavailable": "Marcadores no disponibles: el almacenamiento del navegador está deshabilitado"
       },
       "filesHome": {
         "no_project_dir": "Este chat no tiene un directorio de proyecto",

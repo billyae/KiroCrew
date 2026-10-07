@@ -54,6 +54,7 @@ vi.mock('../pierre/tree', () => ({
 }))
 
 import FileBrowserRail, { useTreeState } from '../pages/chat/FileBrowserRail'
+import { __resetFileBookmarksForTests, rememberBookmarks, recallBookmarks } from '../pierre/fileBookmarks'
 import { ApiError } from '../api/apiError'
 
 const RAIL_W_KEY = 'mc-files-rail-w'
@@ -1112,5 +1113,98 @@ describe('FileBrowserRail content results', () => {
     expect(prompt).toContain('/api/file-grep')
     expect(prompt).toContain('403')
     expect(prompt).toContain('sensitive_path')
+  })
+})
+
+describe('FileBrowserRail bookmarks section', () => {
+  // The Bookmarks section (issue #6325) sits above the tree and lists the
+  // project's bookmarked files for one-click open. It renders only when the
+  // project has a bookmark; a bookmark is added from the tree row's context
+  // menu (covered in PierreWorkspaceTreeImpl), so here the store is driven
+  // directly. The store's module-scope session map survives a remount, so it
+  // is reset per test alongside localStorage.
+  beforeEach(() => {
+    __resetFileBookmarksForTests()
+  })
+
+  it('renders nothing when the project has no bookmarks', () => {
+    mount()
+    expect(screen.queryByTestId('file-browser-rail-bookmarks')).not.toBeInTheDocument()
+  })
+
+  it('lists bookmarked files by name and opens one on click', () => {
+    rememberBookmarks(DIR, ['/repo/src/one.ts', '/repo/docs/two.md'])
+    const onFileOpen = vi.fn()
+    mount({ onFileOpen })
+
+    const section = screen.getByTestId('file-browser-rail-bookmarks')
+    // Shown by file name, newest-added order preserved.
+    expect(within(section).getByText('one.ts')).toBeInTheDocument()
+    expect(within(section).getByText('two.md')).toBeInTheDocument()
+
+    fireEvent.click(within(section).getByText('one.ts'))
+    // Opens the same way the tree does: absolute path, non-diff.
+    expect(onFileOpen).toHaveBeenCalledWith('/repo/src/one.ts', false)
+  })
+
+  it('removes a bookmark from its row control', () => {
+    rememberBookmarks(DIR, ['/repo/src/one.ts'])
+    mount()
+
+    const section = screen.getByTestId('file-browser-rail-bookmarks')
+    fireEvent.click(within(section).getByRole('button', { name: 'Remove bookmark' }))
+    // Last bookmark gone → the whole section disappears.
+    expect(screen.queryByTestId('file-browser-rail-bookmarks')).not.toBeInTheDocument()
+    expect(recallBookmarks(DIR)).toEqual([])
+  })
+
+  it('scopes the list to the rail\'s project directory', () => {
+    rememberBookmarks('/other', ['/other/x.ts'])
+    mount({ projectDir: DIR })
+    // DIR has no bookmarks; the /other list must not leak in.
+    expect(screen.queryByTestId('file-browser-rail-bookmarks')).not.toBeInTheDocument()
+  })
+
+  it('collapses and expands the section from the header', () => {
+    rememberBookmarks(DIR, ['/repo/src/one.ts'])
+    mount()
+    const section = screen.getByTestId('file-browser-rail-bookmarks')
+    const header = within(section).getByRole('button', { name: /bookmarks/i })
+    // Expanded by default: the list and its row are shown.
+    expect(within(section).getByRole('list')).toBeInTheDocument()
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+    // Collapse: the list is gone, the header remains.
+    fireEvent.click(header)
+    expect(within(section).queryByRole('list')).not.toBeInTheDocument()
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    // Expand again.
+    fireEvent.click(header)
+    expect(within(section).getByRole('list')).toBeInTheDocument()
+  })
+
+  it('disambiguates same-named files by their parent folder', () => {
+    // Two files both named config.ts in different folders: the row shows the
+    // parent folder as secondary text so they are not identical on screen.
+    rememberBookmarks(DIR, ['/repo/app/config.ts', '/repo/server/config.ts'])
+    mount()
+    const section = screen.getByTestId('file-browser-rail-bookmarks')
+    expect(within(section).getAllByText('config.ts')).toHaveLength(2)
+    expect(within(section).getByText('app')).toBeInTheDocument()
+    expect(within(section).getByText('server')).toBeInTheDocument()
+  })
+
+  it('shows an unavailable state when browser storage is disabled', () => {
+    const proto = Object.getPrototypeOf(localStorage) as Storage
+    const realSet = proto.setItem
+    proto.setItem = function () { throw new DOMException('denied', 'SecurityError') }
+    try {
+      mount()
+      // Instead of the normal (hidden) empty section, a clear unavailable
+      // notice is shown so the user is not offered a list that cannot persist.
+      expect(screen.getByTestId('file-browser-rail-bookmarks-unavailable')).toBeInTheDocument()
+      expect(screen.queryByTestId('file-browser-rail-bookmarks')).not.toBeInTheDocument()
+    } finally {
+      proto.setItem = realSet
+    }
   })
 })

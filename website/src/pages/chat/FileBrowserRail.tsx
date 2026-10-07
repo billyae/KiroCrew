@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useDebouncedValue } from '../../apps/file-explorer/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Files, Diff, Search, X, RefreshCw, FileText } from 'lucide-react'
+import { Files, Diff, Search, X, RefreshCw, FileText, Star, StarOff, ChevronRight, ChevronDown } from 'lucide-react'
 import { api } from '../../api/client'
 import { fileGrep, type FileGrepHit } from '../../api/fileGrep'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -22,6 +22,7 @@ import {
 import { cn } from '../../lib/utils'
 import { useColumnResize } from '../../hooks/useColumnResize'
 import { PierreWorkspaceTree } from '../../pierre/tree'
+import { useBookmarks, removeBookmark as removeBookmarkFromStore, isStorageAvailable } from '../../pierre/fileBookmarks'
 import { findReport, reportForError } from '../../utils/errorReport'
 import { errMessage } from '../../utils/thunkError'
 
@@ -29,6 +30,13 @@ import { errMessage } from '../../utils/thunkError'
 const RAIL_MIN_W = 300
 const RAIL_MAX_W = 520
 const RAIL_W_KEY = 'mc-files-rail-w'
+
+/** Collapsed/expanded state of the Bookmarks section, remembered across page
+ *  reloads. One flag for the whole surface (not per project), since it is a
+ *  display preference about the section itself, not about any one project's
+ *  bookmarks. Tolerant of a bad/absent value and of unusable storage, like the
+ *  rail width above. */
+const BOOKMARKS_COLLAPSED_KEY = 'mc-files-bookmarks-collapsed'
 
 /** All/Changed mode for the current page session. Module-level (not
  *  persisted): in-place tab navigation remounts the rail — the tab id
@@ -312,6 +320,160 @@ function ContentResults({ query, projectDir, onOpen }: {
           ))
         )}
       </div>
+    </div>
+  )
+}
+
+/** Last path segment of an absolute path, trailing slashes ignored; works for
+ *  both POSIX and Windows separators so a bookmark's label is its file name. */
+function bookmarkName(path: string): string {
+  const s = path.replace(/[/\\]+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i < 0 ? s : s.slice(i + 1)
+}
+
+/** The directory of `path` RELATIVE to `projectDir`, as muted secondary text
+ *  so two bookmarked files with the same name in different folders are told
+ *  apart. Returns '' when the file is directly in the project root (a bare
+ *  parent-folder tag there is just the project's own name — noise the UX
+ *  review flagged, e.g. `README.md 6325`). Falls back to the parent folder
+ *  name when `path` is not under `projectDir`. Uses forward slashes for
+ *  display regardless of the OS separator. */
+function bookmarkSubtext(path: string, projectDir: string): string {
+  const file = path.replace(/[/\\]+$/, '')
+  const sep = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
+  if (sep < 0) return ''
+  const dir = file.slice(0, sep)
+  const base = projectDir.replace(/[/\\]+$/, '')
+  if (dir === base) return '' // file is at the project root: no tag
+  if (dir.startsWith(base + '/') || dir.startsWith(base + '\\')) {
+    return dir.slice(base.length + 1).replace(/\\/g, '/') // project-relative dir
+  }
+  // Not under the project (unexpected): show the immediate parent folder.
+  const j = Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\'))
+  return j < 0 ? dir : dir.slice(j + 1)
+}
+
+/**
+ * The Bookmarks section at the top of the rail: a flat, user-curated list of
+ * frequently-used files, shown alongside the directory tree so they open in
+ * one click without walking the tree (issue #6325).
+ *
+ * A bookmark is added or removed from a file row's right-click menu
+ * (`PierreWorkspaceTreeImpl`), stored per project directory in `localStorage`
+ * (`../../pierre/fileBookmarks`). This renders nothing until the project has
+ * at least one bookmark, so a user who never bookmarks a file never sees the
+ * section — it does not compete with the tree for space by default.
+ *
+ * Clicking a row opens the file the same way the tree does (`onFileOpen` with
+ * the absolute path, non-diff). Each row also carries a remove control; the
+ * whole section collapses, remembered across reloads.
+ */
+function BookmarksSection({ projectDir, onFileOpen }: {
+  projectDir: string
+  onFileOpen: (absPath: string, diff: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const bookmarks = useBookmarks(projectDir)
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(BOOKMARKS_COLLAPSED_KEY) === '1' } catch { return false }
+  })
+  const toggleCollapsed = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    try { localStorage.setItem(BOOKMARKS_COLLAPSED_KEY, next ? '1' : '0') } catch { /* private mode / quota */ }
+  }
+  const removeBookmark = (path: string) => {
+    // Delegate to the store's read-modify-write against storage rather than
+    // writing `bookmarks.filter(...)`: `bookmarks` is this tab's rendered
+    // snapshot, and writing it back could overwrite a concurrent change. The
+    // store re-reads the persisted list, drops only `path`, and writes.
+    removeBookmarkFromStore(projectDir, path)
+  }
+
+  // `localStorage` is the only store, so if it is unavailable (private mode /
+  // disabled) a bookmark cannot persist. Rather than offer a list that would
+  // silently vanish, show a clear unavailable state — but only once the user
+  // has engaged (there is a bookmark to show, which there cannot be here) OR,
+  // since reads return empty when storage is off, show it in place of the
+  // normally-hidden empty section ONLY when storage is the reason. A user with
+  // working storage and no bookmarks still sees nothing.
+  if (!isStorageAvailable()) {
+    return (
+      <div className="shrink-0 border-b border-border px-2 py-1.5" data-testid="file-browser-rail-bookmarks-unavailable">
+        <ErrorNotice
+          variant="inline"
+          className="whitespace-normal"
+          message={t('pages.chat.fileBrowserRail.bookmarks_unavailable')}
+          askAgent
+          testId="file-browser-rail-bookmarks-unavailable-notice"
+        />
+      </div>
+    )
+  }
+
+  // Nothing bookmarked (and storage works): the section is absent, so the tree
+  // keeps the whole rail. The affordance to create the first bookmark lives on
+  // the tree row's context menu, not here.
+  if (bookmarks.length === 0) return null
+
+  return (
+    <div className="shrink-0 border-b border-border" data-testid="file-browser-rail-bookmarks">
+      <button
+        onClick={toggleCollapsed}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-text bg-transparent border-none cursor-pointer"
+      >
+        {collapsed ? <ChevronRight size={12} className="shrink-0" /> : <ChevronDown size={12} className="shrink-0" />}
+        <Star size={11} className="shrink-0 fill-current" />
+        <span>{t('pages.chat.fileBrowserRail.bookmarks_title')}</span>
+        <span className="ml-auto tabular-nums opacity-70">{bookmarks.length}</span>
+      </button>
+      {!collapsed && (
+        // `max-h-[40vh]`, not `max-h-[40%]`: the section is `shrink-0`, so its
+        // height is content-sized and a percentage cap resolves against no
+        // definite height (it never applies). A viewport unit always resolves,
+        // so a long bookmark list scrolls within ~40% of the viewport instead
+        // of growing unbounded and squeezing the tree body below it to nothing.
+        <div className="max-h-[40vh] overflow-y-auto pb-1" role="list">
+          {bookmarks.map(path => (
+            <div key={path} role="listitem" className="group flex items-center pr-1">
+              <Clickable
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left px-2 py-1 rounded-md hover:bg-bg-hover cursor-pointer"
+                onClick={() => onFileOpen(path, false)}
+                title={path}
+              >
+                <FileText size={11} className="shrink-0 opacity-60" />
+                <span className="shrink-0 truncate text-[11.5px] text-text">{bookmarkName(path)}</span>
+                {bookmarkSubtext(path, projectDir) && (
+                  // Muted project-relative folder so two files named the same
+                  // in different folders are distinguishable, without the noise
+                  // of tagging a root file with the project's own name.
+                  // `shrink-0` on the name keeps the folder the part that
+                  // truncates first.
+                  <span className="truncate text-[10px] text-muted opacity-70" title={path}>{bookmarkSubtext(path, projectDir)}</span>
+                )}
+              </Clickable>
+              <button
+                onClick={() => removeBookmark(path)}
+                // Hover reveals it on a pointer device to keep the row quiet,
+                // but a touch device has no hover, so it would never appear
+                // there — shown by default under `(hover: none)` so touch users
+                // still have a visible remove control (the tree row's context
+                // menu is the other removal path).
+                className="flex items-center justify-center w-[18px] h-[18px] shrink-0 rounded cursor-pointer text-muted hover:text-text bg-transparent border-none opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"
+                title={t('pages.chat.fileBrowserRail.bookmark_remove')}
+                aria-label={t('pages.chat.fileBrowserRail.bookmark_remove')}
+              >
+                {/* StarOff, not a bare ×: the × read as "delete the file". The
+                    tree row's context-menu "Remove bookmark" uses StarOff too,
+                    so the row control and the menu read as one action. */}
+                <StarOff size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -650,6 +812,11 @@ export default function FileBrowserRail({ projectDir, onFileOpen, onAddToContext
             />
           </div>
         )}
+        {/* Bookmarks sit above the tree body, present in every mode (a bookmark
+            is a file shortcut independent of the All/Changed/Content tree
+            scope). Renders nothing until the project has a bookmark, so by
+            default the tree keeps the whole rail. */}
+        <BookmarksSection projectDir={projectDir} onFileOpen={onFileOpen} />
         <div className="flex-1 min-h-0 flex flex-col py-1.5 pl-1">
           {contentMode ? (
             <ContentResults

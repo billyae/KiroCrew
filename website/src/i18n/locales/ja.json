@@ -10928,7 +10928,12 @@
         "search_names": "ファイル名を検索",
         "tree_mode": "ファイル一覧モード",
         "content_engine_slow": "このホストには ripgrep がないため、検索は低速な内蔵スキャンで実行されました。",
-        "content_one_row_per_file": "1 ファイルにつき 1 行"
+        "content_one_row_per_file": "1 ファイルにつき 1 行",
+        "ctx_add_bookmark": "ブックマーク",
+        "ctx_remove_bookmark": "ブックマークを解除",
+        "bookmarks_title": "ブックマーク",
+        "bookmark_remove": "ブックマークを解除",
+        "bookmarks_unavailable": "ブックマークは利用できません — ブラウザーのストレージが無効です"
       },
       "filesHome": {
         "no_project_dir": "このチャットにはプロジェクトディレクトリが設定されていません",
