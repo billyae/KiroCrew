@@ -321,7 +321,20 @@ class TestLeafOnlyPopulationIsRecorded:
     #: launch fingerprints; ``mcp/resolved`` holds executables substituted for an
     #: approved launch. Each sits beside writable siblings, so no parent stand-in
     #: can hold it.
-    EXPECTED: dict[str, int] = {"standard": 265, "cc": 272, "strict": 273}
+    #:
+    #: One more root-level leaf, three more entries per tier:
+    #:
+    #: * ``microvm_crews.json`` -- the microvm lane's crew records. Each row
+    #:   carries the ``microvm_id`` that ``teardown`` hands to
+    #:   ``launcher.terminate``, with no tag to disagree with it and no
+    #:   describe-and-confirm step in front of it, so a writable copy lets a
+    #:   sandboxed process choose which of the owner's VMs the next delete
+    #:   destroys. It sits at the data-home root beside ``cloud.json`` and
+    #:   ``cloud_launch_state.json``, which the gateway writes and which the root
+    #:   itself must stay writable for, so no enclosing directory mask can hold
+    #:   it and leaf-only is the only hold available -- the same reason those two
+    #:   are leaf-only.
+    EXPECTED: dict[str, int] = {"standard": 268, "cc": 275, "strict": 276}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:
