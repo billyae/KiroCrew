@@ -147,6 +147,8 @@
     "restore": "Restore from parent",
     "stale": "The saved version changed. Your draft is kept but still points at the old version. Reload from server, use the new version for this draft, then review changes before saving.",
     "unsupported": "This server does not support the capabilities editor.",
+    "refused": "The server refused this draft ({{code}}). Your draft is kept. Reloading will not change this: edit or discard the draft.",
+    "permissionsReview": "{{member}}'s agent file carries permission settings Crew did not generate (a hand-edited permissions block, autoAllowReadonly, or an allowed or trusted list in toolsSettings), so this page cannot change its approvals. Your draft is kept. Reloading will not change this: remove those settings from the agent file, then press Reload from server.",
     "failed": "The capabilities request failed. Your draft is kept. Reload from server and retry.",
     "reload": "Reload from server (keeps your draft)",
     "parent": "Parent template: {{name}}",

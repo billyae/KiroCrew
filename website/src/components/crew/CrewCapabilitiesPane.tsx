@@ -19,6 +19,12 @@ const CATEGORIES = ['mcpServers', 'tools', 'autoApprove', 'skills'] as const
 type Category = typeof CATEGORIES[number]
 const CATEGORY_KEYS = { mcpServers: 'pages.agentsPage.mcp_servers', tools: 'crewCapabilities.tools', autoApprove: 'pages.agentsPage.auto_approved', skills: 'pages.agentsPage.skills' }
 
+/** The 409 codes a Reload can resolve: the saved state moved under the draft.
+ * Every other 409 is a refusal of the draft itself, which a Reload repeats, so
+ * telling the user to reload would leave them in a loop. A 409 with no code
+ * keeps the stale copy, as before. */
+const STALE_CODES = new Set(['stale_revision', 'stale_preview', 'stale_binding', 'governance_changed', 'source_changed'])
+
 /** The member's own agent file an `unreviewable_drift` refusal names: a
  * basename Crew chose, never a path or a value from the file. */
 function refusedFile(body: string | undefined): string {
@@ -98,9 +104,14 @@ export default function CrewCapabilitiesPane({ member, members = [], hidden, onD
   // After that refusal, Save cannot help: only the refusal's own instruction
   // speaks, and the Review/Save control stays off until the draft changes or Reload.
   const refused = errorCode === 'unreviewable_drift'
+  const conflict = error instanceof ApiError && error.status === 409
   const errorMessage = refused && error instanceof ApiError
     ? t('crewCapabilities.unreviewableDrift', { member, file: refusedFile(error.body) })
-    : t(error instanceof ApiError && error.status === 409 ? 'crewCapabilities.stale' : error instanceof ApiError && [404, 405, 501].includes(error.status) ? 'crewCapabilities.unsupported' : 'crewCapabilities.failed')
+    : conflict && errorCode === 'alternate_permissions_require_review'
+      ? t('crewCapabilities.permissionsReview', { member })
+      : conflict && errorCode && !STALE_CODES.has(errorCode)
+        ? t('crewCapabilities.refused', { code: errorCode })
+        : t(conflict ? 'crewCapabilities.stale' : error instanceof ApiError && [404, 405, 501].includes(error.status) ? 'crewCapabilities.unsupported' : 'crewCapabilities.failed')
   const enabled = !!view && view.schema_version === 1 && view.template.available && !query.isError && (view.mode === 'inherited' || draft?.enroll === true)
   // The member's agent file changed outside this page, so new chats refuse to
   // start. An empty draft rebuilds the file from the saved setup; Review shows

@@ -636,6 +636,36 @@ describe('crew capability draft editor with mocked HTTP', () => {
     expect(previewBodies[1].operations).toEqual(previewBodies[0].operations)
   })
 
+  it('names a permissions refusal on review instead of sending the user round a reload loop', async () => {
+    server.use(http.post(`${endpoint}/preview`, () => HttpResponse.json({ error: 'alternate_permissions_require_review', code: 'alternate_permissions_require_review' }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools', exact: true }))
+    await pickState('Search read', 'Removed')
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }))
+    await screen.findByText(/crewA's agent file carries permission settings Crew did not generate/)
+    expect(screen.queryByText(/The saved version changed/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Use the new version for this draft' })).not.toBeInTheDocument()
+  })
+
+  it('reports any other non-stale 409 by its code, not as a changed version', async () => {
+    server.use(http.post(`${endpoint}/preview`, () => HttpResponse.json({ error: 'approval_exclusion_overlaps', code: 'approval_exclusion_overlaps' }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools', exact: true }))
+    await pickState('Search read', 'Removed')
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }))
+    await screen.findByText('The server refused this draft (approval_exclusion_overlaps). Your draft is kept. Reloading will not change this: edit or discard the draft.')
+    expect(screen.queryByText(/The saved version changed/)).not.toBeInTheDocument()
+  })
+
+  it.each(['stale_revision', 'stale_preview', 'stale_binding', 'governance_changed', 'source_changed'])('keeps the reload copy for the stale code %s', async code => {
+    server.use(http.post(`${endpoint}/preview`, () => HttpResponse.json({ error: code, code }, { status: 409 })))
+    mount(); await ready()
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools', exact: true }))
+    await pickState('Search read', 'Removed')
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }))
+    await screen.findByText(/The saved version changed/)
+  })
+
   it('confirms before discarding every draft change and leaves the server untouched', async () => {
     const result = mount(); await ready()
     fireEvent.click(screen.getByRole('tab', { name: 'Tools', exact: true }))
