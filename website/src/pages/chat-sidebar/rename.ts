@@ -5,6 +5,7 @@ import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 
 import { measureAutoGrowTextarea, useAutoGrowTextarea } from '../../hooks/useAutoGrowTextarea'
 import { sseSlotTitle } from '../../store/dashboardSlice'
 import { api } from '../../api/client'
+import { generateSlotTitle } from '../../hooks/slotTitleGeneration'
 import { errMessage } from '../../utils/thunkError'
 import { i18nT } from '../../i18n/t'
 import type { AppDispatch, RootState } from '../../store'
@@ -212,23 +213,20 @@ export function useSessionRename({ dispatch, store, queryClient }: {
 /** "Regenerate title" from a session row's menu: the same endpoint and store
  *  write as the chat header's hover-revealed button, reachable without making
  *  the session active. A refusal lands in `autoTitleError`, rendered by the
- *  sidebar-root ErrorNotice cluster beside the rename one. */
-export function useSessionAutoTitle({ dispatch }: { dispatch: AppDispatch }) {
+ *  sidebar-root ErrorNotice cluster beside the rename one; it names the session,
+ *  because the notice sits away from the row that was picked. */
+export function useSessionAutoTitle({ dispatch, store }: { dispatch: AppDispatch; store: Store<RootState> }) {
   const [autoTitleError, setAutoTitleError] = useState('')
-  // One request per slot at a time: a second pick while the first is still
-  // generating would pay for a second model call whose answer races the first.
-  const inFlightRef = useRef(new Set<string>())
   const onAutoTitle = useCallback((key: string) => {
-    if (inFlightRef.current.has(key)) return
-    inFlightRef.current.add(key)
+    const run = generateSlotTitle(key, dispatch)
+    if (!run) return
     setAutoTitleError('')
-    api.generateTitle(key).then(r => {
-      /* title is redacted server-side via redact_exfiltration_urls + redact_credentials */
-      if (r.title) dispatch(sseSlotTitle({ key, title: r.title }))
-    }).catch(e => {
-      setAutoTitleError(errMessage(e) || i18nT('pages.chatPage.unknown_error'))
-    }).finally(() => { inFlightRef.current.delete(key) })
-  }, [dispatch])
+    run.catch(e => {
+      const title = store.getState().dashboard.slots.find(s => s.key === key)?.title || key
+      const reason = errMessage(e) || i18nT('pages.chatPage.unknown_error')
+      setAutoTitleError(`${title}: ${reason}`)
+    })
+  }, [dispatch, store])
   return { autoTitleError, setAutoTitleError, onAutoTitle }
 }
 

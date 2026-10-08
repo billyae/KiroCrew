@@ -62,7 +62,7 @@ function renderSidebar() {
 }
 
 function sessionRow() {
-  return screen.getByText(OLD_TITLE).closest('.session-row') as HTMLElement
+  return document.querySelector(`[data-session-row="${SLOT_KEY}"]`) as HTMLElement
 }
 
 async function pickRegenerate() {
@@ -100,7 +100,8 @@ describe('session row menu: Regenerate title', () => {
 
     const notice = await screen.findByTestId('auto-title-error')
     expect(notice.textContent).toContain("Couldn't generate a title")
-    expect(notice.textContent).toContain('model unavailable')
+    // The notice sits away from the row, so it names the session that failed.
+    expect(notice.textContent).toContain(`${OLD_TITLE}: model unavailable`)
     expect(titleInStore(store)).toBe(OLD_TITLE)
   })
 
@@ -110,10 +111,13 @@ describe('session row menu: Regenerate title', () => {
     const { store } = renderSidebar()
 
     await pickRegenerate()
+    // The menu has closed; the row itself shows the call is running.
+    expect(within(sessionRow()).getByTestId('row-title-generating').getAttribute('aria-label')).toBe('Generating title')
     await pickRegenerate()
     expect(generateTitleMock).toHaveBeenCalledTimes(1)
 
     resolve({ title: 'Settled' })
     await waitFor(() => expect(titleInStore(store)).toBe('Settled'))
+    expect(screen.queryByTestId('row-title-generating')).toBeNull()
   })
 })

@@ -112,6 +112,7 @@ import { useSessionSources } from './chat-sidebar/sessionSources'
 import { CrewGroupSection, CrewOfflineContext, LocalGroupHeader, useCollapsedCrews } from './chat-sidebar/CrewGroups'
 import { crewOf, type CrewGroup } from '../hooks/useInstanceSessions'
 import { useSessionRename, useSessionAutoTitle, useFolderRename } from './chat-sidebar/rename'
+import { useSlotTitleGenerating } from '../hooks/slotTitleGeneration'
 import { useSidebarLane, useLaneCycle, renderedLane } from './chat-sidebar/lanes'
 import { useHistoryPane } from './chat-sidebar/history'
 import { usePinnedSessionOrder, usePinnedOrderAuthority, usePinnedKeyboardReorder } from './chat-sidebar/pinnedOrder'
@@ -898,6 +899,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
   // (rename, close, fork, drag, the row menu) is withheld exactly as it is for a peer
   // row, because the slot's lifecycle is owned elsewhere.
   const onOpenElsewhere = opensElsewhere != null ? () => openElsewhere(opensElsewhere) : undefined
+  const titleGenerating = useSlotTitleGenerating(s.key)
   // Peer ownership, present only on a row sourced from a connected remote
   // instance. Every local-only affordance below is gated on its ABSENCE rather
   // than disabled: a control that looks actionable and silently does nothing is
@@ -2120,7 +2122,16 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                   A separate ↳ glyph also double-stacked into "↳↳ Fork of …". */}
               {renamingHere ? (
                 <textarea ref={renameInputRef} rows={1} className={`w-full bg-bg-elevated border border-accent rounded px-1 py-0 ${ROW_TITLE_CLS} text-text-strong outline-hidden select-text resize-none block overflow-hidden focus-ring`} value={renameValue} onChange={e => onRenameChange(e.target.value)} {...ime.bindEnter<HTMLTextAreaElement>({ onEnter: () => { (document.activeElement as HTMLTextAreaElement)?.blur() }, onEscape: onRenameCancel, onBlur: () => onRenameCommit(s.key, renameValue) })} onMouseDown={e => e.stopPropagation()} />
-              ) : (s.title && s.title !== s.key ? s.title : s.key)}
+              ) : (
+                <>
+                  {/* A menu-started Regenerate title closes its menu at once, so
+                      the row itself says the model call is running. */}
+                  {titleGenerating && (
+                    <Loader size={ROW_ICON_PX} className="lucide-inline mr-1 shrink-0 text-accent animate-spin" role="img" aria-label={i18nT('pages.chatPage.regenerating_title')} data-testid="row-title-generating" />
+                  )}
+                  {s.title && s.title !== s.key ? s.title : s.key}
+                </>
+              )}
             </div>
             {/* Secondary line: one ordered resolver decides both the words and the
                 marker leading them (#3830), so the two can no longer disagree.
@@ -2462,7 +2473,7 @@ function ChatSidebar({
     suppressMenuRestoreRef, onRenameStart, onRenameChange, onRenameCancel, onRenameCommit,
     onMenuCloseAutoFocus,
   } = useSessionRename({ dispatch, store, queryClient })
-  const { autoTitleError, setAutoTitleError, onAutoTitle } = useSessionAutoTitle({ dispatch })
+  const { autoTitleError, setAutoTitleError, onAutoTitle } = useSessionAutoTitle({ dispatch, store })
   // Folder create / settings modal target. One modal instance is rendered at the
   // sidebar root, so — unlike the inline inputs it replaced — it needs no column
   // scope: a folder rendered in several board columns can only have one modal.
@@ -5552,6 +5563,9 @@ function ChatSidebar({
         title={i18nT('pages.chatPage.could_not_generate_title')}
         message={autoTitleError}
         askAgent
+        // Below, not beside: at sidebar width a side link squeezes the
+        // message into a one-word column.
+        actionPlacement="below"
         onDismiss={() => setAutoTitleError('')}
         className="mx-2 mt-2 shrink-0"
         testId="auto-title-error"
