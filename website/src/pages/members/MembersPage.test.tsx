@@ -231,11 +231,12 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 import { api } from '../../api/client'
 import NewCrewmateDialog, { CACHE_WARM_BOUND_MS, RECONCILE_BOUND_MS } from './NewCrewmateDialog'
-import MembersPage, { CREW_DASHBOARD_TAB_ID, CREW_PANEL_TAB_IDS, MEMBERS_UNCONFIRMED_WITHHELD_VIEWS, MEMBERS_UNFED_VIEWS, MEMBERS_WITHHELD_VIEWS, lastChattedMember, resolveDefaultMember } from './MembersPage'
+import MembersPage, { CREW_DASHBOARD_TAB_ID, CREW_PANEL_TAB_IDS, MEMBERS_UNCONFIRMED_WITHHELD_VIEWS, MEMBERS_UNFED_VIEWS, MEMBERS_WITHHELD_VIEWS, chatMarkOf, lastChattedMember, rememberedDefaultPick, resolveDefaultMember } from './MembersPage'
 import { __resetPanelTabs, VIEW_DATA_SOURCE } from '../../hooks/usePanelTabs'
 
 /** The page's own memory key (mirrors the constant in MembersPage.tsx). */
 const LAST_MEMBER_KEY = 'mc-members-last-member'
+const LAST_MEMBER_CHAT_MARK_KEY = 'mc-members-last-member-chat-mark'
 // Spelled out rather than imported: the value IS the contract with a returning
 // browser, so a rename of the page's constant must fail here.
 const PANEL_OPEN_KEY = 'mc-members-panel-open'
@@ -4112,6 +4113,43 @@ describe('resolveDefaultMember', () => {
     expect(resolveDefaultMember('default', defaultOnly)).toBeUndefined()
   })
 
+  it('a remembered default is not this resolver\'s business: it falls through to the most-recently-used crewmate', () => {
+    // The restore effect ranks a remembered default itself (`rememberedDefaultPick`).
+    const withDefault = [row({ name: 'default', slug: 'default' }), ...ordered]
+    expect(resolveDefaultMember('default', withDefault)?.name).toBe('beta')
+  })
+
+  it('a remembered default beats the last-chatted crewmate only while nobody was chatted with since', () => {
+    // default's own last_chat_ts is noise (every plain chat moves it): the
+    // chat mark taken at the open is the signal. 999 must not make it win.
+    const rows = [
+      row({ name: 'default', slug: 'default', last_chat_ts: 999 }),
+      row({ name: 'alpha', slug: 'alpha', last_chat_ts: 100 }),
+      row({ name: 'beta', slug: 'beta', last_chat_ts: 300 }),
+    ]
+    expect(chatMarkOf(rows)).toBe(300)
+    // Opened when beta's chat (300) was already the newest: nothing moved past it.
+    expect(rememberedDefaultPick('default', 300, rows)?.name).toBe('default')
+    // Opened before beta's chat: beta has been chatted with since.
+    expect(rememberedDefaultPick('default', 299, rows)).toBeUndefined()
+    // No mark recorded (a memory written before the key existed) and nobody
+    // chatted: the memory stands. Anyone chatted: the chat wins.
+    expect(rememberedDefaultPick('default', 0, rows)).toBeUndefined()
+    expect(rememberedDefaultPick('default', 0, [row({ name: 'default', slug: 'default' }), ...ordered])?.name).toBe('default')
+    // Only a remembered default is its business.
+    expect(rememberedDefaultPick('alpha', 999, rows)).toBeUndefined()
+    expect(rememberedDefaultPick(null, 999, rows)).toBeUndefined()
+    // Never on a default-only roster, and never a default that is not listed.
+    expect(rememberedDefaultPick('default', 999, [rows[0]])).toBeUndefined()
+    expect(rememberedDefaultPick('default', 999, rows.slice(1))).toBeUndefined()
+  })
+
+  it('the most-recently-used fallback never picks the built-in default', () => {
+    const withDefault = [row({ name: 'default', slug: 'default', last_active_ts: 999 }), ...ordered]
+    expect(resolveDefaultMember(null, withDefault)?.name).toBe('beta')
+    expect(resolveDefaultMember('ghost', withDefault)?.name).toBe('beta')
+  })
+
 
   it('an empty roster resolves to undefined, never throws', () => {
     expect(resolveDefaultMember('beta', [])).toBeUndefined()
@@ -4187,15 +4225,99 @@ describe('MembersPage default member, memory and URL', () => {
     expect(currentUrl()).toBe('/members?member=beta')
   })
 
-  it('opening the built-in default does not replace the remembered crewmate', async () => {
+  it('opening the built-in default by link remembers it like any crewmate, with the chat mark', async () => {
+    localStorage.setItem(LAST_MEMBER_KEY, 'alpha')
+    await renderPage([
+      row({ name: 'default', slug: 'default', last_chat_ts: 900 }),
+      row({ name: 'alpha', slug: 'alpha', last_chat_ts: 500 }),
+      row({ name: 'beta', slug: 'beta', last_chat_ts: 700 }),
+    ], 'kirocrew', { route: '/members?member=default' })
+
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-default')
+    expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('default')
+    // The greatest CREWMATE last_chat_ts, from the server's clock; default's own 900 is not it.
+    expect(localStorage.getItem(LAST_MEMBER_CHAT_MARK_KEY)).toBe('700')
+  })
+
+  it('re-clicking the open default row remembers it', async () => {
     localStorage.setItem(LAST_MEMBER_KEY, 'alpha')
     await renderPage([
       row({ name: 'default', slug: 'default' }),
       row({ name: 'alpha', slug: 'alpha' }),
     ], 'kirocrew', { route: '/members?member=default' })
-
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-default')
-    expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('alpha')
+    fireEvent.click(await rosterRow('default'))
+    await waitFor(() => expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('default'))
+  })
+
+  it('clicking the built-in default, leaving, and returning restores default', async () => {
+    const rows = [
+      row({ name: 'default', slug: 'default', last_active_ts: 300 }),
+      row({ name: 'alpha', slug: 'alpha', last_active_ts: 200 }),
+    ]
+    const first = await renderPage(rows)
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+    fireEvent.click(await rosterRow('default'))
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-default'))
+    expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('default')
+    first.unmount()
+
+    // Back via the rail: a bare `/members` with no `?member=`.
+    await renderPage(rows)
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-default')
+    expect(currentUrl()).toBe('/members?member=default')
+  })
+
+  it('a default opened after the last chat with a crewmate is restored over that crewmate', async () => {
+    // alpha is the server's last-chatted crewmate (#17808); the user then
+    // opened default (mark = alpha's 500). Returning lands on default, not alpha.
+    localStorage.setItem(LAST_MEMBER_KEY, 'default')
+    localStorage.setItem(LAST_MEMBER_CHAT_MARK_KEY, '500')
+    await renderPage([
+      row({ name: 'default', slug: 'default', last_chat_ts: 900 }),
+      row({ name: 'alpha', slug: 'alpha', last_chat_ts: 500 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-default')
+    expect(currentUrl()).toBe('/members?member=default')
+  })
+
+  it('restoring default keeps the chat mark: a restore is not a new open', async () => {
+    // Opus review on #17972: the mark is the USER's open only; a restore
+    // re-reads it and leaves it alone.
+    localStorage.setItem(LAST_MEMBER_KEY, 'default')
+    localStorage.setItem(LAST_MEMBER_CHAT_MARK_KEY, '450')
+    await renderPage([
+      row({ name: 'default', slug: 'default', last_chat_ts: 900 }),
+      row({ name: 'alpha', slug: 'alpha', last_chat_ts: 450 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-default')
+    expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('default')
+    expect(localStorage.getItem(LAST_MEMBER_CHAT_MARK_KEY)).toBe('450')
+    // A click IS a new open: the mark is taken again from the roster.
+    fireEvent.click(await rosterRow('alpha'))
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'))
+    expect(localStorage.getItem(LAST_MEMBER_CHAT_MARK_KEY)).toBe('450')
+  })
+
+  it('a default opened before the last chat with a crewmate yields to that crewmate', async () => {
+    localStorage.setItem(LAST_MEMBER_KEY, 'default')
+    // Opened when alpha's chat was at 400; alpha has been chatted with since (500).
+    localStorage.setItem(LAST_MEMBER_CHAT_MARK_KEY, '400')
+    await renderPage([
+      row({ name: 'default', slug: 'default', last_chat_ts: 900 }),
+      row({ name: 'alpha', slug: 'alpha', last_chat_ts: 500 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+    expect(currentUrl()).toBe('/members?member=alpha')
+  })
+
+  it('a remembered default on a default-only roster still shows the hero', async () => {
+    localStorage.setItem(LAST_MEMBER_KEY, 'default')
+    await renderPage([row({ name: 'default', slug: 'default', last_active_ts: 999 })])
+    expect(await screen.findAllByTestId('crewmate-empty-hero')).toHaveLength(2)
+    expect(api.memberThread).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
+    expect(currentUrl()).toBe('/members')
   })
 
   it('a refresh-frame refetch never reorders the roster; a membership change re-sorts it', async () => {
