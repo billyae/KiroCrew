@@ -2817,6 +2817,7 @@ class _ChatSlot:
         "_stop_escalated_card_id",
         "_pending_reset_history_key",
         "_pending_discard_conversation_key",
+        "_pending_discard_from_wake",
         "_pending_model_pick",
         "_eager_spawn_task",
         "_eager_spawn_failures",
@@ -3465,6 +3466,9 @@ class _ChatSlot:
         # called from inside the turn it wants to end, and the immediate route
         # refuses a busy slot rather than tearing down a turn mid-write.
         self._pending_discard_conversation_key: str | None = None
+        # True when a patrol wake queued that discard: it then also waits, at
+        # the boundary, while a question card or tool approval is pending.
+        self._pending_discard_from_wake: bool = False
         # Set by session_set_model on an idle slot; consumed at the start of the
         # next turn (session_control.apply_pending_model_pick), which re-checks
         # the caller's authorization and commits the model in one synchronous

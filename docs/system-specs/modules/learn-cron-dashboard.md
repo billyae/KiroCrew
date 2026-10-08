@@ -4902,8 +4902,10 @@ that wake only exists because the fire-time guard already proved the loop
 self-armed. A cron injection, a sub-agent sharing the slot or an app-driven
 turn carries neither mark; those pass an empty initiator and the crew/member
 refusal stands (visibly, via the notice row). The wake mark is self-arm
-provenance ONLY — `set_project` / `reset_conversation` stay human-only, so a
-wake can never retarget the slot's project. The arm-time admission check for a self-armed loop requires the
+provenance ONLY — `set_project` / `chat_tag` stay human-only, so a
+wake can never retarget the slot's project. `reset_conversation` admits one wake: a
+conductor's own patrol wake at a round close, under the checks in
+`session_directive_apply._refuse_unvouched_wake_reset` (the conductor round-reset RFC). The arm-time admission check for a self-armed loop requires the
 slot's mode to be UNCHANGED between authorization and commit (the external rule
 stays "never into crew/member"). **Stated decision on later mode changes:** a
 self-armed loop keeps firing if its slot later changes mode, because the

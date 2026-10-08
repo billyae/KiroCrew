@@ -4396,6 +4396,14 @@ loop is running and drive that one round with `wait`.
 dispatch the next round in the same turn. Do not wait for the user: the one
 Round-0 go-ahead covers every round.
 
+**Drop your chat at a round close.** Every patrol turn re-sends this whole
+chat; the ledgers already hold your state. Once the next round is dispatched,
+`session_ledger_record` `goal`, `next` (the open item ids, their worker keys and
+their PRs) and `patrol_base`, then call `reset_conversation` as the last act of
+that turn. The next wake resumes from the ledger snapshot it carries. Never
+reset mid-round, and never while a question to the person is unanswered. A
+refused reset changes nothing: carry on.
+
 **Rounds are not gated, but spend is bounded.** Count from the ledger. With no
 budget from the user, a goal holds at most 20 ledger items in total, re-plans
 included (or the size of a larger Round-0 plan the user approved); a re-plan
@@ -5013,6 +5021,10 @@ _CONDUCTOR_CORE_GRANTS: tuple[str, ...] = (
     "@kirocrew-core/send_notification",
     "@kirocrew-core/ask_question",
     "@kirocrew-core/nothing_to_do",
+    # Dropping its own chat at a round close. The directive consumer admits it
+    # from a patrol wake only on the slot's own live self-armed loop, with no
+    # question or approval pending (``session_directive_apply``).
+    "@kirocrew-core/reset_conversation",
 )
 
 
