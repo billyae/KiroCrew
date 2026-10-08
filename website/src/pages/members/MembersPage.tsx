@@ -4323,13 +4323,13 @@ export default function MembersPage() {
           )
           const profileSurface = profileDocked ? dockedSurface : profilePanel && threadColumnRef.current ? createPortal(
             <div
-              className="absolute inset-0 z-30 flex justify-center px-2"
+              className="absolute inset-0 z-30 flex justify-center px-2 py-2"
               role="presentation"
               onClick={(e) => { if (e.target === e.currentTarget) requestCloseProfile() }}
               data-testid="crew-profile-modal"
             >
               <div
-                className="h-full rounded-2xl border border-border bg-bg-elevated shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 fade-in-0 duration-200"
+                className="h-full rounded-2xl border border-border-strong bg-bg-elevated shadow-[var(--shadow-float,var(--shadow-lg)),inset_0_1px_0_var(--card-hl)] overflow-hidden flex flex-col animate-in zoom-in-95 fade-in-0 duration-200"
                 style={{ width: `min(${profileCardW}px, calc(100% - 16px))` }}
                 data-testid="crew-profile-card"
               >{profilePanel}</div>
