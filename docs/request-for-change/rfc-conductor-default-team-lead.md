@@ -21,8 +21,8 @@ superseded-by: []
 > in §2 names a mechanism that is already on main, measured at `1c5a71db4d`.
 
 - Tracking issue: [#18049](https://github.com/kirodotdev/KiroCrew/issues/18049).
-- The implementation changes two texts and the tests that pin them:
-  `_CONDUCTOR_SYSTEM_PROMPT` in `src/kiro_crew/agent.py` and
+- The implementation changes both shipped conductor texts and the tests that pin
+  them: `_CONDUCTOR_SYSTEM_PROMPT` in `src/kiro_crew/agent.py` and
   `src/kiro_crew/builtin_skills/goal-conductor/SKILL.md`. No runtime code change.
 - Builds on [rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) (the board,
   its actions and the `depth` cap), [rfc-crew-log-wake.md](rfc-crew-log-wake.md)
@@ -56,16 +56,17 @@ something each owner re-teaches by hand in every seed.
 | 8 | When the conductor runs as a crewmate, the dynamic dashboard is the person's status board. | `dashboard_fields` / `dashboard_write` ([rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md)) for the agentic fields, and `panel_publish` with the `kirocrew-conductor` template (`kiro_crew.conductor_board_contract`) for the drawer board. | The dashboard section says to refresh the agentic fields -- the verdict line and "what I want you to look at next" -- at each milestone from ledger data, and never to type a number the fold already provides. |
 | 9 | Pin the scope in one line before fanning out. The newest owner statement wins. | The ledger `goal` and its `goal_version`, written by `action=goal`, and the skill's existing "Goal changes mid-flight" section. | Round 0 restates the ask in one sentence and checks it against what the owner said earlier. On a conflict, the newest statement wins and the conductor says which one it is following. |
 
-## 3. Open question: two `depth` guards disagree
+## 3. Open question: three `depth` guards, two comparison operators, and they disagree
 
 Making a conductor the default dispatch target means conductors dispatching
 conductors, which is the case the `depth` cap bounds. Measuring that cap at
 `1c5a71db4d` turned up something other than "is 2 too tight". **Three guards read
-the same `MAX_DEPTH` with two different comparisons, and they disagree about
-whether a conductor may exist at the cap.**
+the same `MAX_DEPTH`, and they do not all compare against it the same way, so they
+disagree about whether a conductor may exist at the cap.**
 
-`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`, and exactly three comparisons
-in that module read it. Two use `>` and one uses `>=`, which is the whole finding:
+`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`, and exactly three guards there
+read it, between them using two comparison operators: two guards compare with `>`
+and one with `>=`. That is the whole finding:
 
 | Guard | Its comparison | A conductor at depth 2 |
 |---|---|---|
