@@ -12,11 +12,12 @@
  *    `[Subagent completion event]` envelopes, tool-call rows, reasoning
  *    bursts, and the say-nothing rows a quiet patrol ends on — is filtered at
  *    RENDER time by `filterCrewmateChat`. Nothing is deleted: the rows stay in
- *    the slot's transcript and the Work log reads them from there. The one
- *    exception is the turn IN FLIGHT: while the crewmate works, its tool calls
- *    and thinking since the turn opened stay in, so the chat shows what it is
- *    doing with the same rows the ordinary transcript draws. They fold away
- *    again when the turn ends.
+ *    the slot's transcript and the Work log reads them from there. Two
+ *    exceptions, both drawn as steps lines (`CREWMATE_STEPS_ROLE`): the turn
+ *    IN FLIGHT keeps its tool calls and thinking, so the chat says what the
+ *    crewmate is doing right now; and a finished turn the crewmate spoke in
+ *    keeps its tool calls, each run as a quiet "Worked through N steps" the
+ *    reader can open, where those steps ran. A turn that never spoke (a quiet patrol) still draws nothing.
  *
  * 2. HOW A RUN LOOKS. Consecutive messages from the crewmate form a run: one
  *    bubble per message, grouped corners on the run's (left) side, and NO
@@ -65,6 +66,28 @@ const MACHINERY_ROLES: ReadonlySet<string> = new Set([
  *  ✅ / 🚫 siblings, which the list reads for the denied flag) and thinking. */
 const LIVE_PROGRESS_ROLES: ReadonlySet<string> = new Set(['tool', ...REASONING_ROLES])
 
+/** The role of the one line a run of steps folds into. Never on the wire: the
+ *  filter below builds it, and only a crewmate's renderer set draws it. */
+export const CREWMATE_STEPS_ROLE = 'crewmate_steps'
+
+/** What a steps line carries: the folded rows (drawn by the ordinary tool line
+ *  and thinking block when the line opens), the tool calls they count, and
+ *  whether this is the step the crewmate is on right now. */
+export interface CrewmateSteps {
+  steps: ChatMessage[]
+  count: number
+  live: boolean
+}
+
+/** The steps a `CREWMATE_STEPS_ROLE` row carries, or null for any other row. */
+export function crewmateStepsOf(m: ChatMessage | undefined): CrewmateSteps | null {
+  if (m?.role !== CREWMATE_STEPS_ROLE) return null
+  return (m.meta?.crewmateSteps as CrewmateSteps | undefined) ?? null
+}
+
+/** A visible tool call: the 🔧 row. Its ✅ / 🚫 siblings ride along uncounted. */
+const isToolCallRow = (m: ChatMessage) => m.role === 'tool' && m.content.startsWith('🔧')
+
 /** The stop card travels under `system`; every other `system` row is state
  *  no surface draws. */
 function isStopCard(m: ChatMessage): boolean {
@@ -80,7 +103,7 @@ function isRunTransparent(m: ChatMessage): boolean {
   // A live turn's progress rows (kept only while the turn runs) are the turn's
   // own machinery: the run, its corners and its footer read past them exactly
   // as they do once the rows fold away, so nothing reshapes at turn end.
-  if (LIVE_PROGRESS_ROLES.has(m.role)) return true
+  if (LIVE_PROGRESS_ROLES.has(m.role) || m.role === CREWMATE_STEPS_ROLE) return true
   if (m.role === 'permission') return !!m.meta?.resolved
   if (isStopCard(m)) return false
   return m.role === 'system' || m.role === 'done' || m.role === 'queued'
@@ -132,11 +155,27 @@ export function isCrewmateChatRow(m: ChatMessage): boolean {
   return true
 }
 
-/** The rows a crewmate's chat draws, in transcript order. With `live` (the
- *  slot is running a turn) the progress rows after the newest turn opener are
- *  kept too; the opener is the transcript's own `opensTurn`, so a steer sent
- *  into the running turn does not restart it. Same array identity back when
- *  nothing was dropped, so a memo on the result stays stable. */
+/** The rows a crewmate's chat draws, in transcript order, with each turn's
+ *  steps folded into `CREWMATE_STEPS_ROLE` rows, one per contiguous run, each
+ *  in the place its steps ran (between the replies they came between):
+ *
+ *  - With `live` (the slot is running a turn), the running turn keeps its
+ *    progress rows (tool calls and thinking). Its newest run is the `live` one
+ *    when nothing is drawn after it; when the turn has no run at the tail yet
+ *    (it just opened, or the crewmate just spoke), an empty live row stands
+ *    in, so the turn shows ONE working line from its start. A streaming reply,
+ *    a pending approval or any other row the user must see at the tail is its
+ *    own statement, so no empty row is added after it.
+ *  - A finished turn the crewmate spoke in keeps its tool calls (not its
+ *    thinking); a turn that never spoke keeps none (a quiet patrol stays
+ *    quiet). A run with no tool call is dropped unless it is the live one.
+ *
+ *  A run keys on its first tool call (else its first row), so the line a
+ *  reader watched live is the SAME element once the turn ends: it keeps its
+ *  place and its open state, and only its words change. Turns split at the
+ *  transcript's own `opensTurn`, so a steer sent into the running turn does
+ *  not restart it. Same array identity back when nothing was dropped or
+ *  folded, so a memo on the result stays stable. */
 export function filterCrewmateChat(messages: ChatMessage[], live = false): ChatMessage[] {
   let turnStart = messages.length
   if (live) {
@@ -145,8 +184,56 @@ export function filterCrewmateChat(messages: ChatMessage[], live = false): ChatM
       if (opensTurn(messages[i])) { turnStart = i + 1; break }
     }
   }
-  const kept = messages.filter((m, i) => isCrewmateChatRow(m) || (i >= turnStart && LIVE_PROGRESS_ROLES.has(m.role)))
-  return kept.length === messages.length ? messages : kept
+  // Which turn each row sits in, and which turns the crewmate spoke in.
+  const turnOf: number[] = []
+  const spoke = new Set<number>()
+  let turn = 0
+  messages.forEach((m, i) => {
+    if (opensTurn(m)) turn += 1
+    turnOf[i] = turn
+    if (isCrewmateSpeech(m)) spoke.add(turn)
+  })
+  const keyOf = (m: ChatMessage) => (m.meta?.clientTs as string | undefined) || m.ts || String(messages.indexOf(m))
+  const stepsRow = (steps: ChatMessage[], isLive: boolean, key: string, ts?: string): ChatMessage => ({
+    role: CREWMATE_STEPS_ROLE, content: '', cls: '', ts,
+    meta: { clientTs: `crewmate-steps:${key}`, crewmateSteps: { steps, count: steps.filter(isToolCallRow).length, live: isLive } satisfies CrewmateSteps },
+  })
+  const out: ChatMessage[] = []
+  let run: ChatMessage[] = []
+  let runTurn = -1
+  let runLive = false
+  // `tail`: nothing is drawn after this run, so in the running turn it is the
+  // step the crewmate is on now.
+  const flush = (tail: boolean) => {
+    const isLive = tail && runLive
+    const anchor = run.find(isToolCallRow) ?? run[0]
+    if (run.length && (anchor !== run[0] || isToolCallRow(anchor) || isLive)) {
+      out.push(stepsRow(run, isLive, keyOf(anchor), anchor.ts))
+    }
+    run = []
+  }
+  messages.forEach((m, i) => {
+    if (isCrewmateChatRow(m)) {
+      flush(false)
+      out.push(m)
+      return
+    }
+    const inLive = i >= turnStart
+    const keep = LIVE_PROGRESS_ROLES.has(m.role) && (inLive || (spoke.has(turnOf[i]) && m.role === 'tool'))
+    if (!keep) return
+    if (run.length && runTurn !== turnOf[i]) flush(false)
+    runTurn = turnOf[i]
+    runLive = inLive
+    run.push(m)
+  })
+  flush(true)
+  if (live && !crewmateStepsOf(out[out.length - 1])?.live) {
+    const tail = out[out.length - 1]
+    if (!tail || tail.role === 'user' || tail.role === 'assistant' || tail.role === CREWMATE_STEPS_ROLE) {
+      out.push(stepsRow([], true, `live-${turnStart}`))
+    }
+  }
+  return out.length === messages.length && out.every((m, i) => m === messages[i]) ? messages : out
 }
 
 /** Nearest row in `dir` that is not run-transparent, or undefined at an end. */

@@ -1530,10 +1530,27 @@ overwritten by the older answer.
 While a turn runs (the slot's stream or its `running` flag), the chat also
 keeps that turn's progress rows — `tool` rows (the 🔧 line and its hidden ✅ /
 🚫 siblings) and thinking — after the newest turn opener (`TURN_OPENER_ROLES`:
-a user message, a patrol wake, a sub-agent drain), and draws them with the
-ordinary transcript's own tool line, step group and thinking block; earlier
-turns' machinery stays folded away, and the live rows fold away again when the
-turn ends (`filterCrewmateChat(messages, live)`).
+a user message, a patrol wake, a sub-agent drain); a finished turn the
+crewmate spoke in keeps its `tool` rows (`filterCrewmateChat(messages, live)`).
+A turn that never spoke (a quiet patrol) still draws none of them. Kept rows
+draw as lines (`CrewmateStepsLine`), collapsed by default, one per contiguous
+run in the place its steps ran, so mid-turn speech stays where it was said. A
+run keys on its first tool call, so the line watched live is the same element
+once the turn ends (same place, same open state); finished, it reads "Worked
+through N steps" (the ordinary turn fold's own summary). The newest run
+of the running turn, with nothing drawn after it, is the live line: the tool
+line's spinning ring (still under `prefers-reduced-motion`), the current
+step's title (the slot's live tool status, else the newest call's purpose or
+title, else "Thinking"; wrapped to two lines on narrow screens, with a
+tooltip) and the tool-call count. When the running turn has no run at its tail
+(it just opened, or the crewmate just spoke) an empty live line ("Thinking",
+nothing to open) stands in, except after a streaming reply or a row the user
+must see such as a pending approval. While the live line is the newest row the
+pane's plain working footer hides (its stopping and compacting states still
+show) and the line carries the footer's `role="status"` announcement, so a turn
+shows one working indicator from start to end. A line with steps is a
+disclosure button (`aria-expanded`); open, it draws the folded rows with the
+ordinary tool line and thinking block.
 
 How it is drawn: the crewmate's messages form **runs**. A message carries NO
 author line — no avatar, no name, no time row — and no avatar gutter: the chat
