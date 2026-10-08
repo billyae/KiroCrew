@@ -720,7 +720,15 @@ version-manager binary, and a Windows `.cmd` launcher never receives owner URL
 bytes for `cmd.exe` to reparse. The same prefix starts the supervised `show`
 process and performs install/version probes. If either executable in the pair is
 absent or refused, no subprocess starts and the panel keeps the same plain
-"playwright-cli is not installed" hint. `cli_env` still carries
+"playwright-cli is not installed" hint. The one-click install keeps that fence
+and checks it first: when the workspace root or `KIROCREW_PROJECT_DIR` is the
+data home or one of its parents, every launcher it could write would land in the
+agent-writable tree, so unless a vetted fixed-system launcher already resolves
+(which `cli_path()` would fall back to) it refuses at a `check-install-boundary` step, before
+npm runs, naming that root and the remedy (move it outside the data home and
+restart the gateway). When the install's own
+`resolve-binary` step finds the managed entrypoint on disk but refused, its
+error names the entrypoint and the refusal reason instead of "not found". `cli_env` still carries
 `PLAYWRIGHT_MCP_CONFIG`, the snapshot directory and the attach token exactly as it
 does for an agent's invocation:
 
