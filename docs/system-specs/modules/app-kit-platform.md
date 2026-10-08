@@ -2013,7 +2013,12 @@ mismatch returns `app_trust_repository_mismatch` and requires revoke plus fresh
 consent without returning either repository coordinate. A legacy name grant with
 no binding is inactive for every repository-backed source — including the same
 repository it historically used — and returns `app_execution_denied` so the
-normal consent dialog can create the missing binding. A still-installed app with
+normal consent dialog can create the missing binding. The exception is an app
+still installed with positively local provenance: the grant endpoint binds to
+that installed source, so the dialog could only record a local grant again.
+That refusal returns `app_trust_local_only` instead, so no consent dialog opens,
+and its prose names the route that does record the repository: uninstall
+keeping data, then install from the App Store. A still-installed app with
 positively local provenance retains migration compatibility; an unknown/fresh
 same-name local source does not inherit that old grant. The commit is deliberately
 not bound: a new pin in the same repository is the ordinary catalog update path
