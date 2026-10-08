@@ -29,6 +29,10 @@ superseded-by: []
   (how a report wakes the conductor) and
   [rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md) (the
   crewmate's status board). It amends none of them.
+- Known limit: lesson 8's mechanism reaches the conductor only in crew-member
+  mode, because the shipped `kirocrew-conductor` spec does not mount
+  `@kirocrew-panel`. Separate work is closing that, not this change, so row 8
+  stays scoped to the mode where those verbs are reachable today.
 
 ## 1. Problem
 
