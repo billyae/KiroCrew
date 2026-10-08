@@ -1519,11 +1519,11 @@ _GOLDEN_DIGESTS: dict[str, str] = {
     "hook_auto_reply": "f976c5ff2c752a2259381bcfd9fbf6e2fb72ca95fcdb1bbfa53c5ddf98f68f53",
     "hook_deny_and_flag": "3ea9ae72ea37f86461afc8af054c106826868c30e4f757e24dcf08ac252035a1",
     "interaction_edges": "80e9ab4e4ba623f57a0360df952f7d6c787348fc81ff69368bbfcfb2ce22bc8f",
-    "interactive_approve": "b4e4979741ce4fecf6c65c51abaf9a7c6871ac6a718c70d261c811c651cf98b3",
-    "interactive_approve_answered": "cbcfe6a559c59c8314699ebb58b1ca04c0ea7e0cc01b301fc345b93d7f7fc963",
-    "interactive_reject": "2caf89795617e42d1a38dddcc05a93bdba195fb10036f67d71438e824e44cfee",
+    "interactive_approve": "bd8bfeb7077d4c2f268593443c36d6f94d1fbf0bc723404fa96c6588b37b3671",
+    "interactive_approve_answered": "eefe254b53f0f249f4546bbc837f1a2dd516c723e86fcda10fac822ba924df80",
+    "interactive_reject": "3381cb128b4403fe8e7bb7ca422ff1b56a4ab050d02958cd0b3f26b1bd5b5adc",
     "interactive_timeout": "8767f772a5d23a1d318c0fe1ff69acc56bad7b024d552a4e4c5f132be2e024a4",
-    "interactive_trust_in_dm": "7399a56b1464fb93aeb2c375683baba8900264b0a2104b891adeb222e60663a5",
+    "interactive_trust_in_dm": "9a66162b6e4577e461eff44e837ee0df84f9afa8d0e8c1c91c780f5f09ce35d3",
     "keyword_commands": "38b23c11924193a6343d1b21b7c55d9d671480b45bb2bee60c7cf268f6dc97fe",
     "linked_approval": "8a85aaf602b5281707519634a49589c814694ac0f9c7b71164bbdaa2cc474bc9",
     "linked_dashboard_session": "64d7b0e29f9fbda173a952c5180d7948fd1bd5bd41e1f52ce9d5b2dd63498210",
@@ -1538,7 +1538,7 @@ _GOLDEN_DIGESTS: dict[str, str] = {
     "shared_runtime_deaths": "7448fcb0e2a7665b8dfbf9e6343876d16fa9f2dab262ac2db302f9defef129d7",
     "status_reactions": "14c5040b7db5254737f18a51d8aefce91330427f59142ee4dc59106f8bb098dd",
     "streamed_turn": "e10e8c45137bb50f1c38513b9b5c25c7b0450381277d18f3ae7e4e286cd95887",
-    "tool_then_rejected_while_streaming": "d0da681796b528bf98f379156ef9412f80ff6f07874fd6a31503e00688ffe304",
+    "tool_then_rejected_while_streaming": "cee055113bee08d4fe2bb1b9618a50c5fdd4bbb2514e5880b8bbb71a7039e3ec",
     "top_level_no_placeholder": "416dbaac1ae3932ccb2df432ea72b0d56ab0e9dd8455eafa04baf1c274172891",
     "transport_floor_refusal": "b91bc97cf50e5329d3558532439126c805c05c3baca7fedf27a3ad977c7e51ce",
     "trusted_session": "5feaf868b0afb37d53d6d4264259050a05a18d7da7d2006cccfefccca02c9bef",
@@ -1769,6 +1769,7 @@ _BASE_SHAPE_DIGEST = "d0818fced3d594d181317b548004673b7eaf31a24ad071cd96433bcc3f
 _FACADE_DEFS = (
     "_display_redactor",
     "_should_auto_approve_spawn",
+    "_approval_timeout",
     "_condense_thinking",
     "_build_phase_emojis",
     "_VoiceConfig",
@@ -2052,7 +2053,7 @@ def test_every_definition_is_in_exactly_one_place() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     }
     assert defined == set(_FACADE_DEFS)
-    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 89
+    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 90
 
 
 def test_the_owners_log_as_the_facade() -> None:

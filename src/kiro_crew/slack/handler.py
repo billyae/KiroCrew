@@ -57,6 +57,8 @@ from kiro_crew.agent_switch_command import (  # noqa: F401 - read by the owners
 from kiro_crew.config.loader import (  # noqa: F401 - read by the owners
     ACTIVATION_REVIEW,
     KIRO_CLI_BUILTIN_AGENTS,
+    TOOL_APPROVAL_TIMEOUT_MAX,
+    TOOL_APPROVAL_TIMEOUT_MIN,
     ConfigReadError,
     KiroCrewConfig,
     config_path,
@@ -412,8 +414,25 @@ def _should_auto_approve_spawn(context_builder, event) -> bool:
 # Min interval between Slack message edits (avoid rate limits)
 _EDIT_INTERVAL = 1.0
 
-# Timeout for user to click approve/reject before auto-rejecting
-_APPROVAL_TIMEOUT = 120.0
+# Approve/reject window: agent.tool_approval_timeout_secs unless _APPROVAL_TIMEOUT
+# pins it; the fallback applies only when config cannot be read.
+_APPROVAL_TIMEOUT: float | None = None
+_APPROVAL_TIMEOUT_FALLBACK = 120.0
+
+
+def _approval_timeout(override: float | None = None) -> float:
+    """Resolve the Slack approval window, clamped to the config's own bounds."""
+    if override is not None:
+        return override
+    try:
+        configured = float(KiroCrewConfig.load().agent.tool_approval_timeout_secs)
+    except Exception:
+        return _APPROVAL_TIMEOUT_FALLBACK
+    if configured <= 0:
+        return _APPROVAL_TIMEOUT_FALLBACK
+    return min(max(configured, TOOL_APPROVAL_TIMEOUT_MIN), TOOL_APPROVAL_TIMEOUT_MAX)
+
+
 # Upper bound on the best-effort in-band deny notice steered into the running
 # turn before an expired approval prompt is rejected. The shared constant, so
 # this arm, the dashboard chat runner and the messaging TurnDriver cannot drift:
@@ -3364,12 +3383,13 @@ async def _request_approval(
     key = f"{channel}:{approval_ts}"
     pending = _PendingApproval(provider, event.request_id, session_key)
     _pending_approvals[key] = pending
+    approval_timeout = _approval_timeout(_APPROVAL_TIMEOUT)
 
     try:
         # shield: on timeout, wait_for would otherwise CANCEL the future, and a
         # click that claimed the entry just before the deadline could then
         # never deliver its real outcome (its set_result guards on done()).
-        outcome = await asyncio.wait_for(asyncio.shield(pending.future), timeout=_APPROVAL_TIMEOUT)
+        outcome = await asyncio.wait_for(asyncio.shield(pending.future), timeout=approval_timeout)
     except asyncio.TimeoutError:
         outcome = _OUTCOME_REJECTED
         # Claim the decision BEFORE awaiting anything: while the entry stays
@@ -3398,7 +3418,7 @@ async def _request_approval(
                 provider,
                 event,
                 "the Slack approval prompt went unanswered for "
-                f"{max(1, round(_APPROVAL_TIMEOUT))}s",
+                f"{max(1, round(approval_timeout))}s",
                 cause=DENY_CAUSE_APPROVAL_TIMEOUT,
                 # The caller audits this outcome after the wire is answered;
                 # a cancellation here would skip that row, so the orphan

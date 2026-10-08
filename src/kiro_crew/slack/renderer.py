@@ -84,6 +84,7 @@ from kiro_crew.slack.handler import (
     DELIVERY_DEBT_NOTICE,
     StatusReactionController,
     _append_footer_actions,
+    _approval_timeout,
     _filter_options_brackets,
     _resolve_comment_hold,
     _safe_update,
@@ -372,7 +373,7 @@ class SlackApprovalDecider:
         SlackApprovalDecider._AWAITED.add(key)
         try:
             # Deny-by-default if the user never clicks within the window.
-            return await asyncio.wait_for(fut, timeout=_APPROVAL_TIMEOUT)
+            return await asyncio.wait_for(fut, timeout=_approval_timeout(_APPROVAL_TIMEOUT))
         except asyncio.TimeoutError:
             # Recorded for the driver, which steers the cause into the turn
             # before it rejects, so the model hears "expired" not "denied".
