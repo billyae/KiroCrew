@@ -269,7 +269,39 @@ class PluginManifest:
         return canonical_signing_bytes(body)
 
 
-def _coerce_trust_keys(raw: object, field_name: str = "trust_keys") -> Dict[str, str]:
+def _coerce_public_keys(raw: object) -> Dict[str, str]:
+    """Read ``trust_public_keys`` keeping EVERY named issuer, usable value or not.
+
+    Unlike :func:`_coerce_trust_keys`, a malformed entry is not dropped. Naming an
+    issuer here is what turns off its HMAC fallback, so dropping a ``null`` or empty
+    placeholder would silently re-enable the weaker check for exactly the issuer the
+    operator was moving off it. A non-string or empty value is kept as ``""``: the
+    issuer stays asymmetric-only and no signature can verify for it, which fails
+    closed.
+    """
+    out: Dict[str, str] = {}
+    if not isinstance(raw, dict):
+        if raw is not None:
+            logger.warning(
+                "admission trust_public_keys is %s, not an object; ignoring it",
+                type(raw).__name__,
+            )
+        return out
+    for k, v in raw.items():
+        if isinstance(v, str) and v:
+            out[str(k)] = v
+        else:
+            logger.warning(
+                "admission trust_public_keys[%r] is not a non-empty string; no policy "
+                "signature can verify for this issuer, and its trust_keys secret is "
+                "not used for policies",
+                str(k),
+            )
+            out[str(k)] = ""
+    return out
+
+
+def _coerce_trust_keys(raw: object) -> Dict[str, str]:
     """Keep only usable secrets: a non-empty ``str`` value per issuer/publisher.
 
     A blanket ``str(v)`` would turn a malformed entry into a **predictable signing
@@ -289,9 +321,8 @@ def _coerce_trust_keys(raw: object, field_name: str = "trust_keys") -> Dict[str,
             out[str(k)] = v
         else:
             logger.warning(
-                "admission %s[%r] is not a non-empty string; dropping it "
+                "admission trust_keys[%r] is not a non-empty string; dropping it "
                 "(no signature can verify for this issuer)",
-                field_name,
                 str(k),
             )
     return out
@@ -398,9 +429,7 @@ class AdmissionPolicy:
             require_signature=_coerce_flag(d, "require_signature"),
             require_policy_signature=_coerce_flag(d, "require_policy_signature"),
             trust_keys=_coerce_trust_keys(d.get("trust_keys")),
-            trust_public_keys=_coerce_trust_keys(
-                d.get("trust_public_keys"), "trust_public_keys"
-            ),
+            trust_public_keys=_coerce_public_keys(d.get("trust_public_keys")),
             approved=(_coerce_str_list(approved) if approved is not None else None),
             banned=_coerce_str_list(d.get("banned", [])),
             capability_ceiling={

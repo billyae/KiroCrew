@@ -503,7 +503,9 @@ Two limitations, stated plainly:
   its own. `trust_public_keys` is the public-key answer: the host holds only the
   public half and the private half stays with whoever signs. An issuer listed in
   `trust_public_keys` is verified with Ed25519 alone; its `trust_keys` entry is no
-  longer consulted.
+  longer consulted, even when the public-key value is a `null` or empty
+  placeholder: every policy from that issuer then reads as unverified, and is
+  refused when `require_policy_signature` is set.
 - **No signing runbook ships.** There is no `kirocrew policy sign`, no key
   distribution tooling and no rotation procedure; you compute the signature and
   place the key yourself. `require_policy_signature` on a fleet with no matching

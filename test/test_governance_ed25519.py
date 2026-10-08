@@ -108,6 +108,14 @@ class TestPolicySignatureState:
         )
         assert state == SIGNATURE_UNVERIFIED
 
+    @pytest.mark.parametrize("placeholder", ["", "not-base64!!"])
+    def test_unusable_public_key_still_blocks_the_hmac_fallback(self, placeholder):
+        doc = _hmac_signed("shared-secret", _doc())
+        state, _detail = governance._policy_signature_state(
+            doc, {ISSUER: "shared-secret"}, {ISSUER: placeholder}
+        )
+        assert state == SIGNATURE_UNVERIFIED
+
     def test_issuer_without_public_key_keeps_hmac(self):
         _private, public = _keypair()
         doc = _hmac_signed("shared-secret", _doc())
@@ -125,12 +133,14 @@ class TestPolicySignatureState:
 
 
 class TestTrustRoot:
-    def test_from_dict_reads_trust_public_keys_and_drops_unusable_entries(self):
+    def test_from_dict_keeps_every_named_issuer_even_with_an_unusable_key(self):
+        # Dropping a placeholder would re-enable that issuer's HMAC fallback.
         policy = AdmissionPolicy.from_dict(
             {"trust_public_keys": {"a": "KEY", "b": None, "c": "", "d": 12}}
         )
-        assert policy.trust_public_keys == {"a": "KEY"}
+        assert policy.trust_public_keys == {"a": "KEY", "b": "", "c": "", "d": ""}
         assert AdmissionPolicy.from_dict({}).trust_public_keys == {}
+        assert AdmissionPolicy.from_dict({"trust_public_keys": ["x"]}).trust_public_keys == {}
 
 
 class TestLoaderEndToEnd:
@@ -169,6 +179,24 @@ class TestLoaderEndToEnd:
                 "require_policy_signature": True,
                 "trust_keys": {ISSUER: "shared-secret"},
                 "trust_public_keys": {ISSUER: public},
+            },
+        )
+        ceiling = load_security_policy()
+        with pytest.raises(PlatformCompositionError):
+            assert_policy_signature_satisfied(ceiling)
+
+    @pytest.mark.parametrize("placeholder", [None, ""])
+    def test_placeholder_public_key_fails_closed_with_hmac_secret_retained(
+        self, monkeypatch, tmp_path, placeholder
+    ):
+        self._write(
+            monkeypatch,
+            tmp_path,
+            doc=_hmac_signed("shared-secret", _doc()),
+            admission={
+                "require_policy_signature": True,
+                "trust_keys": {ISSUER: "shared-secret"},
+                "trust_public_keys": {ISSUER: placeholder},
             },
         )
         ceiling = load_security_policy()

@@ -3029,8 +3029,11 @@ def _policy_signature_state(
     if not issuer:
         # A signature with no issuer names no key, so nothing can verify it.
         return SIGNATURE_UNVERIFIED, "identity.signature present but identity.issuer is empty"
-    public_key = (public_keys or {}).get(issuer)
-    if public_key:
+    # Select by MEMBERSHIP, not by a truthy value: an issuer named with an unusable
+    # key (``""`` from ``_coerce_public_keys``) must still never reach the HMAC path.
+    public_keys = public_keys or {}
+    if issuer in public_keys:
+        public_key = public_keys[issuer]
         if ed25519_verify(public_key, policy_signing_payload(data), signature):
             return SIGNATURE_VERIFIED, f"issuer {issuer!r} (ed25519)"
         return (
