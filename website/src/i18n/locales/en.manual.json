@@ -1974,6 +1974,7 @@
       "paused_runtime_budget": "Paused · time limit reached. Play resumes it with a fresh budget.",
       "paused_approval_stalled": "Paused · waiting for your approval",
       "paused_approval_hold": "Paused · an approval in this chat timed out. Press Play or send a message to resume.",
+      "waiting_on_person_hold": "Waiting on you · every open task needs your answer in this chat. Nudges resume when a worker reports back.",
       "paused_last_cycle_failed": "Paused · the last cycle could not run",
       "clear_goal_for_good": "Clear",
       "cancel": "Cancel",

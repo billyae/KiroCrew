@@ -5231,6 +5231,10 @@ arguments: which item you are bound to is resolved from your own session.
   control, a credential you do not have, another item's output).
 - `question` — your conductor's own decision is needed. `blocked` and `question`
   differ by WHO must act, which is why they are separate values.
+- On `blocked` or `question`, say when only a person can move it, in `reason`:
+  `approval` when a tool approval timed out or is waiting (report it the moment
+  one times out), `needs_human` when only a person can unblock you. Leave it
+  unset for a build, service or other item that moves on its own.
 - `done` — the acceptance condition is met. Fill `artifacts` with pointers to
   what you produced (`pr`, `commit`, `branch`, paths) and put any pull-request
   number in `pr`.

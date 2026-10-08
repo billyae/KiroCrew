@@ -6103,6 +6103,7 @@
       "paused_runtime_budget": "Pausiert · Zeitlimit erreicht. Fortsetzen startet ein neues Budget.",
       "paused_approval_stalled": "Pausiert · wartet auf deine Freigabe",
       "paused_approval_hold": "Pausiert · eine Freigabe in diesem Chat ist abgelaufen. Drück Play oder schick eine Nachricht, um fortzufahren.",
+      "waiting_on_person_hold": "Wartet auf dich · jede offene Aufgabe braucht deine Antwort in diesem Chat. Die Anstöße gehen weiter, sobald ein Worker sich zurückmeldet.",
       "paused_last_cycle_failed": "Pausiert · der letzte Zyklus konnte nicht laufen",
       "clear_goal_for_good": "Leeren",
       "cancel": "Abbrechen",
