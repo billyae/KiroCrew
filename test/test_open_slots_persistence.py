@@ -2665,3 +2665,390 @@ def test_an_older_close_does_not_block_an_open_slot_restore(tmp_path, monkeypatc
 
     assert asyncio.run(restore_open_slots_async(state2)) == 1
     assert "chat-1-reopened" in state2._slots
+
+
+# --- durability across an unclean reboot ------------------------------------ #
+
+
+def test_persist_fsyncs_the_file_and_its_directory(tmp_path, monkeypatch):
+    """The snapshot write asks for both fsyncs, which is what survives a power loss.
+
+    ``atomic_write`` alone is atomic against a concurrent READER -- the rename
+    publishes all of the file or none of it -- and that is a different property from
+    surviving an unclean reboot. Without the file fsync the data blocks need not have
+    reached the disk when the rename does; without the directory fsync the rename
+    itself need not have. A filesystem that commits metadata ahead of data then
+    brings the file back present and ZERO-LENGTH, which is the reported failure.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    state.open_slots_restored = True
+    state.get_or_create_slot("chat-1-foo")
+
+    synced: list[str] = []
+    coordinator = state._persistence_coordinator
+    real_fsync_dir = coordinator._fsync_dir
+    monkeypatch.setattr(
+        coordinator,
+        "_fsync_dir",
+        lambda directory: (synced.append(str(directory)), real_fsync_dir(directory))[1],
+    )
+    seen_kwargs: list[dict] = []
+    real_writer = coordinator._atomic_write_provider()
+
+    def _recording_writer(path, content, **kwargs):
+        seen_kwargs.append(dict(kwargs))
+        return real_writer(path, content, **kwargs)
+
+    monkeypatch.setattr(coordinator, "_atomic_write_provider", lambda: _recording_writer)
+
+    state._persist_open_slots()
+
+    assert synced == [str(tmp_path)]
+    # The snapshot's own write, not the rotation's (there was no prior generation).
+    assert seen_kwargs[-1]["fsync"] is True
+    assert seen_kwargs[-1]["mode"] == 0o600
+
+
+def test_persist_skips_the_write_when_the_key_set_is_unchanged(tmp_path, monkeypatch):
+    """A 5s flush that would rewrite the same set does no durable work at all.
+
+    The fsync pair is what makes the write expensive, and almost every periodic
+    flush writes a file byte-identical to the one already there -- the set only
+    changes when a tab is opened, closed or restored. Without this the fix would
+    trade a silent data loss for an fsync every five seconds for the life of the
+    process.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    state.open_slots_restored = True
+    state.get_or_create_slot("chat-1-foo")
+
+    writes: list[object] = []
+    coordinator = state._persistence_coordinator
+    real_writer = coordinator._atomic_write_provider()
+
+    def _counting_writer(path, content, **kwargs):
+        writes.append(path)
+        return real_writer(path, content, **kwargs)
+
+    monkeypatch.setattr(coordinator, "_atomic_write_provider", lambda: _counting_writer)
+
+    state._persist_open_slots()
+    first = len(writes)
+    assert first >= 1
+    state._persist_open_slots()
+    state._persist_open_slots()
+    assert len(writes) == first, "an unchanged key set must not be rewritten"
+
+    # A real change still lands.
+    state.get_or_create_slot("chat-2-bar")
+    state._persist_open_slots()
+    assert len(writes) > first
+    payload = json.loads((tmp_path / "open_slots.json").read_text(encoding="utf-8"))
+    assert set(payload["keys"]) == {"chat-1-foo", "chat-2-bar"}
+
+
+def test_persist_keeps_the_previous_generation_beside_the_snapshot(tmp_path, monkeypatch):
+    """The set being replaced is kept as ``open_slots.json.prev``."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    state.open_slots_restored = True
+    state.get_or_create_slot("chat-1-foo")
+    state._persist_open_slots()
+    assert not (tmp_path / "open_slots.json.prev").exists(), "nothing to keep on the first write"
+
+    state.get_or_create_slot("chat-2-bar")
+    state._persist_open_slots()
+
+    previous = json.loads((tmp_path / "open_slots.json.prev").read_text(encoding="utf-8"))
+    assert set(previous["keys"]) == {"chat-1-foo"}
+    current = json.loads((tmp_path / "open_slots.json").read_text(encoding="utf-8"))
+    assert set(current["keys"]) == {"chat-1-foo", "chat-2-bar"}
+
+
+def test_persist_does_not_promote_a_damaged_generation_into_the_aside(tmp_path, monkeypatch):
+    """A zero-length current file must not overwrite the last good aside.
+
+    The aside IS the answer the restore falls back to, so copying the damage over it
+    would destroy the open-tab set in exactly the situation the aside exists for.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    state.open_slots_restored = True
+    for key in ("chat-1-foo", "chat-2-bar"):
+        state.get_or_create_slot(key)
+    state._persist_open_slots()
+    state.get_or_create_slot("chat-3-baz")
+    state._persist_open_slots()
+    assert set(
+        json.loads((tmp_path / "open_slots.json.prev").read_text(encoding="utf-8"))["keys"]
+    ) == {"chat-1-foo", "chat-2-bar"}
+
+    # The reported crash shape: present, zero-length.
+    (tmp_path / "open_slots.json").write_text("", encoding="utf-8")
+    state.get_or_create_slot("chat-4-qux")
+    state._persist_open_slots()
+
+    assert set(
+        json.loads((tmp_path / "open_slots.json.prev").read_text(encoding="utf-8"))["keys"]
+    ) == {"chat-1-foo", "chat-2-bar"}
+
+
+@pytest.mark.parametrize("damaged", ["", "   ", '{"keys": ', '{"ts": 1.0}', "[]"])
+def test_restore_falls_back_to_the_previous_generation(tmp_path, monkeypatch, damaged):
+    """A current file holding no answer restores from the aside instead of nothing.
+
+    The whole loss mechanism in one test. A truncated file reads as 0 keys, the
+    restore flips ``open_slots_restored`` on that reading, and the next 5s flush
+    prunes the seed -- so the tabs go with no close, no delete and no trace.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-1-kept")
+    (tmp_path / "open_slots.json").write_text(damaged, encoding="utf-8")
+    (tmp_path / "open_slots.json.prev").write_text(
+        json.dumps({"keys": ["chat-1-kept"], "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    assert restore_open_slots(state2) == 1
+    assert "chat-1-kept" in state2._slots
+
+
+def test_restore_does_not_resurrect_a_deliberately_emptied_set(tmp_path, monkeypatch):
+    """``{"keys": []}`` is an ANSWER, so the aside is not consulted.
+
+    Closing the last tab writes exactly that. Falling back on it would reopen every
+    tab the user dismissed, on every restart, forever -- so the fallback must key on
+    the file holding NO answer (missing, zero-length, truncated, wrong shape) rather
+    than on the key list being short.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-1-closed-by-hand")
+    (tmp_path / "open_slots.json").write_text(json.dumps({"keys": [], "ts": 1.0}), encoding="utf-8")
+    (tmp_path / "open_slots.json.prev").write_text(
+        json.dumps({"keys": ["chat-1-closed-by-hand"], "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    assert restore_open_slots(state2) == 0
+    assert state2._slots == {}
+
+
+def test_pre_restore_merge_reads_the_aside_when_the_snapshot_is_damaged(tmp_path, monkeypatch):
+    """A boot-window flush merges the aside's keys, not an empty read.
+
+    The merge exists so a flush firing before the restore cannot shrink the seed. A
+    crash that truncated the live file is precisely when the seed it must preserve is
+    in the other file, so reading only the damaged one would re-open the same hole
+    one layer down.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    state.open_slots_restored = False  # the boot restore has NOT run yet
+    (tmp_path / "open_slots.json").write_text("", encoding="utf-8")
+    (tmp_path / "open_slots.json.prev").write_text(
+        json.dumps({"keys": ["chat-7-seeded", "chat-8-seeded"], "ts": 0.0}), encoding="utf-8"
+    )
+    state.get_or_create_slot("chat-9-booted")
+
+    state._persist_open_slots()
+
+    payload = json.loads((tmp_path / "open_slots.json").read_text(encoding="utf-8"))
+    assert set(payload["keys"]) == {"chat-7-seeded", "chat-8-seeded", "chat-9-booted"}
+
+
+# --- a cancelled restore must not claim it finished -------------------------- #
+
+
+def test_cancelled_restore_keeps_the_keys_it_never_read(tmp_path, monkeypatch):
+    """Cancel after 1 of 3 tabs and the snapshot still lists all three.
+
+    Both drivers flip ``open_slots_restored`` in a ``finally``, which tells the
+    persist writers that ``_slots`` is now the authoritative open-tab set. That is
+    true only for a restore that RAN TO THE END: cancelled at tab 1 of 3, the latch
+    flips anyway and the next flush prunes the file to the one tab that made it.
+    Reproduced here as the file shrinking, which is the user-visible loss.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    keys = ["chat-1-a", "chat-2-b", "chat-3-c"]
+    for key in keys:
+        _seed_session(state, key)
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": keys, "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+
+    async def _cancel_after_one() -> None:
+        task = asyncio.ensure_future(restore_open_slots_async(state2))
+        # Let the driver reach its per-tab yield with one tab applied, then cancel
+        # exactly as a gateway shutdown does.
+        while not state2._slots:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_cancel_after_one())
+
+    assert state2.open_slots_restored is True, "the latch still flips; that is not the fix"
+    assert len(state2._slots) < len(keys), "the premise: the restore really was cut short"
+    # The keys it never read are carried, so the flush below cannot prune them.
+    assert set(keys) - set(state2._slots) <= set(state2.unrestored_slot_keys)
+
+    state2._persist_open_slots()
+    payload = json.loads((tmp_path / "open_slots.json").read_text(encoding="utf-8"))
+    assert set(payload["keys"]) == set(keys)
+
+
+def test_abandoned_sync_restore_keeps_the_keys_it_never_read(tmp_path, monkeypatch):
+    """The generator driver owes the same carry: it is ended by a throw, not a return."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    keys = ["chat-1-a", "chat-2-b", "chat-3-c"]
+    for key in keys:
+        _seed_session(state, key)
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": keys, "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    from kiro_crew.dashboard.chat_persistence import _restore_open_slots_steps
+
+    steps = _restore_open_slots_steps(state2)
+    assert next(steps) == 1
+    steps.close()  # GeneratorExit at the yield -- an abandoned restore
+    state2.open_slots_restored = True  # what restore_open_slots' own finally does
+
+    assert set(keys) - set(state2._slots) <= set(state2.unrestored_slot_keys)
+    state2._persist_open_slots()
+    payload = json.loads((tmp_path / "open_slots.json").read_text(encoding="utf-8"))
+    assert set(payload["keys"]) == set(keys)
+
+
+# --- the drop leaves a trace ------------------------------------------------ #
+
+
+def test_restore_publishes_the_count_of_tabs_it_could_not_show(tmp_path, monkeypatch):
+    """``unrestored_slot_notice`` is what the dashboard's notice reads.
+
+    One frozen reading taken when the restore finished, rather than the live
+    ``unrestored_slot_keys`` the persist writers fold in on every flush: a notice
+    built on the live set would report a different number each time it was asked.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-1-readable")
+    _seed_session(state, "chat-2-unreadable")
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": ["chat-1-readable", "chat-2-unreadable"], "ts": 0.0}),
+        encoding="utf-8",
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    real_status = state2.conversation_log.get_metadata_status
+
+    def _one_unreadable(history_key, *args, **kwargs):
+        if history_key.endswith("chat-2-unreadable"):
+            return {}, False  # the read FAILED -- not "the session is gone"
+        return real_status(history_key, *args, **kwargs)
+
+    monkeypatch.setattr(state2.conversation_log, "get_metadata_status", _one_unreadable)
+
+    assert restore_open_slots(state2) == 1
+    assert state2.unrestored_slot_notice == {"count": 1, "keys": ["chat-2-unreadable"]}
+
+
+def test_a_clean_restore_reports_nothing_dropped(tmp_path, monkeypatch):
+    """A reported zero, which is a different answer from no report at all."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-1-fine")
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": ["chat-1-fine"], "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    assert restore_open_slots(state2) == 1
+    assert state2.unrestored_slot_notice == {"count": 0, "keys": []}
+
+
+def test_the_drop_is_recorded_on_the_dropped_sessions_own_log(tmp_path, monkeypatch):
+    """Each kept key earns a ``session/unrestored`` entry on its own crew log.
+
+    The record a reader goes looking for. The question is always "what happened to
+    this conversation", asked of the conversation -- and before this there was no
+    answer anywhere: no ``session/closed`` (the gateway did not stop serving it), no
+    delete, and the restore's own warning lives in a gateway log that rotates away.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-2-unreadable")
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": ["chat-2-unreadable"], "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    monkeypatch.setattr(state2.conversation_log, "get_metadata_status", lambda *a, **k: ({}, False))
+
+    from kiro_crew.crew_log import emit as crew_log_emit
+
+    recorded: list[tuple[str, dict]] = []
+    monkeypatch.setattr(crew_log_emit, "enabled", lambda: True)
+    monkeypatch.setattr(
+        crew_log_emit, "slot_previous_store", lambda slot: ("sid-for-" + slot, True, True)
+    )
+    monkeypatch.setattr(
+        crew_log_emit,
+        "on_open_tab_unrestored",
+        lambda sid, **fields: recorded.append((sid, fields)),
+    )
+
+    assert restore_open_slots(state2) == 0
+    assert recorded == [("sid-for-chat-2-unreadable", {"listed": 1, "restored": 0, "kept": 1})]
+
+
+def test_recording_the_drop_cannot_break_the_restore(tmp_path, monkeypatch):
+    """A crew log that refuses the account still leaves the tab restored.
+
+    The record is a courtesy on the startup path. A restore that aborted because it
+    could not write a note about a tab it already rebuilt would turn the diagnostic
+    into a second, larger outage.
+    """
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    state = _make_state(tmp_path / "sessions")
+    _seed_session(state, "chat-1-fine")
+    _seed_session(state, "chat-2-unreadable")
+    (tmp_path / "open_slots.json").write_text(
+        json.dumps({"keys": ["chat-1-fine", "chat-2-unreadable"], "ts": 0.0}), encoding="utf-8"
+    )
+
+    state2 = _make_state(tmp_path / "sessions")
+    real_status = state2.conversation_log.get_metadata_status
+    monkeypatch.setattr(
+        state2.conversation_log,
+        "get_metadata_status",
+        lambda history_key, *a, **k: (
+            ({}, False)
+            if history_key.endswith("chat-2-unreadable")
+            else real_status(history_key, *a, **k)
+        ),
+    )
+
+    from kiro_crew.crew_log import emit as crew_log_emit
+
+    monkeypatch.setattr(crew_log_emit, "enabled", lambda: True)
+
+    def _boom(slot):
+        raise RuntimeError("store unreadable")
+
+    monkeypatch.setattr(crew_log_emit, "slot_previous_store", _boom)
+
+    assert restore_open_slots(state2) == 1
+    assert "chat-1-fine" in state2._slots
+    # The notice is published BEFORE the per-key emit, so it survives the failure.
+    assert state2.unrestored_slot_notice == {"count": 1, "keys": ["chat-2-unreadable"]}

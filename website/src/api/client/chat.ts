@@ -64,6 +64,12 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
 
   const slotList = {
     chatSlots: () => fetch('/api/chat/slots').then(j),
+    /** The tabs this gateway's startup restore listed but could not show.
+     *
+     *  `reported: false` means the restore has not answered yet, which is not the
+     *  same as nothing having been dropped — a caller must not render it as zero. */
+    chatSlotsUnrestored: (): Promise<{ reported: boolean; count: number; keys: string[] }> =>
+      fetch('/api/chat/slots/unrestored').then(j),
   }
 
   const slots = {

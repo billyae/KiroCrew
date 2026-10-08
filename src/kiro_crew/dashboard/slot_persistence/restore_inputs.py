@@ -25,10 +25,98 @@ from kiro_crew.messaging.link import is_channel_session_key
 from kiro_crew.session_agent_selection import session_agent_selection_name
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from kiro_crew.dashboard.state import _ChatSlot
     from kiro_crew.history import ConversationLog
 
 logger = logging.getLogger("kiro_crew.dashboard.chat_persistence")
+
+#: The open-tab registry's file name, and the previous generation kept beside it.
+#:
+#: One pair of constants because three sites name these files -- the writer in
+#: ``dashboard_persistence``, the restore read below, and the pre-restore merge read --
+#: and a name spelled three times is a name that drifts.
+OPEN_SLOTS_FILE = "open_slots.json"
+OPEN_SLOTS_PREV_FILE = "open_slots.json.prev"
+
+
+def open_slot_keys_of(text: str) -> "list[object] | None":
+    """The raw ``keys`` list *text* states, or ``None`` when it states no answer.
+
+    ``None`` and ``[]`` are different facts, and a caller that flattens them loses
+    the whole point of keeping a previous generation. ``[]`` is an ANSWER -- the file
+    parsed and says no tab was open, which is what closing the last tab writes.
+    ``None`` is DAMAGE or absence: the text is empty or truncated (what an unclean
+    reboot leaves behind on a filesystem that had not committed the data blocks), or
+    parses to a shape with no ``keys`` list in it at all.
+
+    That split is what makes the fallback safe. Falling back on ``[]`` would
+    resurrect every tab the user deliberately closed, permanently, because the
+    previous generation still lists them.
+
+    Takes the TEXT rather than a path so a caller that must screen and then copy the
+    same bytes can do both from one read.
+
+    Entries are returned UNVALIDATED -- see :func:`_sanitize_open_slot_key`.
+    """
+    if not text.strip():
+        return None
+    try:
+        data = json.loads(text)
+    except Exception:
+        logger.debug("open-tab snapshot is not parseable JSON", exc_info=True)
+        return None
+    keys = data.get("keys") if isinstance(data, dict) else None
+    if not isinstance(keys, list):
+        return None
+    return list(keys)
+
+
+def open_slot_keys_usable(text: str) -> bool:
+    """Whether *text* is a generation worth keeping as the fallback."""
+    return open_slot_keys_of(text) is not None
+
+
+def open_slot_keys_in(path: "Path") -> "list[object] | None":
+    """:func:`open_slot_keys_of` for the file at *path*; ``None`` when it is unreadable.
+
+    An unreadable file and a damaged one collapse to the same answer here on purpose:
+    both mean this path has no open-tab set to offer, and every caller's next move is
+    the same either way.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.debug("%s unreadable", path.name, exc_info=True)
+        return None
+    return open_slot_keys_of(text)
+
+
+def open_slot_keys_with_fallback(config_dir: "Path") -> "list[object]":
+    """The open-tab keys to restore from, preferring the current generation.
+
+    The durable read behind both restore drivers and the pre-restore merge. When the
+    current file holds no answer (:func:`open_slot_keys_in` returns ``None``) the
+    previous generation is read instead, which is what turns a crash that truncated
+    the live file from "16 tabs are gone" into "the tabs come back one generation
+    stale". Both empty is the documented no-op.
+    """
+    keys = open_slot_keys_in(config_dir / OPEN_SLOTS_FILE)
+    if keys is not None:
+        return keys
+    previous = open_slot_keys_in(config_dir / OPEN_SLOTS_PREV_FILE)
+    if previous is None:
+        return []
+    logger.warning(
+        "%s holds no usable key list; restoring the open-tab set from %s (%d key(s))",
+        OPEN_SLOTS_FILE,
+        OPEN_SLOTS_PREV_FILE,
+        len(previous),
+    )
+    return previous
 
 
 def _build_kiro_model_map() -> dict[str, str]:
@@ -79,23 +167,18 @@ def _read_open_slots_keys() -> list[object]:
 
     Entries are returned UNVALIDATED — the file is attacker-writable, so every
     caller must pass each one through :func:`_sanitize_open_slot_key` before it
-    reaches path construction. Returns ``[]`` for a missing, unreadable or
-    malformed file, which is the documented no-op.
+    reaches path construction. Returns ``[]`` when neither the current file nor
+    the previous generation holds a key list, which is the documented no-op.
+
+    A file that holds no answer falls back to the previous generation
+    (:func:`open_slot_keys_with_fallback`): the live file is rewritten in place every
+    time the open-tab set changes, so a crash before its data blocks commit leaves a
+    zero-length file in place of the whole working set, and reading that as "no
+    tabs were open" is what makes the loss permanent.
     """
     from kiro_crew.dashboard import chat_persistence as cp  # circular import: facade imports owners
 
-    path = cp.config_dir() / "open_slots.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        logger.debug("open_slots.json unreadable; skipping", exc_info=True)
-        return []
-    keys = data.get("keys") if isinstance(data, dict) else None
-    if not isinstance(keys, list):
-        return []
-    return list(keys)
+    return open_slot_keys_with_fallback(cp.config_dir())
 
 
 def _sanitize_open_slot_key(raw: object) -> str | None:
