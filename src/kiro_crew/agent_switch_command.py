@@ -14,9 +14,15 @@ command to the same switch before the message is ever sent.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
+from collections.abc import Callable, Hashable
+from typing import Any, Generic, TypeVar
 
 from kiro_crew.validation import is_registered_agent_name
+
+logger = logging.getLogger(__name__)
 
 # One token in the registered-agent grammar, nothing after it.
 _AGENT_SWITCH_RE = re.compile(r"/agent\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*\Z")
@@ -65,3 +71,149 @@ def agent_switch_target(message: str) -> str | None:
     if name.lower() in AGENT_SUBCOMMANDS or not is_registered_agent_name(name):
         return None
     return name
+
+
+# ── /agent on the text-command channels (Webex, Discord, Teams, Feishu) ──
+#
+# Those channels have no picker UI, so the command is text: a bare ``/agent``
+# shows the current agent and the ones this machine offers, ``/agent <name>``
+# switches, ``/agent default`` goes back to the configured default. Telegram
+# keeps its button picker and Slack its thread agent; neither reads this.
+
+#: Words that are not agent names on the channel command.
+_SHOW_WORDS = frozenset({"list"})
+_RESET_WORDS = frozenset({"default"})
+
+RouteT = TypeVar("RouteT", bound=Hashable)
+
+
+class ChannelAgentPicks(Generic[RouteT]):
+    """The agent each channel conversation picked with ``/agent``, by route.
+
+    Keyed by ROUTE (a DM, a space, a thread), like Telegram's ``_agent_pref``,
+    so the pick survives ``/new`` and the idle/daily rotation. In memory only:
+    the durable answer is the configured default agent.
+    """
+
+    def __init__(self) -> None:
+        self._picks: dict[RouteT, str] = {}
+
+    def get(self, route: RouteT) -> str:
+        """The picked agent for *route*, or ``""`` when none was picked."""
+        return self._picks.get(route, "")
+
+    def resolve(self, route: RouteT | None, configured: str) -> str:
+        """The agent *route* runs: its pick, else *configured*."""
+        if route is None:
+            return configured
+        return self._picks.get(route) or configured
+
+    def set(self, route: RouteT, agent: str) -> None:
+        if agent:
+            self._picks[route] = agent
+        else:
+            self._picks.pop(route, None)
+
+
+def _agent_is_pickable(info: Any) -> bool:
+    """Whether a roster row may be offered on a channel: Telegram's own rule.
+
+    Kiro Crew's internal agents and app-installed agents are never offered,
+    so a channel switch can only reach an agent a person would pick.
+    """
+    from kiro_crew.telegram.dispatch.pickers import _agent_is_internal
+
+    return bool(info.name) and not _agent_is_internal(info)
+
+
+def pickable_agent_names() -> list[str]:
+    """The agents a channel ``/agent`` may switch to, sorted.
+
+    The same set Telegram's ``/agent`` picker offers. Reads and parses spec
+    files on a cache miss, so callers run it off the loop.
+    """
+    from kiro_crew import agent_discovery
+
+    return sorted({info.name for info in agent_discovery.list_agents() if _agent_is_pickable(info)})
+
+
+def channel_agent_usage(prefix: str = "/") -> str:
+    """The one-line usage the channel command answers a bad argument with."""
+    return (
+        f"Send `{prefix}agent` to see the agents, `{prefix}agent <name>` to switch, "
+        f"or `{prefix}agent default` to go back to the default."
+    )
+
+
+async def handle_channel_agent_command(
+    picks: ChannelAgentPicks[RouteT],
+    route: RouteT,
+    arg: str,
+    *,
+    configured: str,
+    sessions: Any,
+    session_key: Callable[[], str],
+    prefix: str = "/",
+) -> str:
+    """Answer one channel ``/agent`` command and return the reply text.
+
+    *configured* is the agent a conversation runs with no pick. *session_key*
+    derives the route's CURRENT key; it is read before and after the switch,
+    because the agent is part of the key: a switch starts a fresh conversation
+    (switching back reaches the old one again), as on Telegram.
+
+    A switch is refused while a reply runs, and only an agent from
+    :func:`pickable_agent_names` is accepted, so a typo or an internal agent
+    name never becomes the next turn's agent.
+    """
+    word = arg.strip()
+    current = picks.get(route)
+    current_label = current or f"default ({configured})"
+    if not word or word.lower() in _SHOW_WORDS:
+        try:
+            names = await asyncio.to_thread(pickable_agent_names)
+        except Exception:
+            logger.warning("channel /agent: agent discovery failed", exc_info=True)
+            names = []
+        lines = [f"**Agent**: currently `{current_label}`"]
+        if names:
+            lines += [
+                "",
+                *(f"- `{name}`{' (current)' if name == current else ''}" for name in names),
+            ]
+        else:
+            lines += ["", "No other agents are installed on this machine."]
+        lines += ["", channel_agent_usage(prefix)]
+        return "\n".join(lines)
+
+    if word.lower() in _RESET_WORDS:
+        target = ""
+    else:
+        target = agent_switch_target(f"/agent {word}") or ""
+        if not target:
+            return f"❌ That is not an agent name. {channel_agent_usage(prefix)}"
+        try:
+            names = await asyncio.to_thread(pickable_agent_names)
+        except Exception:
+            logger.warning("channel /agent: agent discovery failed", exc_info=True)
+            names = []
+        if target not in names:
+            return (
+                f"❌ No agent named `{target}` is available here. "
+                f"Send `{prefix}agent` for the list."
+            )
+    label = target or f"default ({configured})"
+    if target == current:
+        return f"ℹ️ Already using `{label}`."
+    if sessions.is_busy(session_key()):
+        return (
+            f"⏳ Still working on your last message. Send `{prefix}agent` again "
+            f"once it finishes to switch to `{label}`."
+        )
+    picks.set(route, target)
+    if not sessions.has_session(session_key()):
+        return f"✅ Agent set to `{label}`."
+    return (
+        f"✅ Agent set to `{label}`. This starts a fresh conversation; "
+        f"switch back to return to the previous one."
+    )

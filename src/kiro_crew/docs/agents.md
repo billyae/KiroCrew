@@ -42,6 +42,16 @@ The same command works in a Slack thread linked to a dashboard chat (it switches
 that chat's agent). `/agent list` and kiro-cli's other `/agent` subcommands are
 passed through unchanged.
 
+### Per-Conversation (Webex, Discord, Teams, Feishu)
+
+Send `/agent` (`!agent` on Discord) to see the conversation's agent and the
+agents you can pick: the same list Telegram's `/agent` picker shows, so Kiro
+Crew's own agents and app agents are not offered. `/agent <name>` switches and
+starts a fresh conversation (switching back returns to the old one);
+`/agent default` goes back to the default agent. A switch waits until the
+current reply finishes. A conversation that continues a dashboard session keeps
+that session's agent; change it from the dashboard.
+
 ### Per-Cron Job
 
 Cron jobs can specify an agent at creation time.
