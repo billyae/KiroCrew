@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Lock, MonitorCog, Blocks, Check, RadioTower, Bell, Volume2, ListMusic } from 'lucide-react'
+import { Lock, MonitorCog, Blocks, Check, RadioTower, Bell, Volume2, ListMusic, Music } from 'lucide-react'
 import { SettingsSection, SettingsCard, SettingsToggle, SettingsSelect } from '../../components/settings'
 import { SettingsSubNav, type SubNavItem } from '../../components/SettingsSubNav'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select'
@@ -9,9 +9,10 @@ import ErrorNotice from '../../components/ErrorNotice'
 import { api } from '../../api/client'
 import type { NotificationChannel } from '../../types'
 import {
-  SOUND_PRESETS, type SoundPreset, type SoundCategory, type SoundSettings,
-  loadSoundSettings, saveSoundSettings, playPreset, presetForKind,
+  SOUND_PRESETS, type SoundPreset, type SoundChoice, type SoundCategory, type SoundSettings, type ToneStep,
+  loadSoundSettings, saveSoundSettings, playPreset, presetForKind, customSoundId, customSoundName,
 } from '../../hooks/useNotificationSound'
+import { CustomSoundsSection } from './CustomSoundsSection'
 import { loadChatCompleteNotify, saveChatCompleteNotify } from '../../hooks/chatCompleteNotify'
 import { loadBannerEnabled, saveBannerEnabled } from '../../hooks/notificationBanner'
 import { loadUnreadOnAttention, saveUnreadOnAttention } from '../../hooks/unreadOnAttention'
@@ -49,18 +50,24 @@ const PRESET_LABEL_KEY: Record<SoundPreset, string> = {
 const DEFAULT_SENTINEL = 'default'
 const OVERRIDE_OPTIONS: string[] = [DEFAULT_SENTINEL, ...PRESET_OPTIONS]
 
-/** Localised preset labels, positionally aligned with `PRESET_OPTIONS`. No
- *  `hasOwnProperty` guard: `SoundPreset` is a closed union and
- *  `loadSoundSettings` validates stored values against it, so every id reaching
- *  this table has an entry (unlike `lib/effort.ts`, whose levels are whatever
- *  the backend reports). */
-const presetLabels = (): string[] => PRESET_OPTIONS.map(p => i18nT(PRESET_LABEL_KEY[p]))
+/** The user's custom sounds as picker options, after the built-ins. */
+const customOptions = (s: SoundSettings): SoundChoice[] =>
+  Object.keys(s.customTones ?? {}).map(customSoundId)
+
+/** Localised preset labels, positionally aligned with `PRESET_OPTIONS` plus the
+ *  custom options. A custom sound is labelled with the name the user gave it;
+ *  `loadSoundSettings` drops any choice whose custom sound is gone, so every
+ *  other id reaching this table is a built-in with an entry. */
+const presetLabels = (s: SoundSettings): string[] => [
+  ...PRESET_OPTIONS.map(p => i18nT(PRESET_LABEL_KEY[p])),
+  ...customOptions(s).map(id => customSoundName(id) ?? id),
+]
 
 /** …plus the leading "inherit the default sound" row the per-category selects
  *  carry, aligned with `OVERRIDE_OPTIONS`. */
-const overrideLabels = (): string[] => [
+const overrideLabels = (s: SoundSettings): string[] => [
   i18nT('pages.settings.notificationsPanel.use_default'),
-  ...presetLabels(),
+  ...presetLabels(s),
 ]
 
 /** Per-category sound rows, in display order. Ids only — the label and
@@ -320,7 +327,7 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
     applyUpdate(current => ({ ...current, ...partial }))
   }
 
-  const setCategoryPreset = (cat: SoundCategory, preset: SoundPreset) => {
+  const setCategoryPreset = (cat: SoundCategory, preset: SoundChoice) => {
     applyUpdate(current => ({ ...current, perCategory: { ...current.perCategory, [cat]: preset } }))
   }
 
@@ -329,6 +336,29 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
       const { [cat]: _drop, ...rest } = current.perCategory
       void _drop
       return { ...current, perCategory: rest }
+    })
+  }
+
+  const addCustomSound = (name: string, tones: ToneStep[]): boolean => {
+    const next = loadSoundSettings()
+    next.customTones = { ...(next.customTones ?? {}), [name]: tones }
+    if (!saveSoundSettings(next)) return false
+    setSettings(next)
+    return true
+  }
+
+  // Deleting a sound also clears every category that was set to it, so no
+  // picker is left pointing at a sound that no longer exists.
+  const removeCustomSound = (name: string) => {
+    const id = customSoundId(name)
+    applyUpdate(current => {
+      const { [name]: _gone, ...customTones } = current.customTones ?? {}
+      void _gone
+      const perCategory = Object.fromEntries(
+        Object.entries(current.perCategory).filter(([cat, v]) => v !== id || cat === 'all'),
+      ) as SoundSettings['perCategory']
+      if (perCategory.all === id) perCategory.all = 'chime'
+      return { ...current, customTones, perCategory }
     })
   }
 
@@ -379,6 +409,7 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
     { key: 'alerts', label: i18nT('pages.settings.notificationsPanel.desktop_alerts'), icon: <Bell size={16} /> },
     { key: 'sound', label: i18nT('pages.settings.notificationsPanel.sound'), icon: <Volume2 size={16} /> },
     { key: 'percategory', label: i18nT('pages.settings.notificationsPanel.per_category_sounds'), icon: <ListMusic size={16} /> },
+    { key: 'custom', label: i18nT('pages.settings.notificationsPanel.custom_sounds'), icon: <Music size={16} /> },
   ]
 
   return (
@@ -490,14 +521,14 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
             // all='none' silence rule. A naive `perCategory[cat] ?? fallback`
             // diverged from playback for approval (showed the fallback, played
             // pulse). 'all' has no kind, so it previews the fallback directly.
-            const effective: SoundPreset = cat === 'all'
+            const effective: SoundChoice = cat === 'all'
               ? fallback
               : presetForKind(cat, settings)
             const selectValue: string = cat === 'all'
               ? fallback
-              : (hasOverride ? (settings.perCategory[cat] as SoundPreset) : DEFAULT_SENTINEL)
-            const opts = cat === 'all' ? PRESET_OPTIONS : OVERRIDE_OPTIONS
-            const optLabels = cat === 'all' ? presetLabels() : overrideLabels()
+              : (hasOverride ? (settings.perCategory[cat] as SoundChoice) : DEFAULT_SENTINEL)
+            const opts = [...(cat === 'all' ? PRESET_OPTIONS : OVERRIDE_OPTIONS), ...customOptions(settings)]
+            const optLabels = cat === 'all' ? presetLabels(settings) : overrideLabels(settings)
             return (
               <div key={cat} className="flex items-end gap-2">
                 <div className="flex-1 min-w-0">
@@ -512,8 +543,8 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
                         clearCategoryOverride(cat)
                         if (fallback !== 'none') playPreset(fallback, settings.volume)
                       } else {
-                        setCategoryPreset(cat, v as SoundPreset)
-                        if (v !== 'none') playPreset(v as SoundPreset, settings.volume)
+                        setCategoryPreset(cat, v as SoundChoice)
+                        if (v !== 'none') playPreset(v as SoundChoice, settings.volume)
                       }
                     }}
                     disabled={!settings.enabled}
@@ -532,6 +563,17 @@ export function NotificationsPanel({ basePath }: { basePath?: string } = {}) {
           })}
         </SettingsCard>
       </SettingsSection>
+          )
+
+        case 'custom':
+          return (
+            <CustomSoundsSection
+              customTones={settings.customTones ?? {}}
+              volume={settings.volume}
+              enabled={settings.enabled}
+              onAdd={addCustomSound}
+              onRemove={removeCustomSound}
+            />
           )
 
         default:

@@ -234,7 +234,7 @@ gated on catch-up, only the frame's live banner is (see Trigger below).
 ### Settings and resolution
 
 Settings persist in `localStorage` under `mc-notification-sound`
-(`{ enabled, volume, perCategory }`). `presetForKind(kind, settings)` resolves
+(`{ enabled, volume, perCategory, customTones? }`). `presetForKind(kind, settings)` resolves
 the preset for a kind, in order:
 
 1. `enabled === false` → `'none'` (primary switch; WebAudio never plays).
@@ -252,6 +252,32 @@ the preset for a kind, in order:
 `presetForKind` (not a naive `perCategory[cat] ?? fallback`), so the settings
 row, its Test button, and runtime playback always agree — notably for approval,
 whose built-in `pulse` default the naive form did not show.
+
+### Custom sounds
+
+A user can add named sounds of their own (Settings > Notifications > Custom
+sounds), so instances in one room can sound different. They live in the same
+blob under `customTones` (`{ [name]: ToneStep[] }`, each step
+`{ freq, start, dur, gain }`, the shape of the built-in table). A category
+selects one as `custom:<name>`, so a custom name can never collide with a
+built-in id. The built-in presets, their ids and their levels are unchanged.
+
+`validateCustomTone` holds every sound to `CUSTOM_TONE_LIMITS`: 1-32 character
+name of letters, digits, space, `-` or `_`, not a built-in, `none` or `default`
+and not already used (case-insensitive); 1-16 steps; `freq` 20-20000 Hz; `dur`
+0.02-2 s; `gain` above 0 and at most 1; every step starting at 0 or later and
+ending within 5 s; at most 20 sounds. It runs when a sound is added AND inside
+`loadSoundSettings`, because the stored blob can be hand-edited or restored from
+`ui-prefs.json`: a sound that fails is dropped, and a category pointing at a
+missing custom sound falls back as if unset. The host backup enforces the same
+bounds: `kiro_crew/notification_sound_prefs.py` refuses a `PUT /api/ui-prefs`
+whose `mc-notification-sound` value carries an out-of-bounds `customTones`
+(400, nothing written), and a restored archive drops that one entry;
+`test_notification_sound_prefs.py` pins the two limit tables equal. Playback scales a custom sound by
+its loudest overlap of step gains, so it never drives the output past full
+scale. The tones box reads JSON or the table's shorthand (bare keys, `.2`) with
+`JSON.parse`, never as code. Deleting a sound clears every category set to it
+(`all` returns to `chime`). Crew avatar sounds still offer only the built-ins.
 
 ### Persistence and cross-surface sync
 

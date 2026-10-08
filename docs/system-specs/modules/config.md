@@ -1049,7 +1049,9 @@ consumed by `website/src/lib/uiPrefs.ts`. Deliberately NOT a section of
 
 Contract:
 
-- Values are opaque strings the server never parses. For most keys the value is
+- Values are opaque strings the server never parses, with one exception:
+  `mc-notification-sound` is read only to bound its user-defined
+  `customTones` (see app-notifications "Custom sounds"). For most keys the value is
   exactly what `localStorage` holds (a UTF-8 string). ONE durable key —
   `mc-chat-config`, a JSON object of ~20 independent chat settings — is the
   exception: it is NOT stored whole. Each of its fields travels under its own

@@ -57,6 +57,7 @@ from typing import Any
 
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config.paths import config_dir
+from kiro_crew.notification_sound_prefs import SOUND_SETTINGS_KEY, custom_tones_problem
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -310,6 +311,10 @@ def _validate_patch(patch: Mapping[str, Any]) -> dict[str, str | None]:
             raise UiPrefsError(f"value for {key} must be a string or null")
         if _utf8_len(value, f"value for {key}") > MAX_VALUE_BYTES:
             raise UiPrefsError(f"value for {key} exceeds {MAX_VALUE_BYTES} bytes")
+        if key == SOUND_SETTINGS_KEY:
+            problem = custom_tones_problem(value)
+            if problem is not None:
+                raise UiPrefsError(f"value for {key} is not storable: {problem}")
         cleaned[key] = value
     return cleaned
 
