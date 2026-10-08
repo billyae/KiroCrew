@@ -49,6 +49,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_ACP_RUNTIME,
     ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION,
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
+    JsonRpcMessage,
     effort_config_option_id,
 )
 from kiro_crew.providers.acp import AcpProvider
@@ -1232,7 +1233,9 @@ class TestTheDashboardPickReadsTheRefusalBack:
 
         kiro = _shared_runtime_provider(ACP_BACKEND_KIRO, ["auto", "claude-sonnet-4.6"])
         handle = _shared_handle(kiro)
-        handle._runtime.send_request = AsyncMock(return_value={})
+        # session/set_model is awaited; this double answers it as kiro-cli does.
+        handle._send_awaited = AsyncMock(return_value=1)
+        handle._wait_for_response = AsyncMock(return_value=JsonRpcMessage(id=1, result={}))
         handle._session_id = "kiro-shared-1"
         handle.model_pin_refused = "claude-opus-4.8"  # a stale record from earlier
         kiro.available_models = MagicMock(return_value=handle.available_models)  # type: ignore[method-assign]

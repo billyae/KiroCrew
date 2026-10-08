@@ -231,6 +231,11 @@ _READ_PATH_REPROBE_MIN_INTERVAL_SECS = 300.0
 # out mid-revalidation.
 _READ_PATH_PROBE_DEADLINE_SECS = 3.0
 
+# How long AcpSessionHandle.set_model waits for a ``session/set_model`` reply.
+# kiro-cli 2.28 answers in well under a second (measured: 0.03-0.04s), so this
+# bounds only an adapter that never answers; that silence is read as accepted.
+_SET_MODEL_REPLY_TIMEOUT = 3.0
+
 
 # The stopReason values the pre-turn drain may NAME in its warning: the closed
 # protocol values (``types.STOP_REASON_*``) only. A discarded terminal whose
@@ -2575,10 +2580,24 @@ class AcpSessionHandle:
             # a refusal into a silent stay-on-default where today it raises.
             await self.set_config_option(MODEL_CONFIG_ID, resolved)
         else:
-            await self._runtime.send_request(
+            # Waits for the adapter's answer so an ERROR reply raises instead of
+            # being dropped by the pre-turn drain while the bookkeeping below
+            # records a model the session is not serving. Silence is not a
+            # refusal: an adapter that never answers this request kept the
+            # unawaited behaviour, so a timeout records the switch as before.
+            req_id = await self._send_awaited(
                 METHOD_SET_MODEL,
                 set_model_params(self._session_id, resolved),
             )
+            try:
+                await self._wait_for_response(req_id, timeout=_SET_MODEL_REPLY_TIMEOUT)
+            except AcpTimeoutError:
+                logger.info(
+                    "session/set_model(%s) on %s got no reply within %.0fs; recording it",
+                    resolved,
+                    self._session_id,
+                    _SET_MODEL_REPLY_TIMEOUT,
+                )
         self._model = resolved
         self.model_pin_refused = ""
         # Parity with AcpClient.set_model: keep _resolved_model_id in sync so
@@ -3820,6 +3839,16 @@ class AcpSessionHandle:
             intent = self._model
             try:
                 await self.set_model(fallback)
+            except (AcpError, AcpRequestTimeout) as exc:
+                # Same contract as the KAS branch below: session/new already
+                # succeeded, so a refused switch leaves the session on its
+                # default rather than failing the start.
+                logger.warning(
+                    "ACP session %s could not switch to served default %s: %s",
+                    self._session_id,
+                    fallback,
+                    redact_log_via_context(str(exc)),
+                )
             finally:
                 self._model = intent
         elif self._runtime.acp_backend == ACP_BACKEND_KAS:
