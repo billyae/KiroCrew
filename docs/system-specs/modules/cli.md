@@ -1508,7 +1508,13 @@ no signal and exit 1. Without `--expect-pid` the command is unchanged:
    whose start job completes the moment the process is forked, so a gateway
    that exits on start still gets exit 0. `service.linux.restart()` therefore
    re-reads the unit (`systemctl show`) for `_RESTART_SETTLE_SECS` (2 s, one
-   read per 0.25 s) and returns a per-scope `RestartReport`: a scope is
+   read per 0.25 s, shortened to a quarter of the loaded unit's `RestartUSec`
+   — read just before the restart, floor 0.01 s — so a read lands inside an
+   `activating (auto-restart)` visit of any `RestartSec` of 40 ms or more;
+   below that, `0` included, a visit can still be stepped over; a
+   `RestartUSec` the manager does not answer keeps 0.25 s; the window itself
+   stays 2 s, so a gateway that dies later than that is still reported
+   restarted) and returns a per-scope `RestartReport`: a scope is
    restarted only if the unit is `active` at the end of the window; one seen
    in `activating (auto-restart)`, `failed`, `inactive` or `deactivating`
    inside it is reported at once with that state and its `Result` (`exit-code`,

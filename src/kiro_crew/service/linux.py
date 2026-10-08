@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -2017,6 +2018,74 @@ def stop() -> None:
 # / `kirocrew logs` are where it shows.
 _RESTART_SETTLE_SECS = 2.0
 _RESTART_POLL_SECS = 0.25
+# The read must land inside an ``activating (auto-restart)`` visit, which lasts
+# the unit's ``RestartSec``. The rendered ``RestartSec=10`` leaves 0.25 s far
+# inside it; an operator's drop-in ``RestartSec=100ms`` does not, so the read
+# interval is capped at a quarter of the loaded ``RestartUSec`` (at least three
+# reads land inside one visit), never below a floor that keeps a
+# ``RestartSec=0`` unit from turning the loop into a busy spin. Below four
+# times that floor (``RestartSec`` under 40 ms, ``0`` included) a read can
+# still step over the visit; such a unit is not covered. The window itself
+# stays the fixed 2 s.
+_RESTART_POLL_FRACTION = 0.25
+_RESTART_POLL_FLOOR_SECS = 0.01
+
+_TIMESPAN_UNITS = {
+    "us": 1e-6,
+    "μs": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "min": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "w": 604800.0,
+}
+_TIMESPAN_PART = re.compile(r"(\d+(?:\.\d+)?)(us|μs|ms|s|min|h|d|w)")
+
+
+def _parse_timespan(value: str) -> float | None:
+    """Seconds in a systemd time span as ``systemctl show`` prints it (``100ms``,
+    ``10s``, ``1min 30s``), ``0`` included; ``None`` for anything else
+    (``infinity``, empty, an unknown unit), which callers treat as "not
+    answered"."""
+    text = value.strip()
+    if text == "0":
+        return 0.0
+    parts = text.split()
+    if not parts:
+        return None
+    total = 0.0
+    for part in parts:
+        match = _TIMESPAN_PART.fullmatch(part)
+        if match is None:
+            return None
+        total += float(match.group(1)) * _TIMESPAN_UNITS[match.group(2)]
+    return total
+
+
+def _loaded_restart_secs(*, user: bool) -> float | None:
+    """The ``RestartUSec`` the scope's manager has loaded for our unit, in
+    seconds, or ``None`` when it did not answer one this module can read."""
+    res = _systemctl(
+        "show", "-p", "RestartUSec", f"{SERVICE_NAME}.service", sudo=False, user=user
+    )
+    for line in (res.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "RestartUSec":
+            return _parse_timespan(value)
+    return None
+
+
+def _restart_poll_secs(restart_secs: float | None) -> float:
+    """The settle loop's read interval for a unit whose ``RestartSec`` is
+    *restart_secs*: the fixed interval, shortened so a read always lands inside
+    one auto-restart visit."""
+    if restart_secs is None:
+        return _RESTART_POLL_SECS
+    return min(
+        _RESTART_POLL_SECS,
+        max(_RESTART_POLL_FLOOR_SECS, restart_secs * _RESTART_POLL_FRACTION),
+    )
 
 
 def _journal_hint(*, user: bool) -> str:
@@ -2031,7 +2100,7 @@ def _journal_hint(*, user: bool) -> str:
     return f"sudo journalctl -u {unit} -n 50 --no-pager"
 
 
-def _confirm_up(*, user: bool) -> tuple[str, str] | None:
+def _confirm_up(*, user: bool, poll_secs: float) -> tuple[str, str] | None:
     """After a ``restart`` the manager ran: ``None`` once the unit is up at the
     end of the settle window, else ``(kind, reason)`` — the unit's real
     ``ActiveState (SubState)`` and ``Result`` — the moment that is known.
@@ -2069,7 +2138,7 @@ def _confirm_up(*, user: bool) -> tuple[str, str] | None:
                 f"{unit} is still {state.active} ({state.sub}){last} "
                 f"{_RESTART_SETTLE_SECS:g}s after the restart",
             )
-        time.sleep(_RESTART_POLL_SECS)
+        time.sleep(poll_secs)
 
 
 def _restart_scope(*, user: bool) -> ScopeRestart:
@@ -2096,6 +2165,9 @@ def _restart_scope(*, user: bool) -> ScopeRestart:
     scope = "user" if user else "system"
     spelled = "systemctl --user" if user else "sudo systemctl"
     restart_hint = user_restart_command_hint() if user else system_restart_command_hint()
+    # Read before the restart: the settle loop needs it the moment the fork
+    # returns, and the value is the loaded unit's either side of it.
+    poll_secs = _restart_poll_secs(_loaded_restart_secs(user=user))
     res = _systemctl("restart", unit, user=user)
     if res.returncode != 0:
         diag = _first_line(res)
@@ -2119,7 +2191,7 @@ def _restart_scope(*, user: bool) -> ScopeRestart:
             kind=RESTART_NOT_UP,
             hint=_journal_hint(user=user),
         )
-    outcome = _confirm_up(user=user)
+    outcome = _confirm_up(user=user, poll_secs=poll_secs)
     if outcome is None:
         return ScopeRestart(scope, True)
     kind, reason = outcome

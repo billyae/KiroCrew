@@ -133,6 +133,7 @@ def _fake_systemctl(
     overrides=None,
     stop_is_ignored=False,
     restart_lands_in=None,
+    restart_usec=None,
 ):
     """A ``subprocess.run`` stand-in that answers systemctl per SCOPE and VERB.
 
@@ -160,6 +161,9 @@ def _fake_systemctl(
     does next: a dict, or a sequence of dicts answered to successive ``show``
     reads of the restarted scope (the last one sticky), so a unit that reads
     ``active`` once and then ``activating (auto-restart)`` is one entry each.
+    ``restart_usec`` is the ``RestartUSec`` value a ``show`` reports for a
+    loaded unit (``None`` leaves the line out, as a manager that does not
+    answer the property does).
 
     Nothing here spawns anything: the whole point of the fixture is that the
     systemd user manager is host state and must never be touched from a test.
@@ -209,6 +213,8 @@ def _fake_systemctl(
                     f"SubState={props['SubState']}\nFragmentPath={fragment}\n"
                     f"Result={props.get('Result', 'success')}\n"
                 )
+                if restart_usec is not None:
+                    body += f"RestartUSec={restart_usec}\n"
             return subprocess.CompletedProcess(tokens, 0, body, "")
         if verb == "is-active":
             state = (props or _DEAD)["ActiveState"]
@@ -3803,6 +3809,125 @@ class TestLinuxServiceScopes:
 
         assert report.ok is True
         assert sum(svc_linux.time.sleeps) >= svc_linux._RESTART_SETTLE_SECS
+
+    @staticmethod
+    def _timed_unit(restart_usec, *, dies_at, back_at):
+        """A user unit whose state after the restart follows the FAKE CLOCK, not
+        the read count: ``active (running)`` until ``dies_at`` seconds after the
+        restart, ``activating (auto-restart)`` until ``back_at``, then ``active``
+        again — one auto-restart visit the length of the unit's ``RestartSec``,
+        which a read spaced wider than the visit steps straight over."""
+        from kiro_crew.service import linux as svc_linux
+
+        inner = _fake_systemctl(system=None, user=_RUNNING, restart_usec=restart_usec)
+        restarted_at = []
+
+        def run(argv, *a, **kw):
+            res = inner(argv, *a, **kw)
+            tokens = list(argv)
+            if "--user" in tokens and "restart" in tokens:
+                restarted_at.append(svc_linux.time.now)
+            if "--user" in tokens and "show" in tokens and restarted_at:
+                elapsed = svc_linux.time.now - restarted_at[0]
+                state = (
+                    TestLinuxServiceScopes._LOOPING
+                    if dies_at <= elapsed < back_at
+                    else _RUNNING
+                )
+                body = res.stdout.replace(
+                    "ActiveState=active\nSubState=running\n",
+                    f"ActiveState={state['ActiveState']}\nSubState={state['SubState']}\n",
+                )
+                return subprocess.CompletedProcess(tokens, 0, body, "")
+            return res
+
+        run.calls = inner.calls
+        return run
+
+    def test_restart_reads_inside_a_short_restart_sec_auto_restart_visit(self):
+        """`RestartSec=100ms`: the unit dies 0.3 s after the restart and is back
+        `active` by 0.4 s. Reads spaced at the fixed 0.25 s (0.25, 0.5, …) never
+        land inside that visit and would report a dead gateway as restarted; the
+        read interval derived from `RestartUSec` lands inside it and reports the
+        death."""
+        from kiro_crew.service import linux as svc_linux
+
+        run = self._timed_unit("100ms", dies_at=0.3, back_at=0.4)
+        with patch("kiro_crew.service.linux.subprocess.run", side_effect=run):
+            report = svc_linux.restart()
+
+        assert report.ok is False, svc_linux.time.sleeps
+        (failure,) = report.failures
+        assert failure.kind == RESTART_NOT_UP
+        assert "activating (auto-restart)" in failure.reason
+        assert max(svc_linux.time.sleeps) <= 0.1 / 4
+        assert ["systemctl", "--user", "show", "-p", "RestartUSec", _UNIT] in run.calls, run.calls
+
+    def test_restart_poll_keeps_the_fixed_interval_for_the_rendered_restart_sec(self):
+        """The rendered unit's `RestartSec=10` (and a manager that does not answer
+        `RestartUSec` at all) keep today's 0.25 s read and 2 s window: the
+        derivation only ever shortens the read."""
+        from kiro_crew.service import linux as svc_linux
+
+        for usec in ("10s", None):
+            svc_linux.time.sleeps.clear()
+            run = _fake_systemctl(
+                system=None, user=_RUNNING, restart_lands_in=_RUNNING, restart_usec=usec
+            )
+            with patch("kiro_crew.service.linux.subprocess.run", side_effect=run):
+                report = svc_linux.restart()
+            assert report.ok is True
+            assert set(svc_linux.time.sleeps) == {svc_linux._RESTART_POLL_SECS}, usec
+            assert sum(svc_linux.time.sleeps) >= svc_linux._RESTART_SETTLE_SECS
+
+    def test_restart_window_does_not_cover_a_death_after_two_seconds(self):
+        """PINNED RESIDUAL (the window half of the RestartUSec derivation): the
+        settle window is still the fixed 2 s, so a gateway that dies 2.5 s
+        after its fork is reported as restarted. Whoever bounds the window by the unit's own timing turns this
+        assertion into `report.ok is False`."""
+        from kiro_crew.service import linux as svc_linux
+
+        run = self._timed_unit("10s", dies_at=2.5, back_at=12.5)
+        with patch("kiro_crew.service.linux.subprocess.run", side_effect=run):
+            report = svc_linux.restart()
+
+        assert report.ok is True
+
+    def test_restart_poll_floor_can_step_over_a_sub_floor_restart_sec(self):
+        """PINNED RESIDUAL (below the poll floor): `RestartSec=20ms` reads every
+        0.01 s, so an auto-restart visit from 0.012 s to 0.018 s falls between
+        two reads and the restart is reported ok. A unit under four times the
+        floor is not covered by the derived interval."""
+        from kiro_crew.service import linux as svc_linux
+
+        run = self._timed_unit("20ms", dies_at=0.012, back_at=0.018)
+        with patch("kiro_crew.service.linux.subprocess.run", side_effect=run):
+            report = svc_linux.restart()
+
+        assert set(svc_linux.time.sleeps) == {svc_linux._RESTART_POLL_FLOOR_SECS}
+        assert report.ok is True
+
+    @pytest.mark.parametrize(
+        ("value", "secs"),
+        [
+            ("100ms", 0.1),
+            ("10s", 10.0),
+            ("1min 30s", 90.0),
+            ("1h", 3600.0),
+            ("500us", 0.0005),
+            ("1.5s", 1.5),
+            ("0", 0.0),
+            ("infinity", None),
+            ("", None),
+            ("10 parsecs", None),
+        ],
+    )
+    def test_parse_timespan(self, value, secs):
+        from kiro_crew.service import linux as svc_linux
+
+        assert svc_linux._parse_timespan(value) == (
+            pytest.approx(secs) if secs is not None else None
+        )
 
     def test_restart_into_a_start_limit_hit_is_a_failure(self):
         """Three crashes in the burst window: `failed` with Result=start-limit-hit."""
