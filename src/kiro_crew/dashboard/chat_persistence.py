@@ -38,7 +38,7 @@ import re
 import threading
 import time
 from collections import OrderedDict, deque  # noqa: F401
-from collections.abc import Iterable, Iterator, Mapping  # noqa: F401
+from collections.abc import Callable, Iterable, Iterator, Mapping  # noqa: F401
 from itertools import chain, islice  # noqa: F401
 from pathlib import Path
 from typing import Any
@@ -2143,6 +2143,8 @@ def _save_slot_to_history(
     expected_slot_name: str | None = None,
     rows_only: bool = False,
     pending_mode_slot: _ChatSlot | None = None,
+    mutes_opened_override: bool | None = None,
+    after_commit_under_lock: Callable[[], None] | None = None,
 ) -> bool:
     """Persist slot messages to JSONL history (append-safe).
 
@@ -2267,6 +2269,8 @@ def _save_slot_to_history(
                 closed=closed,
                 closed_at=closed_at,
                 pending_mode_target=pending_mode_target,
+                mutes_opened_override=mutes_opened_override,
+                after_commit_under_lock=after_commit_under_lock,
             )
         return True
     # Skip a pure no-op: a freshly resumed slot with no new AND no edited
@@ -2379,6 +2383,7 @@ def _save_slot_to_history(
                     queue_candidates=queue_candidates,
                     rewrite=rewrite,
                     rows_only=rows_only,
+                    mutes_opened_override=mutes_opened_override,
                 )
             )
             meta_str = json.dumps(meta_line) + "\n"
@@ -2412,6 +2417,14 @@ def _save_slot_to_history(
                     _preserve_mtime = None
 
             atomic_write(path, payload, fsync=True)
+            # The staged value is now durable. Flip the live flag HERE, still
+            # inside the transcript ``_locked`` block, so a concurrent dirty
+            # flush -- which needs this same lock to serialize the slot -- cannot
+            # observe the still-prior flag and overwrite the committed value.
+            # This is the full-save twin of the empty-window merge's
+            # ``after_commit_under_lock`` hook; one or the other runs, never both.
+            if after_commit_under_lock is not None:
+                after_commit_under_lock()
             _record_pending_memory_mode(pending_mode_target, _mode)
             # The write committed: the deferred-note drop records it retired
             # are now safe to consume (see ``build_full_line``). Discard is
@@ -2532,6 +2545,8 @@ async def save_slot_off_loop(
     expected_slot_name: str | None = None,
     rows_only: bool = False,
     issued_by_the_retraction: bool = False,
+    mutes_opened_override: bool | None = None,
+    after_commit_under_lock: Callable[[], None] | None = None,
 ) -> bool:
     """Persist a slot from the event loop without blocking or dropping the save.
 
@@ -2612,6 +2627,8 @@ async def save_slot_off_loop(
             expected_slot_name=expected_slot_name,
             rows_only=rows_only,
             pending_mode_slot=pending_mode_slot,
+            mutes_opened_override=mutes_opened_override,
+            after_commit_under_lock=after_commit_under_lock,
         )
 
     def _begin_guarded_metadata_write() -> None:
