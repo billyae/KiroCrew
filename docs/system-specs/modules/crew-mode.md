@@ -1527,13 +1527,31 @@ when the roster's quote or recency moved since the read observed it, so a
 message the crewmate speaks while a roster read is in flight is never
 overwritten by the older answer.
 
-While a turn runs (the slot's stream or its `running` flag), the chat also
-keeps that turn's progress rows — `tool` rows (the 🔧 line and its hidden ✅ /
-🚫 siblings) and thinking — after the newest turn opener (`TURN_OPENER_ROLES`:
-a user message, a patrol wake, a sub-agent drain), and draws them with the
-ordinary transcript's own tool line, step group and thinking block; earlier
-turns' machinery stays folded away, and the live rows fold away again when the
-turn ends (`filterCrewmateChat(messages, live)`).
+While a turn runs (the slot's stream or its `running` flag), the chat does not
+draw the turn's progress rows either; what the crewmate is doing right now is
+ONE status line directly above the working indicator (the ghost-pose carousel
+in `ChatFooter`), rendered by `CrewmateLiveActivity` from
+`crewmateLiveActivity(messages, live)`: the newest `tool` 🔧 row after the
+newest turn opener (`TURN_OPENER_ROLES`: a user message, a patrol wake, a
+sub-agent drain), labelled exactly as the ordinary transcript's pill would
+label it (`deriveToolCallTitle` + `pickToolLabel`, from the persisted row's
+`meta`). It answers "what is the crewmate doing now", never "what has it done":
+each new call swaps the text in place; a thinking burst after the call marks
+the step DONE (a check replaces the spinner, same label — the indicator itself
+says "thinking"); and the line goes with the turn (#18238). The line is a
+status, not a transcript row, for a reason that is part of the contract: it
+is one fixed-height row (`h-5`, truncating), mounted for the WHOLE live turn
+(`data-state` `empty` before the first call and after a quiet-end call,
+`current`, `done`), whose text changes — so the indicator under it never moves
+while the crewmate works. Transcript rows mounting and unmounting above the
+indicator hopped it by a row on every step, and the "hasn't said anything yet"
+hint stays hidden while the crewmate is live for the same reason. The one step that never names itself, even in
+flight, is the `nothing_to_do` call (#16429; the line stays, empty): matched on the row's trusted
+identity (`meta.tool_name` + `meta.mcp_server`, the `QUIET_END_*` constants
+`store/chat/selectors.ts` defines, imported through the `store/chatSlice`
+facade) and deliberately NOT on `meta.ends_turn`,
+which the runner stamps only after the applier ran — the quiet end has to look
+quiet from its first frame, applied or refused.
 
 How it is drawn: the crewmate's messages form **runs**. A message carries NO
 author line — no avatar, no name, no time row — and no avatar gutter: the chat

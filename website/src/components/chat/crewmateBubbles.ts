@@ -12,11 +12,16 @@
  *    `[Subagent completion event]` envelopes, tool-call rows, reasoning
  *    bursts, and the say-nothing rows a quiet patrol ends on — is filtered at
  *    RENDER time by `filterCrewmateChat`. Nothing is deleted: the rows stay in
- *    the slot's transcript and the Work log reads them from there. The one
- *    exception is the turn IN FLIGHT: while the crewmate works, its tool calls
- *    and thinking since the turn opened stay in, so the chat shows what it is
- *    doing with the same rows the ordinary transcript draws. They fold away
- *    again when the turn ends.
+ *    the slot's transcript and the Work log reads them from there — the turn
+ *    in flight included. What the crewmate is doing RIGHT NOW is not a
+ *    transcript row at all but ONE status line beside the working indicator
+ *    (`crewmateLiveActivity`): the newest tool call of the running turn, so
+ *    the reader sees the current step, never the list of steps (#18238). A
+ *    line that swaps its text in place is also what keeps the indicator still:
+ *    rows mounting and unmounting above it made the ghost hop on every step.
+ *    A `nothing_to_do` call is the one step never shown, even in flight: it IS
+ *    "nothing", and the quiet end it asks for must look quiet from the first
+ *    frame. The line goes with the turn.
  *
  * 2. HOW A RUN LOOKS. Consecutive messages from the crewmate form a run: one
  *    bubble per message, grouped corners on the run's (left) side, and NO
@@ -36,6 +41,7 @@ import { isWorkflowCompletionMessage } from '../../pages/chat/WorkflowCompletion
 import { isSubagentCompletionMessage } from '../../pages/chat/subagentCompletion'
 import { REASONING_ROLES } from '../../pages/chat/groupDisplayItems'
 import { opensTurn } from '../../pages/chat/RecoveryCard'
+import { QUIET_END_SERVER, QUIET_END_TOOL } from '../../store/chatSlice'
 import type { ChatMessage } from '../../types'
 import { isHiddenInvisibleAssistantRow } from '../../utils/invisibleText'
 
@@ -61,9 +67,29 @@ const MACHINERY_ROLES: ReadonlySet<string> = new Set([
   'nudge', 'inject', 'subagent', 'tool', 'tool_call', 'tool_result', 'thinking', 'done',
 ])
 
-/** The live turn's progress rows: tool calls (the 🔧 line and its hidden
- *  ✅ / 🚫 siblings, which the list reads for the denied flag) and thinking. */
-const LIVE_PROGRESS_ROLES: ReadonlySet<string> = new Set(['tool', ...REASONING_ROLES])
+/** A turn's progress rows: tool calls (the 🔧 line and its hidden ✅ / 🚫
+ *  siblings) and thinking. Never drawn in the chat; a run reads past them. */
+const PROGRESS_ROLES: ReadonlySet<string> = new Set(['tool', ...REASONING_ROLES])
+
+/** A progress row that stands for a step the crewmate took: a thinking burst,
+ *  or a tool call's 🔧 request pill. The ✅ / 🚫 completion rows share the
+ *  pill's `tool_call_id` and are not steps (same classifier as TurnBlock's
+ *  `isHiddenTool`). */
+function isStepRow(m: ChatMessage): boolean {
+  if (m.role === 'tool') return m.content.startsWith('🔧')
+  return PROGRESS_ROLES.has(m.role)
+}
+
+/** The `nothing_to_do` directive's tool row, applied OR refused. Matched on
+ *  the row's trusted identity (the backend's `_meta.kiro` fields, never the
+ *  title a shell command could print), and deliberately NOT on
+ *  `meta.ends_turn`: the runner stamps that only after the applier ran, and
+ *  the in-flight call must not show for a beat before vanishing. */
+function isQuietEndCall(m: ChatMessage): boolean {
+  if (m.role !== 'tool') return false
+  const meta = m.meta as { tool_name?: unknown; mcp_server?: unknown } | undefined
+  return meta?.tool_name === QUIET_END_TOOL && meta?.mcp_server === QUIET_END_SERVER
+}
 
 /** The stop card travels under `system`; every other `system` row is state
  *  no surface draws. */
@@ -77,10 +103,9 @@ function isStopCard(m: ChatMessage): boolean {
  *  among `system` rows: it IS drawn (the user pressed Stop and sees the card),
  *  so it is a boundary like an error row, not state the run reads past. */
 function isRunTransparent(m: ChatMessage): boolean {
-  // A live turn's progress rows (kept only while the turn runs) are the turn's
-  // own machinery: the run, its corners and its footer read past them exactly
-  // as they do once the rows fold away, so nothing reshapes at turn end.
-  if (LIVE_PROGRESS_ROLES.has(m.role)) return true
+  // A turn's progress rows are its own machinery: the run, its corners and
+  // its footer read past them, running or settled alike.
+  if (PROGRESS_ROLES.has(m.role)) return true
   if (m.role === 'permission') return !!m.meta?.resolved
   if (isStopCard(m)) return false
   return m.role === 'system' || m.role === 'done' || m.role === 'queued'
@@ -132,21 +157,44 @@ export function isCrewmateChatRow(m: ChatMessage): boolean {
   return true
 }
 
-/** The rows a crewmate's chat draws, in transcript order. With `live` (the
- *  slot is running a turn) the progress rows after the newest turn opener are
- *  kept too; the opener is the transcript's own `opensTurn`, so a steer sent
- *  into the running turn does not restart it. Same array identity back when
- *  nothing was dropped, so a memo on the result stays stable. */
-export function filterCrewmateChat(messages: ChatMessage[], live = false): ChatMessage[] {
-  let turnStart = messages.length
-  if (live) {
-    turnStart = 0
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (opensTurn(messages[i])) { turnStart = i + 1; break }
-    }
-  }
-  const kept = messages.filter((m, i) => isCrewmateChatRow(m) || (i >= turnStart && LIVE_PROGRESS_ROLES.has(m.role)))
+/** The rows a crewmate's chat draws, in transcript order. Same array identity
+ *  back when nothing was dropped, so a memo on the result stays stable. */
+export function filterCrewmateChat(messages: ChatMessage[]): ChatMessage[] {
+  const kept = messages.filter(isCrewmateChatRow)
   return kept.length === messages.length ? messages : kept
+}
+
+/** What the crewmate is doing right now, for the status line beside the
+ *  working indicator. */
+export interface CrewmateLiveActivity {
+  /** The newest tool call (🔧 row) of the running turn. */
+  row: ChatMessage
+  /** False once a thinking burst followed the call: the step is over and the
+   *  crewmate is reasoning, which the indicator itself says — the line keeps
+   *  the label under a check mark rather than vanishing. */
+  current: boolean
+}
+
+/** The running turn's newest tool call, or null when there is nothing to
+ *  show: the slot is idle, the turn has made no tool call yet (the indicator
+ *  alone says "thinking"), or the newest step is the `nothing_to_do` call —
+ *  the turn is ending quietly, and that must look quiet from its first frame.
+ *  The scan stops at the turn opener (`opensTurn`), so a steer sent into the
+ *  running turn does not restart it. */
+export function crewmateLiveActivity(messages: ChatMessage[], live: boolean): CrewmateLiveActivity | null {
+  if (!live) return null
+  let newestStep: ChatMessage | undefined
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (opensTurn(m)) break
+    if (!isStepRow(m)) continue
+    if (!newestStep) {
+      if (isQuietEndCall(m)) return null
+      newestStep = m
+    }
+    if (m.role === 'tool') return isQuietEndCall(m) ? null : { row: m, current: m === newestStep }
+  }
+  return null
 }
 
 /** Nearest row in `dir` that is not run-transparent, or undefined at an end. */

@@ -111,14 +111,69 @@ describe("a crewmate's chat", () => {
     expect(view.queryByText(/auto-nudge/)).toBeNull()
   })
 
-  it("while it works, the running turn's tool calls show, the patrol wake does not", async () => {
+  it("while it works, the current step is the status line above the indicator; the patrol wake does not draw", async () => {
     ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
       messages: MACHINERY, running: true, has_more: false, total: MACHINERY.length,
     })
     const view = renderPane({ crewmate: true, running: true })
-    expect(await view.findByText(/gh issue list/)).toBeInTheDocument()
+    await view.findByText(/gh issue list/)
+    const line = view.getByTestId('crewmate-live-activity')
+    expect(line).toHaveTextContent(/gh issue list/)
+    expect(line.dataset.state).toBe('current')
     expect(view.queryByText(/auto-nudge/)).toBeNull()
     expect(view.queryByTestId('crewmate-quiet-hint')).toBeNull()
+  })
+
+  it('while it works, the status line names only the NEWEST step', async () => {
+    const twoSteps = [
+      ...MACHINERY.slice(0, 2),
+      { role: 'tool', content: '🔧 gh pr checks 18238', cls: '', ts: '2026-09-22T06:00:07Z', meta: { tool_call_id: 'tc-2' } },
+    ]
+    ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: twoSteps, running: true, has_more: false, total: twoSteps.length,
+    })
+    const view = renderPane({ crewmate: true, running: true })
+    await view.findByText(/gh pr checks 18238/)
+    const line = view.getByTestId('crewmate-live-activity')
+    expect(line).toHaveTextContent(/gh pr checks 18238/)
+    expect(view.queryByText(/gh issue list/)).toBeNull()
+    expect(view.getAllByTestId('crewmate-live-activity')).toHaveLength(1)
+  })
+
+  it('a thinking burst after the call marks the step done instead of removing the line', async () => {
+    const thenThinking = [
+      ...MACHINERY.slice(0, 2),
+      { role: 'thinking', content: 'reasoning', cls: '', ts: '2026-09-22T06:00:08Z' },
+    ]
+    ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: thenThinking, running: true, has_more: false, total: thenThinking.length,
+    })
+    const view = renderPane({ crewmate: true, running: true })
+    await view.findByText(/gh issue list/)
+    const line = view.getByTestId('crewmate-live-activity')
+    expect(line).toHaveTextContent(/gh issue list/)
+    expect(line.dataset.state).toBe('done')
+  })
+
+  it('a nothing_to_do call in flight names nothing: the line stays, empty, so the indicator holds still', async () => {
+    const quiet = [
+      ...MACHINERY.slice(0, 2),
+      { role: 'tool', content: '🔧 Nothing to report', cls: '', ts: '2026-09-22T06:00:07Z', meta: { tool_call_id: 'tc-q', tool_name: 'nothing_to_do', mcp_server: 'kirocrew-core' } },
+    ]
+    ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: quiet, running: true, has_more: false, total: quiet.length,
+    })
+    const view = renderPane({ crewmate: true, running: true })
+    // The working indicator is up (the turn runs); the line above it is
+    // mounted but empty, no speech, and no "hasn't said anything" hint under
+    // a busy crewmate.
+    await view.findByTestId('chat-footer')
+    const line = await view.findByTestId('crewmate-live-activity')
+    expect(line.dataset.state).toBe('empty')
+    expect(line).toHaveTextContent('')
+    expect(view.queryByTestId('crewmate-quiet-hint')).toBeNull()
+    expect(view.queryByText(/Nothing to report/)).toBeNull()
+    expect(view.queryByText(/gh issue list/)).toBeNull()
   })
 
   it('a BOUNDED window with no speech in it is not proof: the pane reads the whole history first', async () => {
