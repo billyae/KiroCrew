@@ -3558,6 +3558,16 @@ env var overrides it.
         # main() detects the project dir (lru_cache then pins the empty result).
         set_build_info(git_build_info())
         _install_child_watcher()
+        # On macOS launchd may start this before login, with the login Keychain
+        # (where the Kiro CLI sign-in lives) still locked. Wait a bounded time
+        # for it BEFORE taking the lock or the port, so a waiting gateway blocks
+        # nothing; if it stays locked, exit restartably with a clear reason.
+        from kiro_crew.service.keychain_wait import wait_for_login_keychain
+
+        _keychain_error = wait_for_login_keychain()
+        if _keychain_error is not None:
+            print(f"🔒 {_keychain_error}", file=sys.stderr)
+            sys.exit(1)
         # Single-writer guard: refuse a second gateway bound to this
         # KIROCREW_HOME so two ConversationLog writers can never clobber the same
         # session file. Held for the process lifetime; released by the kernel on
