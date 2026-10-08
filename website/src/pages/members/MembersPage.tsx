@@ -42,7 +42,7 @@
  */
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Check, ChevronRight, Circle, Goal, LayoutDashboard, Loader2, MessageCircleQuestionMark, Plus, RotateCw, Sparkles, Square, Star, Users, X, Zap } from 'lucide-react'
+import { ArrowLeft, Check, ChevronRight, Circle, Goal, LayoutDashboard, Loader2, MessageCircleQuestionMark, MessageSquarePlus, Plus, RotateCw, Sparkles, Square, Star, Users, X, Zap } from 'lucide-react'
 import { usePreviewFlag } from '../../hooks/usePreviewFlag'
 import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 import { PanelRightSolid } from '../../components/icons/panels'
@@ -51,7 +51,7 @@ import { CrewMemberMark } from '../../components/CrewMemberMark'
 import NewCrewmateDialog, { type CreatedCrewmate } from './NewCrewmateDialog'
 import { sendTurn } from '../../chat-core/transport/sendTurn'
 import { useTranslation } from 'react-i18next'
-import { api, type CrewTeam, type MemberRosterRow } from '../../api/client'
+import { api, ApiError, type CrewTeam, type MemberRosterRow } from '../../api/client'
 import { crewDisplayName, type KiroCrewAgent } from '../../components/AgentSelector'
 import {
   MEMBERS_ROSTER_QUERY_KEY,
@@ -454,6 +454,12 @@ const EMPTY_TEAMS: readonly CrewTeam[] = []
 /** i18n translate function, taken from the hook so the row need not re-derive
  *  its type. */
 type TFn = ReturnType<typeof useTranslation>['t']
+
+/** The largest instant a JavaScript `Date` can hold (ECMA-262: +/-1e8 days from
+ *  the epoch). A number past it makes every `Date` method raise `RangeError`,
+ *  which is why a projected timestamp is checked against it before the DM pane
+ *  builds anything out of it. */
+const MAX_JS_DATE_MS = 8.64e15
 
 /** One roster row. Extracted so `useMemberProjection` is called once PER ROW
  *  (a hook cannot run inside the parent's `.map`), letting a `member_projection`
@@ -1686,6 +1692,49 @@ export default function MembersPage() {
     [orderedMembers, defaultAgent],
   )
   const activeSlot = active ? threadOutcome?.slot_key ?? '' : ''
+  // Where the DM's CURRENT conversation begins: the last "New conversation" on
+  // this slot, as the member log recorded it. From the projection rather than
+  // from any state this page holds, which is what makes the line survive a
+  // reload and a gateway restart — and what makes a reset performed in another
+  // tab show up here. Undefined for a slot that has never been reset, so the
+  // pane draws exactly what it drew before.
+  const conversationStartTs = useMemo(() => {
+    const at = activeSlot ? activeRoster?.conversation_starts?.[activeSlot]?.ts : undefined
+    // Bounded to what `Date` can hold, not merely typed. The pane turns this
+    // number into a `Date`, and a value past that range (a hand-edited member
+    // log) makes the marker's own `toISOString()` raise and replaces the whole
+    // DM with an error fallback. The fold bounds it server-side too; this is the
+    // same guard at the one place the prop comes from, because a projection
+    // written by an older gateway reaches this code unbounded.
+    if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0) return undefined
+    return at <= MAX_JS_DATE_MS ? at : undefined
+  }, [activeRoster, activeSlot])
+  // Slots whose evicted-boundary note the user has closed. Keyed by slot,
+  // because the condition does not clear by leaving the thread: the fold's
+  // count only ever rises, so one boolean would carry crewmate A's dismissal
+  // onto crewmate B's unread note.
+  const [evictedNoteClosed, setEvictedNoteClosed] = useState<ReadonlySet<string>>(new Set())
+  /** Whether to say that a boundary for this crewmate was recorded and dropped.
+   *
+   *  The fold bounds `conversation_starts` and counts what it evicts, because a
+   *  dropped key reads EXACTLY like a slot nobody ever reset — and that is the
+   *  one state this feature exists to prevent: the pane draws a discarded
+   *  conversation as current. This note is that count's reader.
+   *
+   *  Only while THIS slot has no boundary of its own. With one, the pane is
+   *  already drawing the right line and the dropped boundaries belong to slots
+   *  the user is not looking at, so a note here would be noise about elsewhere.
+   *
+   *  The copy says "for this crewmate", never "for this thread": the count says
+   *  how many were dropped and never which, so claiming this thread lost its own
+   *  would be asserting something nothing here knows. It clears itself — the
+   *  next reset gives the slot a boundary, which makes `conversationStartTs`
+   *  defined. */
+  const evictedBoundaryShown = useMemo(() => {
+    if (conversationStartTs !== undefined) return false
+    const evicted = activeRoster?.conversation_starts_evicted
+    return typeof evicted === 'number' && Number.isInteger(evicted) && evicted > 0
+  }, [activeRoster, conversationStartTs])
   // Two distinct verdicts with two different sentences: a collision is a
   // fact about the roster (the slug's thread belongs to another crew), a
   // failed POST is a transport error. Both render through ErrorNotice so
@@ -2209,6 +2258,102 @@ export default function MembersPage() {
     setSchedAtStake(s || schedDraftDirty.current)
   }, [])
   const { confirm: confirmSched, confirmDialog: schedConfirmDialog } = useConfirm()
+  // "New conversation" on the open crewmate's DM. Its own `useConfirm` rather
+  // than a share of the schedules one: two surfaces asking at once would have
+  // the second answer the first "no", and these two are reached from different
+  // halves of the page.
+  const { confirm: confirmReset, confirmDialog: resetConfirmDialog } = useConfirm()
+  // The DM slot as of this render, for the one read that happens AFTER an await
+  // (see `requestNewConversation`). `activeSlotRef` above cannot serve: it holds
+  // `confirmedSlot`, which is deliberately empty while the thread read is in
+  // flight or has failed, so a reset answered inside that window would compare
+  // against '' and be abandoned although the crewmate never changed.
+  const activeDmSlotRef = useRef('')
+  activeDmSlotRef.current = activeSlot
+  const [resetting, setResetting] = useState(false)
+  // The HEADING travels with the message, because the two outcomes this notice
+  // carries are opposites: a refused reset did not happen, and a boundary-failed
+  // reset did. One shared "Couldn't start a new conversation" title over "the new
+  // conversation started, but…" tells the reader the reverse of the body.
+  const [resetError, setResetError] = useState<{ title: string; message: string; report?: ErrorReport } | null>(null)
+  /** Start a fresh conversation on the open crewmate's DM slot.
+   *
+   *  Asks first, because what it does cannot be undone from the UI: the model's
+   *  context is gone. What it does NOT do is the other half of the copy — the
+   *  transcript stays, the slot key stays, and the crewmate's long-term memory
+   *  stays — so the dialog says all three, and the earlier messages are one
+   *  click away in the pane rather than deleted.
+   *
+   *  The slot is captured BEFORE the await: the UI stays live while the dialog
+   *  is open (see `useConfirm`), so the answer can arrive after the user has
+   *  switched crewmates, and acting on the slot that is open by then would reset
+   *  a conversation nobody asked about. A switch in that window abandons the
+   *  reset instead.
+   *
+   *  A refusal is SHOWN. The route answers 409 while a turn is in flight on the
+   *  slot or its session, or while sub-agents are still attached — the button is
+   *  disabled for the busy state the page can see, and this is for the busy
+   *  state it cannot (an inbound channel message, a turn admitted between the
+   *  render and the press). Swallowing it would read as "nothing happened" over
+   *  a conversation the model still remembers. */
+  const requestNewConversation = useCallback(() => {
+    const slot = activeSlot
+    const name = activeView ? crewDisplayName(activeView) : ''
+    if (!slot) return
+    void (async () => {
+      const ok = await confirmReset({
+        title: t('pages.membersPage.new_conversation_confirm_title', { name }),
+        body: t('pages.membersPage.new_conversation_confirm_body', { name }),
+        confirmLabel: t('pages.membersPage.new_conversation_confirm_action'),
+        // NOT destructive, which is the whole copy above in one visual: nothing
+        // is deleted. The dialog's default is the red button, and red beside
+        // "the earlier messages stay" reads as a warning the sentence denies.
+        // Weighty, because the model's context does not come back — which is
+        // what a non-danger confirm is for. PRIMARY so it is still the obvious
+        // answer: without it confirm and Cancel are two plain outline buttons
+        // the reader has to tell apart by reading both labels.
+        danger: false,
+        primary: true,
+      })
+      if (!ok || slot !== activeDmSlotRef.current) return
+      setResetError(null)
+      setResetting(true)
+      try {
+        const answer = await api.chatSlotResetConversation(slot)
+        if (answer.boundary === 'failed') {
+          // The reset HAPPENED and its record did not. Reported rather than
+          // swallowed, because this is the one outcome where the pane keeps
+          // drawing messages the crewmate has forgotten with no line marking
+          // them: a silent success here is a lie about what is on screen.
+          setResetError({
+            title: t('pages.membersPage.new_conversation_boundary_failed_title'),
+            message: t('pages.membersPage.new_conversation_boundary_failed', { name }),
+          })
+        }
+        // The boundary lands through the member log's own projection frame. This
+        // invalidation is the fallback for the frame not arriving: the log append
+        // rides a bounded queue that may refuse, and a reset whose boundary never
+        // reached the pane would leave a discarded conversation reading as
+        // current. A refetch costs one request and settles it either way.
+        void queryClient.invalidateQueries({ queryKey: MEMBERS_ROSTER_QUERY_KEY })
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err)
+        // The route's own busy refusal gets the user's words, not the gateway's.
+        // "a turn is in flight" is the code's term for a state the page already
+        // renders as the crewmate working, and it reads beside an "Idle" pill
+        // with no next step. Branched on the STATUS plus the body's `code`, not
+        // on the message text: the text is the server's to change.
+        const busy = err instanceof ApiError
+          && err.status === 409
+          && err.body.includes('turn_in_flight')
+        setResetError(busy
+          ? { title: t('pages.membersPage.new_conversation_failed_title'), message: t('pages.membersPage.new_conversation_busy', { name }) }
+          : { title: t('pages.membersPage.new_conversation_failed_title'), message: raw, report: findReport(raw) })
+      } finally {
+        setResetting(false)
+      }
+    })()
+  }, [activeSlot, activeView, confirmReset, queryClient, t])
   /** The section's own collapse toggle, which it cannot guard itself. */
   const requestCancelSchedDraft = useCallback((proceed: () => void) => {
     void (async () => {
@@ -3674,7 +3819,18 @@ export default function MembersPage() {
                 (narrow) or the panel opener (docked, panel hidden) is present:
                 a flex row with `flex-1` around the pill would shift it by the
                 width of whichever side control is missing. */}
-            <header className="grid grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 px-3 py-2" data-testid="member-thread-header">
+            {/* Three columns, and which one flexes changes at `sm`.
+                From sm the sides are `1fr` and the pill is page-CENTRED, which
+                is what a wide header should look like. Below sm the sides size
+                to their content and the PILL takes the slack instead: at 320px
+                a `1fr` side cell is 64px and already holds the 28px panel
+                toggle, so a named action cannot fit beside it and the overflow
+                paints under the pill. Centring is worth less on a phone than a
+                reader being able to tell what the button does, so the narrow
+                layout spends it: the pill truncates its name (it has `min-w-0`
+                and the name is also the page's own heading) and the action
+                keeps its label. */}
+            <header className="grid grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 px-3 py-2" data-testid="member-thread-header">
               <div className="flex items-center justify-start min-w-0 gap-1">
                 {/* The roster, folded into one chip (crewmate-panel IA): stacked
                     faces and the count; open, a searchable list that switches
@@ -3836,6 +3992,55 @@ export default function MembersPage() {
                     would otherwise be announced on every change. It is in the
                     reading order for a reader who asks. */}
                 <span className="sr-only" data-testid="member-pill-activity-sr">{pillActivity.label}{isLoopOn(active) ? ` · ${t('pages.membersPage.loop_on')}` : ''}</span>
+                {/* New conversation — a fresh context on the SAME thread.
+                    Beside the panel toggle because it acts on the thread below,
+                    not on the crewmate's identity in the middle: the pill opens
+                    Profile, this one restarts the conversation.
+
+                    Disabled while the crewmate is working, and while a reset is
+                    in flight. The route refuses a busy slot anyway (409), and
+                    that refusal is shown above the thread — this is the honest
+                    control state for the busy it can see, not the enforcement. */}
+                {activeSlot && (() => {
+                  const busy = !!isRunning(active)
+                  return (
+                    <Btn
+                      onClick={requestNewConversation}
+                      disabled={resetting || busy}
+                      className="shrink-0 mr-1"
+                      // A disabled control that keeps the enabled tooltip tells
+                      // the reader what it WOULD do and nothing about why it
+                      // will not. While the crewmate is working, the tooltip is
+                      // the reason and the wait.
+                      title={busy
+                        ? t('pages.membersPage.new_conversation_busy_tooltip', { name: crewmateLabel ?? '' })
+                        : t('pages.membersPage.new_conversation_tooltip')}
+                      // The full label is the accessible name at every width,
+                      // including the widths that show the short one: "New
+                      // chat" on screen and "New conversation" to a screen
+                      // reader name the same action, and the longer one is the
+                      // wording the rest of the flow (the dialog, the notices,
+                      // the boundary row) uses.
+                      aria-label={t('pages.membersPage.new_conversation')}
+                      data-testid="member-new-conversation"
+                    >
+                      <MessageSquarePlus className="lucide-inline" aria-hidden />
+                      {/* The short label up to md, the full one from md.
+                          Never the glyph alone: an icon-only button here is one
+                          nobody presses, because the one thing a reader needs
+                          before pressing it — that it starts over — is exactly
+                          what a plus-on-a-bubble does not say, and the tooltip
+                          carrying it is not reachable by touch at all. So the
+                          narrow header gives up the pill's page-centring for
+                          this word instead (see the grid on the header above),
+                          which is the cheaper of the two things 320px cannot
+                          have. Measured there: the label's right edge lands
+                          inside the pane and clear of the pill. */}
+                      <span className="md:hidden">{t('pages.membersPage.new_conversation_short')}</span>
+                      <span className="hidden md:inline">{t('pages.membersPage.new_conversation')}</span>
+                    </Btn>
+                  )
+                })()}
                 {showOpener && (
                   <button
                     onClick={togglePanel}
@@ -3913,6 +4118,24 @@ export default function MembersPage() {
                 testId="member-panel-action-error"
               />
             )}
+            {/* A refused or failed "New conversation". Above the thread, where
+                the notices around it live, and dismissable: the conversation
+                below is intact and unchanged, so this is a report rather than a
+                verdict on the thread. No hand-off, for the reason its
+                neighbours give — the DM composer holds an unsaved draft. */}
+            {resetError && (
+              <div className="px-4 py-2">
+                <ErrorNotice
+                  message={resetError.message}
+                  report={resetError.report}
+                  title={resetError.title}
+                  onDismiss={() => setResetError(null)}
+                  askAgent={false}
+                  actionPlacement="below"
+                  testId="member-new-conversation-error"
+                />
+              </div>
+            )}
             {/* The editor's roster read (crewAgentsQuery, enabled only once the
                 identity pill sets editingCrew) failed: without this the pill would
                 be a silent dead click — editingAgent stays undefined, the hook's
@@ -3940,6 +4163,40 @@ export default function MembersPage() {
                  the fallback did open something. */
               <div className="px-4 py-2 text-[13px] text-warn" role="status" data-testid="member-gone-notice">
                 {t('pages.membersPage.member_gone', { name: gone.name, shown: gone.shown })}
+              </div>
+            )}
+            {activeSlot && evictedBoundaryShown && !evictedNoteClosed.has(activeSlot) && (
+              /* The reader for the fold's eviction count. A status, not an
+                 error: nothing failed on this visit, and ErrorNotice says in
+                 its own docs that it has no muted register — a notice about
+                 something that happened some resets ago must not arrive wearing
+                 danger tokens. Muted rather than the warn tone its
+                 `member-gone-notice` neighbour wears, because that one is
+                 decision-critical (the user is about to type into a thread they
+                 did not ask for) and this one tells them how to read what is
+                 already on screen.
+
+                 Dismissable, unlike that neighbour: `gone` clears when the user
+                 navigates, and this does not — the count only rises — so
+                 without a close it would sit over the thread until the next
+                 reset. Closing is per slot and for this visit only; it is not
+                 persisted, because the state it describes is still true. */
+              <div
+                className="px-4 py-2 flex items-start gap-2 text-[12px] text-muted"
+                role="status"
+                data-testid="member-boundary-evicted-notice"
+              >
+                <span className="min-w-0">{t('pages.membersPage.conversation_boundary_evicted')}</span>
+                <button
+                  type="button"
+                  className="shrink-0 bg-transparent border-none p-0 text-muted hover:text-text cursor-pointer"
+                  aria-label={t('app.dismiss')}
+                  title={t('app.dismiss')}
+                  onClick={() => setEvictedNoteClosed((prev) => new Set(prev).add(activeSlot))}
+                  data-testid="member-boundary-evicted-dismiss"
+                >
+                  <X size={12} aria-hidden />
+                </button>
               </div>
             )}
             {activeCollision && (
@@ -4094,6 +4351,7 @@ export default function MembersPage() {
                     onSessionOpen={openSessionGuarded}
                     sessions={connected && slotsLoaded ? sessionRoster : undefined}
                     activeSession={activeSlot}
+                    conversationStartTs={conversationStartTs}
                   />
                 </ErrorBoundary>
               </div>
@@ -4562,6 +4820,10 @@ export default function MembersPage() {
           the section's collapse toggle, so it must sit outside the panel subtree the
           answer may unmount. */}
       {schedConfirmDialog}
+      {/* "New conversation"'s prompt. Out here beside the schedules one and for
+          the same reason: it is raised from the thread header, which a crewmate
+          switch while the dialog is open would unmount under its own answer. */}
+      {resetConfirmDialog}
       {/* CREW-18688: the bot-edit modal, opened in place by the thread header's
           identity pill (member-identity-pill). Renders nothing until editingCrew is
           set; the hook returns open=false until its roster read resolves the
