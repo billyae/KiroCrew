@@ -1,12 +1,12 @@
 ---
 title: The conductor is the default team lead -- nine field lessons folded into the shipped charter
-status: draft
+status: in-progress
 author: chenmingwei23, with kirocrew-worker
 created: 2026-10-08
 last-audited: 2026-10-08
 audited-at: 1c5a71db4d
 doc-pr: null
-implementation-prs: []
+implementation-prs: [18107]
 tracking-issues: [18049]
 supersedes: []
 superseded-by: []
@@ -14,11 +14,17 @@ superseded-by: []
 
 # RFC: The conductor is the default team lead
 
-> **Status:** `draft`. Acceptance is requested from a maintainer; the status flips
-> to `accepted` when one records it in §4 with the date. This is a tier T3 change:
-> it reworks text users already rely on, so the decision is recorded here before
-> the implementation merges. Nothing proposed below is a new mechanism. Every row
-> in §2 names a mechanism that is already on main, measured at `1c5a71db4d`.
+> **Status:** `in-progress`. The design is written and the implementation is in
+> flight as [#18107](https://github.com/kirodotdev/KiroCrew/pull/18107). This
+> status records that, and not a maintainer's acceptance, which is still
+> requested and goes in §4 -- the same arrangement
+> [rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md) records
+> for itself. This is a tier T3 change: it reworks text users already rely on, so
+> the decision is recorded here before the implementation merges. The First
+> Principles lane reads an RFC's status off the **base** branch, so this document
+> lands on its own first and the implementation then drops it and rebases onto
+> it. Nothing proposed below is a new mechanism. Every row in §2 names a mechanism
+> that is already on main, measured at `1c5a71db4d`.
 
 - Tracking issue: [#18049](https://github.com/kirodotdev/KiroCrew/issues/18049).
 - The implementation changes both shipped conductor texts and the tests that pin
@@ -154,4 +160,6 @@ parent's count does not cover its grandchildren.
 ## 4. Decision
 
 Not recorded yet. A maintainer records acceptance here with the date, and answers
-§3 at the same time. Until then the status stays `draft`.
+§3 at the same time. The `in-progress` status above does not stand in for that:
+it says the implementation is in flight, and the status moves to `accepted` when
+a maintainer records the decision here.
