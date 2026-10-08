@@ -194,7 +194,12 @@ def _url_payload_command(n: int) -> str:
 #: helper strips a local-drive namespace prefix and a default-stream suffix, and
 #: ``_candidate_forms`` resolves the folded spelling while keeping the raw one as a
 #: candidate. No target, no matching rule and no threshold moved.
-_PACKAGE_LINE_BUDGET = 28_572
+#:
+#: Raised again, from 28,572, for ``_TTL_MAX_SECS_MEASURED_FLOOR`` in ``paths.py``:
+#: the committed sweep's largest serveable expiry (54.4s) is a named constant a test
+#: pins the operator ceiling at or above, so the measured bound is checkable in-tree
+#: rather than a bare literal. One constant plus its reason.
+_PACKAGE_LINE_BUDGET = 28_574
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

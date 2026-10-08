@@ -6629,6 +6629,64 @@ class TestAdaptiveHomeTargetsExpiry:
             == 5.0
         )
 
+        # The ceiling is the measurement, not generous headroom: the committed
+        # sweep's largest serveable expiry is pinned as ``_TTL_MAX_SECS_MEASURED_FLOOR``,
+        # and the operator ceiling must stay AT OR ABOVE it so a serveable load can
+        # always be admitted -- the invariant that keeps the number checkable in-tree
+        # rather than a bare literal. A value at or below the measured max is honoured
+        # while one above it is refused back to the reviewed default; a value in
+        # (measured max, old headroom] -- e.g. 120s, which the prior 300s ceiling
+        # admitted -- must now be refused.
+        assert security.paths._TTL_MAX_SECS_MAX == pytest.approx(60.0)
+        assert (
+            security.paths._TTL_MAX_SECS_MAX >= security.paths._TTL_MAX_SECS_MEASURED_FLOOR
+        ), "the ceiling must admit the measured worst-case expiry"
+        monkeypatch.setenv(
+            security._TTL_MAX_SECS_ENV, str(security.paths._TTL_MAX_SECS_MEASURED_FLOOR)
+        )
+        assert security._env_float(
+            security._TTL_MAX_SECS_ENV,
+            security.paths._TTL_MAX_SECS_DEFAULT,
+            security.paths._TTL_MAX_SECS_MIN,
+            security.paths._TTL_MAX_SECS_MAX,
+        ) == pytest.approx(security.paths._TTL_MAX_SECS_MEASURED_FLOOR)
+        monkeypatch.setenv(security._TTL_MAX_SECS_ENV, "120")
+        assert (
+            security._env_float(
+                security._TTL_MAX_SECS_ENV,
+                security.paths._TTL_MAX_SECS_DEFAULT,
+                security.paths._TTL_MAX_SECS_MIN,
+                security.paths._TTL_MAX_SECS_MAX,
+            )
+            == security.paths._TTL_MAX_SECS_DEFAULT
+        ), "a value above the measured maximum must fall back to the default"
+
+    def test_documented_worst_case_age_is_derived_from_the_constants(self) -> None:
+        """The ~42s worst case the comment/spec cite is computed, not asserted blind.
+
+        Worst-case data age for a BOUNDED rebuild = the default expiry ceiling PLUS
+        the rebuild's full deadline (its budget plus its capped grace), because the
+        expiry clock starts only after the build returns. If any of those constants
+        moves, the documented number must move with it -- this derives it so the two
+        cannot drift apart.
+        """
+        from kiro_crew import security
+
+        budget = security.paths._PATH_RESOLVE_REBUILD_TIMEOUT_SECS
+        grace = min(
+            budget * security.paths._PATH_RESOLVE_GRACE_FACTOR,
+            security.paths._PATH_RESOLVE_GRACE_MAX_SECS,
+        )
+        assert budget == pytest.approx(8.0)
+        assert grace == pytest.approx(4.0), "8s budget's grace is capped at 4s"
+        bounded_deadline = budget + grace
+        assert bounded_deadline == pytest.approx(12.0), "one bounded rebuild runs at most 12s"
+        worst_case_age = security.paths._TTL_MAX_SECS_DEFAULT + bounded_deadline
+        assert worst_case_age == pytest.approx(42.0), (
+            "the documented worst-case age is 30s default expiry + 12s bounded "
+            "rebuild deadline = ~42s; update the comment and spec if this changes"
+        )
+
     def test_a_bad_knob_value_keeps_the_reviewed_default(self, monkeypatch) -> None:
         """Absent, unparseable and out-of-range all fall back to the default.
 
