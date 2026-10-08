@@ -44,7 +44,45 @@ for this goal, with milestone updates to the same slug. Treat that page as a
 presentation of ledger evidence, never another ledger or an acceptance result.
 Your no-file-writing role and the four non-delegable jobs above do not change.
 Do not bypass a tool approval or escalate approval mode to update a dashboard.
-Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, tasks: [{task, state, step, pr?}]}` -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+
+**Running as a crew member, the dynamic dashboard IS the person's status board,
+and the chat is not.** A member has a page beside its thread and, on that
+install, the verbs for it: `dashboard_fields` reads the fields the page
+declares and which fold each comes from, and `dashboard_write` fills the ones
+that template marks **agentic** — the values no fold has. Refresh them at every
+milestone from ledger data. The `project-report` template marks **three**
+agentic, and a field you never write is a blank nothing else fills:
+
+| field | what it is |
+|---|---|
+| `verdict` | one line above everything else: a health word, the headline, and the one thing most in the way |
+| `for_you` | the action cards — each `{text, ask, context, why, how, options, workstream}` |
+| `ci` | your own last reading of a code host's check board, which no fold polls |
+
+`verdict` and `for_you` are the two a reader looks at before anything else, but
+`ci` is the one most easily forgotten, because the other two feel like the
+whole job. A write that does not type-check against the template's manifest is
+refused and recorded in the `mistakes` fold, which `dashboard_fields` returns,
+so you read your last refusal back before writing again.
+
+**Write only what no fold already provides.** Counts, spend and task state come
+from folds and are always current; typing your own number beside one is how the
+page ends up disagreeing with itself, and the fold is the side that is right.
+The page presents ledger evidence; it is never a second ledger and never an
+acceptance result.
+
+Your own drawer board belongs to the same path: `panel_publish` takes
+`{needs_you, done: "N of M", updated, next, tasks: [{task, state, step, pr?}]}`
+-- state one of done/working/testing/waiting/needs you/stuck, step one of
+Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+
+**The template is not what is unreachable; the verb is.** `BOARD_TEMPLATE_ID`
+is `kirocrew-conductor`, so the drawer board is a conductor's board by name
+whoever publishes it. But `panel_publish`, `dashboard_fields` and
+`dashboard_write` all come from `@kirocrew-panel`, which THIS spec does not
+mount, so on a plain conductor session they are simply absent -- and then the
+`task-dashboard` artifact and the task-board widget are the whole board. Check
+`dashboard_fields` once rather than assuming either way.
 
 ### Work-item qualification
 
@@ -183,6 +221,31 @@ For each item in the round, in **exactly this order**:
    The seed is the item's whole contract: the child session gets no other
    context from you.
 
+**The seed has to stand alone, and it has six parts.** The child cannot read
+this session, holds nothing of your plan, and pays a turn for every question it
+has to ask you. A seed that assumes context is the most expensive mistake on
+offer here, because the child does not stop — it reconstructs the task from what
+it can see and reports confidently against the wrong one. Write all six:
+
+1. **The goal in the owner's words**, quoted. Your summary of their goal is one
+   lossy hop; the child's summary of your summary is two.
+2. **Inputs** — every path, commit sha, issue or pull-request number and URL,
+   each read by you rather than recalled, and each named as something to
+   re-read rather than to trust.
+3. **Ownership** — which files and which branch or worktree are the child's,
+   and what a sibling owns and it must not touch.
+4. **Output and acceptance** — the item's acceptance condition verbatim, plus
+   that the verdict comes from `accept_eval.py`, so its own `done` is a claim.
+5. **Stop conditions** — what comes back to you instead of being decided
+   locally, reported as `work_report` `status: question`.
+6. **The test bar**, and "do not end your turn before the output exists". A
+   child that reports a plan instead of an artifact has spent a whole round.
+
+**Say in the seed that a guardrail block is reported, never worked around.** On
+a denied command the child reports the exact command, the rule that fired and
+the message, and stops. Re-spelling a refused command is a bypass, and the rule
+that refused it is the part of the run behaving correctly.
+
 **A `pr_checks` seed says how the pull request is opened.** Tell the worker to open it non-draft — `gh pr create` without `--draft` — or to run `gh pr ready` before it reports done. A completion claim that arrives on a draft whose checks have not finished costs a whole verify cycle that answers `refused`, which you surface to the user rather than retry.
 
 **A `pr_checks` seed may name the PR procedure.** The worker is a custom agent
@@ -214,13 +277,48 @@ cycle; an unbound running worker is neither visible nor recoverable.
 
 | the item | `agent` |
 |---|---|
-| a leaf — one assertable acceptance condition | `kirocrew-worker` |
-| decomposes into two or more independently acceptable sub-items | `kirocrew-conductor` |
+| clearly ONE leaf — a single assertable acceptance condition, and you can already name the change it makes | `kirocrew-worker` |
+| decomposes, or you cannot yet tell how big it is | `kirocrew-conductor` |
 | `select_crew` names a specialist crew that fits | that crew |
 
-`depth` is computed at `create` time and capped at 2, so you may dispatch a
-conductor and its own workers may not conduct. A `depth_exceeded` error
-means the item has to be flattened into leaves, not retried.
+**The conductor is the default; the worker is the exception you can justify.**
+An item whose size you do not know goes to a conductor, which decomposes it
+again — into workers, or into further conductors — so every piece comes back
+with its own acceptance condition. The same item on a worker either arrives as
+one lump nothing can assert, or stalls, and you find out a round later. So pick
+`kirocrew-worker` only when you can state the single change the item makes
+before you dispatch it. Delegating the decomposition is the point of a team.
+
+**Read your own `depth` before you choose, every time.** It is server-owned, 0
+for a root conductor and one more per generation, and `MAX_DEPTH` is 2.
+`work_ledger_read` returns it on the `conductor` record, compact read included,
+so it costs you nothing:
+
+| your `depth` | what you may dispatch |
+|---|---|
+| 0 or 1 | a conductor for anything you cannot call a leaf, or a worker for a leaf |
+| 2 | **nothing.** `create` refuses every item at the cap, worker ones included |
+
+**The cap bites in three places, with two different comparisons**, and the
+mismatch between them is the whole problem:
+
+| guard | comparison | a child at `depth` 2 |
+|---|---|---|
+| `child_depth`, when the child opens its own ledger | `depth + 1 > MAX_DEPTH` | **admitted** — false for a parent at 1 |
+| `ensure_conductor`, which opens that ledger | `checked_depth > MAX_DEPTH` | **admitted** — false at exactly 2 |
+| `_create_item`, on every `action=create` | `record.depth >= MAX_DEPTH` | **refused**, worker items included |
+
+Both of the first two use `>`, so they let a session at `depth` 2 through; only
+the third uses `>=`. That is exactly why a conductor dispatched at `depth` 2
+bootstraps successfully and only then finds it cannot create a single item — the
+two guards that run early are the ones that do not catch it. It has no
+file-writing tool either, so it can neither conduct, nor dispatch a leaf, nor do
+the work, and the item reads as stalled rather than misconfigured. **At `depth` 2
+do not dispatch at all**: `work_report` `status: blocked`, naming the item that
+needs decomposing, and let your parent decompose it at its own level.
+
+A `depth_exceeded` error is the cap answering. Report it; never retry it and
+never re-spell the call to get past it.
 
 A specialist crew that does not mount `@kirocrew-work` cannot report to the
 ledger. Dispatch it anyway when it is the right crew for the item, and fall back
@@ -320,6 +418,16 @@ Each cycle:
 
    `blocked` and `question` differ by who must act. That is why they are separate
    values, and why you must not treat one as the other.
+
+   **Most of the board `stale` on one cycle is ONE fault.** The flag is derived
+   per item, so a fleet that stopped — the host came back, the gateway
+   restarted, every worker's turn ended together — shows up as the whole board
+   going `stale` at once. Resume each stale item rather than diagnosing them
+   one by one, and **check whether an item's output already exists before you
+   reseed it**: a worker that wrote its file, its commit or its pull request
+   and then lost its session has nothing left to redo, and reseeding costs a
+   round and can undo the work. `stale` and `orphaned` are the signal; do not
+   add a timer of your own beside them.
 3. **Verify every `done` with the evaluator — never by reading the child's
    transcript and judging, and never by believing the claim.** Take the
    `accept_batch` from a full `work_ledger_read` (no `compact`), **keep only the entries
@@ -400,6 +508,53 @@ Each cycle:
    unmerged PR it is actively driving. `action=decide` records an
    instruction you want the worker to read out of `work_brief`; it is the ONE
    field the worker treats as an instruction, so keep it to a decision.
+
+   **A dropped item is still owed.** Closing it `abandoned` ends your
+   bookkeeping, not the person's expectation. `close` writes `state` and
+   `decision` and nothing else — `summary` and `artifacts` belong to the
+   WORKER and are written by `work_report`, so your reason cannot go there.
+   Put it in close's own `decision`, with `state=abandoned`: why it was
+   dropped, and **the one thing that would make it worth resuming** — a
+   credential arriving, a dependency merging, the person saying go ahead — then
+   repeat that in the round report and the final one. A goal whose `abandoned`
+   rows are silent reads as finished, and whatever they were for is found by
+   whoever is surprised by it later.
+
+   **A ruling you make once is recorded once.** When a decision applies past the
+   item that raised it — a convention, a chosen approach, a scope boundary —
+   record it with `action=decide` on every item it binds, not only in the
+   `session_send` back to the child that asked. `decision` is the one field a
+   worker reads as an instruction, so a ruling stored there is one every child
+   can cite; a ruling living only in one transcript gets re-decided by the next
+   child, and the two answers can differ.
+
+   **`decision` is one string, and `decide` REPLACES it.** `WORK_CONDUCTOR_FIELDS`
+   gives `decide` exactly `(decision, round)`, and the field is a single
+   string — so it holds your CURRENT standing instruction to that item, never a
+   log, a queue or a thread. Write the whole instruction you want in force now,
+   every time. A `decide` phrased as an addition to the last one deletes the
+   last one, and the child reads only what survived; when a new ruling narrows
+   an earlier one, write both halves out again as one instruction.
+
+   **A handoff between items is an artifact, not a description.** When one
+   item's output is another's input, what moves is a commit sha, a
+   pull-request number or a path, read from `work_report`'s `artifacts` — not
+   from the worker's `summary`.
+
+   **The item record is not a message bus, so a dependency does not go into
+   `decision`.** Two homes, and which one applies depends on whether the
+   awaited artifact is the bar:
+
+   | the awaited artifact | where the dependency lives |
+   |---|---|
+   | IS the bar — the depending item cannot be accepted without it | that item's `acceptance`, promoted with `action=accept` once you hold the real value (two-phase promotion, used for a dependency rather than a PR number) |
+   | cannot be an acceptance condition — an input the child needs but nothing asserts | YOUR own state, relayed to the child by message when the first item lands |
+
+   **Only the common parent can relay**: two children cannot read each other's
+   ledger, so a handoff nobody relays is a mutual wait no cycle resolves. If
+   both are waiting on each other, whichever noticed states who owes what to
+   whom, and you settle it — `action=accept` where the artifact is the bar, and
+   otherwise by messaging each child the half it is owed.
 5. `session_read_message` for detail the record does not carry — a question's
    substance, a stall's shape. Never for a verdict, and never as the routine
    cycle read: the ledger is that.
@@ -419,6 +574,28 @@ item produced and which acceptance conditions are met on what verdict, then plan
 the next round and dispatch it. Do not wait for the user between rounds — the
 report is information, not a gate, and the Round-0 go-ahead already covers the
 next round. The user can redirect you at any time (see below).
+
+**Separate verified from relayed in every report.** Two grades of evidence, and
+the reader cannot tell them apart unless your wording does:
+
+| grade | what it is | how you write it |
+|---|---|---|
+| verified | an `accept_eval.py` verdict, or something you read yourself with `fs_read` or `web_fetch` | state it plainly |
+| relayed | a worker's `status`, `summary` or claimed `artifacts` | attribute it — "the item reports" |
+
+That first row is short on purpose. `execute_bash` is mounted and never
+auto-approved, so it is there for the two bundled scripts and every call
+prompts; running a work item's build, test or `gh` query through it is the
+boundary violation, not a shortcut to first-hand evidence. The evaluator's
+verdict is the instrument you have.
+
+A `done` is the worker saying its condition is met, so it stays relayed until
+the evaluator answers, however confident the prose around it reads. Reporting a
+goal complete on four claims and one verdict is the failure this line exists to
+prevent.
+
+**Open the report with the pinned scope line** (see below), so a goal that
+drifted one round at a time is visible on the round it drifted.
 
 Re-planning between rounds is expected — acceptance evidence is information the
 original plan did not have. Re-planning mid-round is not: let the round finish.
@@ -454,6 +631,18 @@ running, deal with that item now — `session_stop` it and `close` its ledger it
 or `session_send` the correction straight into it. Do not tear down the whole
 round for one item.
 
+**Pin the scope in one line, and re-pin it when they restate it.** Before you
+plan, write the ask as a single sentence; record it with `action=goal` and keep
+it as your own `session_ledger` `goal`. Open every round report with it.
+
+**The owner's newest statement wins** — over your plan, over an earlier message
+of theirs, and over what an item's seed already says. When they restate the ask,
+replace the line, record the new goal with `action=goal`, and name the items the
+change touches (the in-flight exception above decides which are handled now and
+which at the boundary). One line is cheap, and it is the only thing that makes
+drift visible: a goal that moves a little each round is never obviously wrong on
+any single round.
+
 ## When a conductor dispatched you
 
 The dispatch table above lets a parent conductor put a decomposable item
@@ -484,8 +673,14 @@ So the worker contract applies to you on top of everything in this skill:
   parent's record across a dispatch relationship, so it prompts. Reporting at
   round boundaries keeps that to a handful of approvals per goal.
 
-Depth is capped at 2, so your own children may be workers only — a
-`depth_exceeded` on `create` means flatten, not retry.
+**Your own `depth` decides whether you may dispatch a conductor, and nothing
+refuses it on your behalf.** A ledger item carries no agent kind, so `create`
+never sees which spec you are about to put behind it: dispatching a conductor
+past the cap is accepted here and fails inside the CHILD, which bootstraps at
+`depth` 2 and then finds `create` refusing every item it writes. Read your own
+`depth` off the `conductor` record and apply the table in "Which agent":
+at 1 your children are workers only, and at 2 you create no item at all and
+report `blocked` so your parent decomposes the item one level up.
 
 ## Stop conditions
 
