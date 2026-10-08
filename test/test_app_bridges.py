@@ -1893,11 +1893,13 @@ class TestStdioInterpreterResolution:
     def test_a_secret_uri_env_value_logs_a_warning_and_registers_unchanged(
         self, tmp_path, app_env, monkeypatch, caplog
     ):
-        # An app's stdio server is spawned by kiro-cli, which never
-        # resolves secret://, so the literal reaches the child. Until the owner
-        # decides how apps may reach the vault, registration must at least say
-        # so -- naming the env KEY only, never the secret name -- and must not
-        # rewrite or drop the declared value.
+        # Unless its stub is on, an app's stdio server is spawned by kiro-cli,
+        # which never resolves secret://, so the literal reaches the child; a
+        # stubbed one is spawned by the MCP gateway, which does. Registration
+        # cannot tell which path a session takes, so the warning must name the
+        # condition rather than claim the value is never resolved -- naming the
+        # env KEY only, never the secret name -- and must not rewrite or drop
+        # the declared value.
         with caplog.at_level("WARNING", logger="kiro_crew.apps.bridges"):
             entry = self._register_stdio(
                 tmp_path, app_env, monkeypatch,
@@ -1916,6 +1918,8 @@ class TestStdioInterpreterResolution:
         assert "'API_TOKEN'" in hits[0]
         assert "'MODE'" not in hits[0]
         assert "hidden-name-10641" not in caplog.text
+        assert "stub is on" in hits[0] and "kiro-cli spawns it directly" in hits[0]
+        assert "does not resolve" not in hits[0]
 
     def test_a_plain_env_logs_no_secret_uri_warning(
         self, tmp_path, app_env, monkeypatch, caplog

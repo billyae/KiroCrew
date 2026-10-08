@@ -2817,11 +2817,15 @@ def _warn_unresolved_secret_refs(app_name: str, server_name: str, env: dict) -> 
 
     Kiro Crew resolves ``secret://<name>`` against the Secrets vault only on its
     own MCP gateway spawn path. An app-registered stdio server is written into
-    the agent config and spawned by kiro-cli directly, so such a value reaches
-    the child as the literal reference text and the credential silently never
-    arrives. Whether an installed app may name a vault secret at
-    all is an open trust decision, so this only makes the gap visible: it logs,
-    gates nothing, and leaves the entry exactly as declared.
+    the agent config; when that server's stub is on (its name is in
+    ``mcp_gateway.stub_servers``) the rewriter wraps it and gatewayd resolves
+    the value at spawn. Otherwise kiro-cli spawns it directly, the child gets
+    the literal reference text, and the credential silently never arrives.
+    Registration cannot know which path a later session takes, so the warning
+    names the condition rather than asserting the outcome. Whether an
+    installed app may name a vault secret at all is an open trust decision, so
+    this only makes the gap visible: it logs, gates nothing, and leaves the
+    entry exactly as declared.
 
     Names only the env-var KEYS, never the secret name after the scheme -- the
     same sink rule :mod:`kiro_crew.mcp_gateway.secret_uri` follows, because a
@@ -2839,8 +2843,9 @@ def _warn_unresolved_secret_refs(app_name: str, server_name: str, env: dict) -> 
         return
     logger.warning(
         "App %s: stdio MCP server %r sets env %s to a secret:// reference, which "
-        "Kiro Crew does not resolve for app-registered MCP servers -- the server "
-        "will receive the literal reference text, not the vault value",
+        "is resolved only when the server's stub is on in MCP Management (the MCP "
+        "gateway spawns it) -- when kiro-cli spawns it directly the server "
+        "receives the literal reference text, not the vault value",
         app_name,
         server_name,
         ", ".join(repr(k) for k in keys),

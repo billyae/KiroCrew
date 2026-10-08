@@ -89,10 +89,13 @@ installed against:
 - The host CLI name `kirocrew` is pinned to the running gateway before any of
   the above applies.
 
-A stdio entry's `env` values are passed through as declared. In particular a
-`secret://<name>` value is **not** resolved against the Secrets vault for an
-app's server: the server receives the literal reference text. Registration logs
-a warning naming the app, server and env key when it sees one. How an app may
+A stdio entry's `env` values are passed through as declared. A
+`secret://<name>` value is resolved against the Secrets vault only when the
+server's stub is turned on in MCP Management, because then the MCP gateway
+spawns it. When kiro-cli spawns the server directly (stub off, or the gateway
+not running) it is **not** resolved: the server receives the literal reference
+text. Registration logs a warning naming the app, server and env key when it
+sees one. How an app may
 receive a vault secret is still an open decision
 ([#10641](https://github.com/kirodotdev/KiroCrew/issues/10641)).
 
