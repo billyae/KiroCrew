@@ -349,6 +349,28 @@ check-to-open window, and `fstat`/`S_ISREG` does not close it because a reparse 
 regular file passes it; a link, FIFO or hardlink refusal on a *capable* platform still
 raises `OSError` and aborts, because that is a hostile or corrupt source.
 
+The merge's core-file installs resolve each name once as well. `memory.db`,
+`memory_index.db` and `crons.json` (and, on the dashboard import, `hooks.json`) are
+installed only where the data home has none, through
+`snapshot_merge._install_core_file_if_absent` — `pinned_fs.copy_file_pinned` with
+`skip_existing=True`, the config component's existing install path. The source is
+opened once with `O_NOFOLLOW` (where the platform has none, through
+`platform_compat.open_file_no_reparse`, handed over as `src_fd`) and judged on its
+descriptor (regular, one link); the destination is created `O_CREAT|O_EXCL|O_NOFOLLOW`. A by-name `is_file()` followed by
+`shutil.copy2` was two resolutions: a dangling link at the live name passed the check and
+was then followed out of the data home, and a hardlink alias in the staging tree was
+installed as the core file. A skipped install is printed and the component loses its tick.
+The cron merge (`_merge_crons`) opens each store once, judges and reads the descriptor
+(regular, one link; the live store's parent pinned where the platform can), and rewrites
+the live store with an atomic replace in that same pinned directory, carrying its mode
+and access-control xattrs from the still-open read descriptor, only after re-checking
+the name still holds that regular inode; a mismatch imports nothing. Holding the
+descriptor keeps the inode alive, so its number cannot be reused by a planted entry.
+The replace stages a temporary by name inside the data home, as the cron store's own
+save does, so a same-UID writer that can replace that temporary is not stopped. A
+rename replaces the entry and never follows it. The memory merge's `ATTACH` of the
+staged database is not covered: SQLite accepts only a path, so it needs its own decision.
+
 The dashboard's import path (`portability.apply_import_zip`) is the **exception**, and
 deliberately: it has no flag and no consent surface, so refusing there would not mean
 "ask the user", it would mean deleting import on that platform. It therefore proceeds with
