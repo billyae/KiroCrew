@@ -20,11 +20,14 @@ superseded-by: []
 > requested and goes in §4 -- the same arrangement
 > [rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md) records
 > for itself. This is a tier T3 change: it reworks text users already rely on, so
-> the decision is recorded here before the implementation merges. The First
-> Principles lane reads an RFC's status off the **base** branch, so this document
-> lands on its own first and the implementation then drops it and rebases onto
-> it. Nothing proposed below is a new mechanism. Every row in §2 names a mechanism
-> that is already on main, measured at `1c5a71db4d`.
+> the decision is recorded here before the implementation merges. This document
+> ships INSIDE that pull request rather than as a standalone docs PR, so `doc-pr`
+> is null and the implementation is the one named in `implementation-prs`. The
+> First Principles lane reads an RFC's status off the **base** branch, so until
+> this document is on main it reads as absent to that lane; clearing the lane is
+> a maintainer's call, not this pull request's. Nothing proposed below is a new
+> mechanism. Every row in §2 names a mechanism that is already on main, measured
+> at `1c5a71db4d`.
 
 - Tracking issue: [#18049](https://github.com/kirodotdev/KiroCrew/issues/18049).
 - The implementation changes both shipped conductor texts and the tests that pin
