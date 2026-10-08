@@ -111,9 +111,21 @@ def cli_env() -> dict[str, str]:
     This PATH is execution support only. :func:`cli_path` does not consume it:
     gateway execution resolves the sandbox-sealed managed entrypoint or a fixed,
     non-writable system candidate by absolute path.
+
+    ``NODE_USE_SYSTEM_CA=1`` makes these Node children trust the OS certificate
+    store (macOS Keychain, Windows Certificate Store, OpenSSL defaults on Linux)
+    in addition to Node's bundled roots. Behind a TLS-intercepting corporate
+    proxy the browser download otherwise fails ``UNABLE_TO_GET_ISSUER_CERT_LOCALLY``
+    even though the OS trusts the proxy's CA, and a GUI-launched gateway has no
+    shell profile through which the user could set the variable. The gateway's
+    own Python side already verifies through the OS store (``_ssl_compat``).
+    The variable is used instead of ``--use-system-ca`` in ``NODE_OPTIONS``
+    because a Node that predates the feature ignores an unknown variable but
+    refuses to start on an unknown flag. A value the user already set is kept.
     """
     env = dict(os.environ)
     env["PATH"] = node_augmented_path(augmented_path(env.get("PATH", "")))
+    env.setdefault("NODE_USE_SYSTEM_CA", "1")
     return env
 
 

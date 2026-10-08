@@ -162,6 +162,15 @@ once, at install, so registry auth applies at install time only.
    directory instead of the workspace.
 5. Record that the install happened.
 
+Every Node child these steps start (npm, the CLI, and the browser download it
+forks) receives `NODE_USE_SYSTEM_CA=1` through `install.cli_env`, unless the
+user already set that variable. Node then trusts the OS certificate store as
+well as its bundled roots, so a corporate TLS-intercepting proxy whose CA the OS
+trusts works without exporting a PEM file. This matters most for a GUI-launched
+gateway, which has no shell profile. A variable is used instead of
+`--use-system-ca` in `NODE_OPTIONS` because a Node older than the feature
+ignores an unknown variable but refuses to start on an unknown flag.
+
 The next install writes the vetted managed copy. A launcher left by an older
 release at `~/.local/bin/playwright-cli` is left untouched and ignored; no cleanup
 or fallback executes it.

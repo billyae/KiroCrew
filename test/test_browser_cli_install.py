@@ -726,6 +726,23 @@ def test_cli_env_layers_node_dirs_over_the_broad_path(monkeypatch: pytest.Monkey
     assert mod.cli_env()["PATH"] == "/node/bin:/home/.local/bin:/usr/bin"
 
 
+def test_cli_env_trusts_the_os_certificate_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Node children verify TLS against the OS store as well as Node's bundled roots.
+
+    A GUI-launched gateway has no shell profile, so a corporate proxy CA that the
+    OS already trusts would otherwise never reach the browser-download child.
+    """
+    monkeypatch.delenv("NODE_USE_SYSTEM_CA", raising=False)
+
+    assert mod.cli_env()["NODE_USE_SYSTEM_CA"] == "1"
+
+
+def test_cli_env_keeps_a_user_set_system_ca_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NODE_USE_SYSTEM_CA", "0")
+
+    assert mod.cli_env()["NODE_USE_SYSTEM_CA"] == "0"
+
+
 @pytest.mark.skipif(
     os.name == "nt",
     reason="POSIX ~ expansion and the ~/.local/bin (mise) layout; Windows uses a different PATH set",
