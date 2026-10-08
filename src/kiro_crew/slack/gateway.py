@@ -8610,7 +8610,12 @@ class GatewayOrchestrator:
             return False
 
     def _notify_consolidation_abandoned(
-        self, key: str, message_count: int, reason: str, char_count: int = 0
+        self,
+        key: str,
+        message_count: int,
+        reason: str,
+        char_count: int = 0,
+        last_slice: bool = False,
     ) -> None:
         """Tell the user a session span was dropped from memory consolidation.
 
@@ -8621,22 +8626,36 @@ class GatewayOrchestrator:
 
         ``char_count`` is non-zero when the abandon dropped ONE budget-sized
         slice of a single over-budget message (sub-chunking) rather than whole
-        messages. The message marker did not move in that case, so the notice
-        names the character size of the dropped slice instead of a message count.
+        messages, so the notice names the character size of the dropped slice
+        instead of a message count. ``last_slice`` is True when that slice was
+        the message's final one: the marker has moved past the whole message, so
+        there is no next slice and the notice must not promise one.
         """
         state = self.dashboard_state
         if state is None:
             return
-        title = "Memory consolidation gave up on part of a session"
         if char_count > 0:
+            # One slice of a single over-budget message was dropped; the rest of
+            # the session is unaffected, so the title says "part of a session".
+            title = "Memory consolidation gave up on part of a session"
+            if last_slice:
+                tail = (
+                    "lessons were not extracted; the message is now fully "
+                    "consolidated. The gateway log has the underlying error."
+                )
+            else:
+                tail = (
+                    "lessons were not extracted; consolidation continues from "
+                    "the next slice. The gateway log has the underlying error."
+                )
             body = (
                 f"A {char_count}-character slice of an oversized message in session "
                 f"{key} was dropped from memory after repeated consolidation "
                 f"failures ({reason}). That slice's history, preferences and "
-                "lessons were not extracted; consolidation continues from the next "
-                "slice. The gateway log has the underlying error."
+                f"{tail}"
             )
         else:
+            title = "Memory consolidation gave up on a session"
             body = (
                 f"{message_count} messages from session {key} were dropped from memory "
                 f"after repeated consolidation failures ({reason}). Their history, "
