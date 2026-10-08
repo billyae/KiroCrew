@@ -371,6 +371,12 @@ def _strip_hr(text: str) -> str:
     return out.strip()
 
 
+# Longest label that still shows whole on a half-width inline button on a
+# narrow phone. Counted in characters, so it is approximate: a wide CJK glyph or
+# emoji takes about two characters' room.
+_HALF_WIDTH_LABEL_CHARS = 16
+
+
 def build_inline_keyboard(options: list[str], session_key: str) -> dict | None:
     """Build an InlineKeyboardMarkup from ``[OPTIONS:]`` labels.
 
@@ -378,7 +384,13 @@ def build_inline_keyboard(options: list[str], session_key: str) -> dict | None:
     the payload because Telegram caps it at 64 bytes and a multi-byte CJK/emoji
     label could overflow. The compact deterministic tag binds a later press to
     the session that posted the keyboard; the label is recovered from the button
-    text at callback time. Two buttons per row keeps the keyboard mobile-friendly.
+    text at callback time.
+
+    Rows hold two buttons while every label fits a half-width button, and one
+    button each as soon as any label is longer than ``_HALF_WIDTH_LABEL_CHARS``:
+    a phone truncates a half-width button mid-label, so two choices that differ
+    late in their text would read the same. The rule covers the whole keyboard,
+    not one row, so the buttons stay a uniform width.
 
     A label is MODEL-authored text that Telegram renders, so it is a display sink
     like the answer body: the driver's byte-level scan can see a credential as
@@ -392,12 +404,16 @@ def build_inline_keyboard(options: list[str], session_key: str) -> dict | None:
     if not options:
         return None
     origin_tag = session_provenance_tag(session_key)
+    labels: list[str] = []
+    for opt in options:
+        safe, _ = redact_for_display(opt, _default_redactor)
+        labels.append(safe[:64])
+    per_row = 1 if any(len(label) > _HALF_WIDTH_LABEL_CHARS for label in labels) else 2
     buttons: list[list[dict]] = []
     row: list[dict] = []
-    for i, opt in enumerate(options):
-        safe, _ = redact_for_display(opt, _default_redactor)
-        row.append({"text": safe[:64], "callback_data": f"opt:{i}:{origin_tag}"})
-        if len(row) == 2:
+    for i, label in enumerate(labels):
+        row.append({"text": label, "callback_data": f"opt:{i}:{origin_tag}"})
+        if len(row) == per_row:
             buttons.append(row)
             row = []
     if row:
