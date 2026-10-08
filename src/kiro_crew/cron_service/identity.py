@@ -39,6 +39,38 @@ def agent_sequence_dispatches(seq: list[str]) -> bool:
     return len(seq) > 1
 
 
+def split_cron_agent_member(agent_id: str, member_id: str) -> tuple[str, str]:
+    """Classify a cron create's agent name as a provider template OR a member.
+
+    ``--agent`` / the ``agent`` field is the one slot every create surface offers
+    for naming either a provider template or a crew member. The dashboard's own UI
+    resolves a member pick client-side and sends a separate ``member_id``; the CLI,
+    the MCP ``cron_add`` tool and a scripted dashboard POST do not, so a member name
+    arrives in ``agent_id`` and is captured as ``selection_kind='template'`` with the
+    member name mistaken for a provider template -- which the cron chat's reply path
+    then cannot resolve, failing to bind the agent on every reply.
+
+    Resolve that split ONCE, here, so every entry point agrees: when ``member_id`` is
+    not already given and ``agent_id`` names a crew member (an alias carrying a durable
+    ``member_id``) that is NOT also a materialized provider template, return it as the
+    member (``agent_id`` cleared, ``member_id`` set). A name that IS a real provider
+    template, and an explicit ``member_id`` the caller already resolved, are returned
+    unchanged. The precedence mirrors the live resolver
+    (:func:`kiro_crew.config.loader._resolve_agent_selection` /
+    :func:`_materialized_kiro_agent`), and it leaves ``bind_cron_memory``'s record-level
+    ``agent_id``-is-a-template contract untouched: the promotion happens at the caller
+    that knows the user picked a member, never inside ``add_job``.
+    """
+    from kiro_crew.config.loader import KiroCrewConfig, _materialized_kiro_agent
+
+    if member_id or not agent_id:
+        return agent_id, member_id
+    member = KiroCrewConfig.load().agents.get(agent_id)
+    if member is not None and member.member_id and not _materialized_kiro_agent(agent_id):
+        return "", agent_id
+    return agent_id, member_id
+
+
 def build_cron_session_context(job: CronJob) -> tuple[str, str]:
     """Compute (session_key, prompt) for one cron run.
 
