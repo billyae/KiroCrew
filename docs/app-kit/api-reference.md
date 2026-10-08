@@ -369,11 +369,16 @@ after a 401/403 response.
 > `ctx.call_tool()`), which carries the job's identity without reading a
 > credential off disk. If your app cron previously read `.app_secret` (directly
 > or by constructing a client with `app_name`), move it to `ScriptContext`
-> before upgrading. The cron's own bundle code and its `data/` directory stay
-> readable and writable, so imports and durable state are unaffected; only the
-> secret file is masked. Keep each `.app_secret` a single plain file: if your
-> bundle holds a second hard link to any app's secret, that cron is refused with
-> a message naming the linked path, so remove the extra link.
+> before upgrading. The cron's own bundle code stays readable so imports resolve
+> (it is sealed read-only, so a cron cannot rewrite what the app's backend later
+> runs), and its `data/` directory stays writable, so durable state is
+> unaffected; only the secret file is masked. Keep each `.app_secret` a single plain
+> file: if your bundle holds a second hard link to any app's secret, that cron is
+> refused with a message naming the linked path, so remove the extra link.
+> A cron that is not that app no longer reaches another app's `data/`: only the
+> owning cron (its script lives in the bundle, or it is the bundle's own job) gets
+> a writable `data/`, so if your cron kept state under a different app's bundle,
+> move it to its own bundle's `data/` before upgrading.
 
 The Gateway names its authentication cookie from the Host header it receives,
 falling back to its own listen port. The Python client normally derives that name
