@@ -141,6 +141,8 @@ OWNERS: dict[str, tuple[str, ...]] = {
         "_TERMINATORS",
         "_copy_locked",
         "_copy_tree_no_overwrite",
+        "_core_file_not_installed",
+        "_cron_rewrite_in_place",
         "_install_core_file_if_absent",
         "_install_notifications",
         "_merge_crons",

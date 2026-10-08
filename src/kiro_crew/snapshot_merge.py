@@ -167,6 +167,46 @@ def _install_core_file_if_absent(src: Path, dst: Path) -> bool:
     )
 
 
+def _core_file_not_installed(dst: Path, *, index: bool = False, dashboard: bool = False) -> str:
+    """Say why ``_install_core_file_if_absent`` returned False for ``dst``.
+
+    False has two causes and only one of them prints anything first: a refused
+    source is reported through the skip hook, while an occupied destination name
+    is a silent EEXIST. The name is looked up again here only to pick the
+    sentence; nothing is opened or written through it.
+
+    ``index`` is for ``memory_index.db``, which is installed beside a memory.db
+    this run just installed. An index left there is never overwritten, so until
+    it is rebuilt search misses the imported rows; the gateway rebuilds it on
+    every start (``MemoryStore.rebuild_index`` in the startup memory lifecycle),
+    which is the step the sentence names.
+
+    ``dashboard`` gives the import summary's item form: no "(see above)", since
+    the web result has no earlier report, and a parenthetical opener the
+    Portability tab's ``NOT_APPLIED_ITEM`` reads as not applied.
+    """
+    occupied = os.path.lexists(dst)
+    if index and dashboard:
+        why = "kept the existing one" if occupied else "skipped: the archive's copy was refused"
+        return f"memory search index ({why}; rebuilt when the gateway restarts)"
+    if index:
+        if occupied:
+            return (
+                f"{dst.name}: existing index kept, not replaced; the gateway rebuilds it "
+                "on its next start"
+            )
+        return (
+            f"{dst.name}: not installed; the bundle's copy was refused (see above); "
+            "the gateway rebuilds it on its next start"
+        )
+    if occupied:
+        return (
+            f"{dst.name}: not restored; the existing entry at that name is not a "
+            "regular file and is left as it is."
+        )
+    return f"{dst.name}: not restored; the bundle's copy was refused (see above)."
+
+
 _MERGE_ALLOWED_TABLES = frozenset(
     {
         "semantic_memory",
@@ -313,11 +353,13 @@ def _merge_crons(src_path: Path, dst_path: Path) -> bool:
     # into whatever it points at, and a link or hardlink alias in the staging tree is
     # read as the bundle's cron store. So each file is opened once, judged on its
     # descriptor, and read through it; the rewrite is an atomic replace inside the
-    # SAME pinned directory, after checking the name still holds the inode that was
-    # read. A rename replaces the directory entry and never follows it, so no planted
-    # link can redirect the write.
+    # SAME pinned directory (or, where the ACL cannot be carried, a write through the
+    # read descriptor itself: `_cron_rewrite_in_place`), after checking the name still
+    # holds the inode that was read. A rename replaces the directory entry and never
+    # follows it, so no planted link can redirect the write.
     dst_dir_fd: int | None = None
     dst_fd: int | None = None
+    in_place = False
     try:
         try:
             src = json.loads(_read_cron_store_once(src_path, what="bundle's cron store")[0])
@@ -329,11 +371,13 @@ def _merge_crons(src_path: Path, dst_path: Path) -> bool:
                 dst_dir_fd = pinned_fs.pin_parent(
                     os.path.realpath(dst_path.parent), what="live cron store", refusal=OSError
                 )
+            in_place = dst_dir_fd is not None and _cron_rewrite_in_place()
             dst_text, dst_seen, dst_fd = _read_cron_store_once(
                 dst_path,
                 what="live cron store",
                 dir_fd=dst_dir_fd,
                 keep_open=dst_dir_fd is not None,
+                writable=in_place,
             )
             dst = json.loads(dst_text)
         except (OSError, ValueError) as exc:
@@ -341,15 +385,40 @@ def _merge_crons(src_path: Path, dst_path: Path) -> bool:
             return False
         if not _usable_cron_shape(src, src_path) or not _usable_cron_shape(dst, dst_path):
             return False
-        return _write_merged_crons(src, dst, dst_path, dst_seen, dst_dir_fd, dst_fd)
+        return _write_merged_crons(
+            src, dst, dst_path, dst_seen, dst_dir_fd, dst_fd, in_place=in_place
+        )
     finally:
         for fd in (dst_fd, dst_dir_fd):
             if fd is not None:
                 os.close(fd)
 
 
+def _cron_rewrite_in_place() -> bool:
+    """Whether the cron merge rewrites the live store through its read descriptor.
+
+    True where the store can be pinned but its access control cannot be carried
+    onto a fresh inode: macOS, whose native ACLs sit behind ``acl_get_fd`` rather
+    than the xattr API ``atomic_write`` carries (``ACCESS_CONTROL_XATTRS_SUPPORTED``
+    is False there). An atomic replace on that platform would publish an inode
+    without a deny entry the owner set, so the merge truncates and rewrites the
+    inode it read and validated instead, which keeps its ACL. The cost is crash
+    safety: a crash or a full disk mid-write can leave a torn store on that
+    platform. Linux keeps the atomic replace with the ACL carried; Windows (no
+    pinning) keeps it too.
+    """
+    from kiro_crew import atomic_write as _aw
+
+    return pinned_fs.supports_pinned_walk() and not _aw.ACCESS_CONTROL_XATTRS_SUPPORTED
+
+
 def _read_cron_store_once(
-    path: Path, *, what: str, dir_fd: int | None = None, keep_open: bool = False
+    path: Path,
+    *,
+    what: str,
+    dir_fd: int | None = None,
+    keep_open: bool = False,
+    writable: bool = False,
 ) -> tuple[str, os.stat_result, int | None]:
     """Open *path* once, judge the descriptor, and read the text through it.
 
@@ -365,6 +434,10 @@ def _read_cron_store_once(
     that became a FIFO from hanging the restore. The descriptor must be a regular
     file with ONE link: a hardlink alias of a credential passes every link screen
     and only the link count shows it. Refusals raise ``OSError``.
+
+    *writable* opens the descriptor read-write, for a caller that rewrites the
+    store through it (see ``_cron_rewrite_in_place``); it applies only where the
+    platform can pin, which is the only place that caller asks for it.
     """
     own_dir_fd = False
     if dir_fd is None and pinned_fs.supports_pinned_walk():
@@ -373,7 +446,7 @@ def _read_cron_store_once(
     try:
         if dir_fd is not None:
             flags = (
-                os.O_RDONLY
+                (os.O_RDWR if writable else os.O_RDONLY)
                 | getattr(os, "O_NOFOLLOW", 0)
                 | getattr(os, "O_NONBLOCK", 0)
                 | getattr(os, "O_CLOEXEC", 0)
@@ -416,14 +489,18 @@ def _write_merged_crons(
     dst_seen: os.stat_result,
     dst_dir_fd: int | None,
     dst_fd: int | None,
+    *,
+    in_place: bool = False,
 ) -> bool:
-    """Fold *src*'s new jobs into *dst* and replace the live store atomically.
+    """Fold *src*'s new jobs into *dst* and write the live store.
 
-    *dst_fd* is the live store's descriptor, still open from the read. The
-    replacement carries the store's mode and its access-control xattrs (a named
-    POSIX ACL) from it, so the merge never hands back a store protected more
-    loosely than the one it replaced; an ACL that cannot be carried refuses the
-    write and leaves the store as it was.
+    *dst_fd* is the live store's descriptor, still open from the read. By default
+    the store is replaced atomically and the replacement carries its mode and its
+    access-control xattrs (a named POSIX ACL) from *dst_fd*, so the merge never
+    hands back a store protected more loosely than the one it replaced; an ACL that
+    cannot be carried refuses the write and leaves the store as it was. With
+    *in_place* (see ``_cron_rewrite_in_place``) the document is written through
+    *dst_fd* itself, opened read-write, so the inode and its ACL are kept.
     """
     from kiro_crew.atomic_write import atomic_write, pinned_parent_replace_supported
 
@@ -451,6 +528,17 @@ def _write_merged_crons(
     if now is None or not _stat.S_ISREG(now.st_mode) or (now.st_dev, now.st_ino) != seen_ident:
         print(f"  ⚠️  {dst_path} was replaced while the cron merge read it — skipping cron merge")
         return False
+    if in_place and dst_fd is not None:
+        data = document.encode("utf-8")
+        os.lseek(dst_fd, 0, os.SEEK_SET)
+        os.ftruncate(dst_fd, 0)
+        view = memoryview(data)
+        while view:
+            view = view[os.write(dst_fd, view) :]
+        os.fsync(dst_fd)
+        total = len(src.get("jobs", []))
+        print(f"  Cron jobs imported: {imported} (skipped {total - imported} duplicates)")
+        return True
     pinned = dst_dir_fd is not None and pinned_parent_replace_supported()
     atomic_write(
         dst_path,

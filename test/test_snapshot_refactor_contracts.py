@@ -119,6 +119,8 @@ FACADE_NAMES = frozenset(
         "_copy_notifications",
         "_copy_tree_no_overwrite",
         "_copytree_safe",
+        "_core_file_not_installed",
+        "_cron_rewrite_in_place",
         "_data_filter",
         "_default_snapshot_dir",
         "_dir_flags_nofollow",

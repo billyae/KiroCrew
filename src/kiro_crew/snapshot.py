@@ -139,6 +139,8 @@ from kiro_crew.snapshot_merge import (  # noqa: F401 - facade re-exports
     NotificationCopyUnsupported,
     _copy_locked,
     _copy_tree_no_overwrite,
+    _core_file_not_installed,
+    _cron_rewrite_in_place,
     _install_core_file_if_absent,
     _install_notifications,
     _merge_crons,
@@ -1373,14 +1375,16 @@ def _do_merge(
             # Pinned, not copy2: see `_install_core_file_if_absent`. The index is
             # only installed beside a memory.db this call installed.
             if _install_core_file_if_absent(snap / "memory.db", mc / "memory.db"):
-                if (snap / "memory_index.db").is_file():
-                    _install_core_file_if_absent(snap / "memory_index.db", mc / "memory_index.db")
+                if (snap / "memory_index.db").is_file() and not _install_core_file_if_absent(
+                    snap / "memory_index.db", mc / "memory_index.db"
+                ):
+                    # The index is never overwritten, so a leftover one does not
+                    # match the memory.db just installed: search misses its rows
+                    # until the index is rebuilt.
+                    print(f"  ↩️  {_core_file_not_installed(mc / 'memory_index.db', index=True)}")
                 print("  Memory: copied (no existing memory.db)")
             else:
-                print(
-                    "  ↩️  memory.db: not restored; the existing entry is not a regular "
-                    "file, or the bundle's copy was refused (see above)."
-                )
+                print(f"  ↩️  {_core_file_not_installed(mc / 'memory.db')}")
                 memory_ok = False
         else:
             _merge_memory(snap / "memory.db", mc / "memory.db")
@@ -1437,10 +1441,7 @@ def _do_merge(
             elif _install_core_file_if_absent(sc, dc):
                 print("  Crons: copied (no existing crons)")
             else:
-                print(
-                    "  ↩️  crons.json: not restored; the existing entry is not a regular "
-                    "file, or the bundle's copy was refused (see above)."
-                )
+                print(f"  ↩️  {_core_file_not_installed(dc)}")
                 crons_ok = False
         if crons_ok:
             print("  ✅ crons")

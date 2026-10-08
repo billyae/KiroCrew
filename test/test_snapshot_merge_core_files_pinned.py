@@ -288,6 +288,8 @@ def test_the_rewrite_keeps_the_live_stores_access_control_acl(tmp_path):
     """
     src, dst, _ = _cron_pair(tmp_path)
     acl = "system.posix_acl_access"
+    if not hasattr(os, "setxattr"):
+        pytest.skip("no os xattr API on this platform (macOS)")
     try:
         os.setxattr(dst, "user.kirocrew-probe", b"1")
         os.removexattr(dst, "user.kirocrew-probe")
@@ -316,3 +318,136 @@ def test_an_unswapped_merge_imports_and_keeps_the_store_regular_with_its_mode(tm
     assert names == ["local", "imported"]
     assert not dst.is_symlink()
     assert dst.stat().st_mode & 0o777 == 0o640
+
+
+# ── A refused memory_index.db install is reported, not silent ──
+
+
+def _sqlite(path: Path, marker: str) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(str(path))) as conn:
+        conn.execute("CREATE TABLE t (v TEXT)")
+        conn.execute("INSERT INTO t VALUES (?)", (marker,))
+        conn.commit()
+
+
+def test_a_leftover_index_beside_a_freshly_installed_memory_db_is_reported(tmp_path, capsys):
+    snap, mc, _ = _dirs(tmp_path)
+    _sqlite(snap / "memory.db", "bundle")
+    (snap / "memory_index.db").write_bytes(b"bundle index")
+    (mc / "memory_index.db").write_bytes(b"old index")
+
+    snapshot_mod._do_merge(snap, mc, ["memory"])
+
+    assert (mc / "memory_index.db").read_bytes() == b"old index", "the index is never overwritten"
+    out = capsys.readouterr().out
+    assert (
+        "memory_index.db: existing index kept, not replaced; the gateway rebuilds it "
+        "on its next start"
+    ) in out
+
+
+@requires_symlinks
+def test_an_occupied_live_name_is_named_without_pointing_at_a_report_that_is_not_there(
+    tmp_path, capsys
+):
+    snap, mc, outside = _dirs(tmp_path)
+    (snap / "crons.json").write_text(_crons("a"), encoding="utf-8")
+    (mc / "crons.json").symlink_to(outside / "planted")
+
+    snapshot_mod._do_merge(snap, mc, ["crons"])
+
+    out = capsys.readouterr().out
+    assert "crons.json: not restored; the existing entry at that name is not a regular file" in out
+    assert "see above" not in out
+
+
+def test_the_dashboard_import_reports_a_leftover_index_as_refused(tmp_path):
+    import zipfile
+    from unittest.mock import patch
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _sqlite(src / "memory.db", "bundle")
+    _sqlite(src / "memory_index.db", "bundle index")
+    z = tmp_path / "import.zip"
+    with zipfile.ZipFile(str(z), "w") as zf:
+        zf.writestr("snap/MANIFEST.json", json.dumps({"version": 2}))
+        zf.write(str(src / "memory.db"), "snap/memory.db")
+        zf.write(str(src / "memory_index.db"), "snap/memory_index.db")
+    target = tmp_path / "target_mc"
+    target.mkdir()
+    (target / "memory_index.db").write_bytes(b"old index")
+
+    with patch.object(portability, "config_dir", return_value=target):
+        with patch.dict(os.environ, {"KIROCREW_HOME": str(target)}):
+            summary = portability.apply_import_zip(z, mode="merge")
+
+    assert (target / "memory_index.db").read_bytes() == b"old index"
+    assert "memory (copied)" in summary["items"], summary
+    kept = "memory search index (kept the existing one; rebuilt when the gateway restarts)"
+    assert kept in summary["items"], summary
+    # The Portability tab's NOT_APPLIED_ITEM keys on "(kept", so it is not counted as imported.
+    assert "(kept " in kept
+    assert "see above" not in " ".join(summary["items"]), summary
+    assert "memory_index" in summary.get("refused_merges", []), summary
+
+
+# ── Where the ACL cannot be carried (macOS), the merge keeps the inode ──
+
+
+def _simulate_macos(monkeypatch) -> None:
+    """macOS shape on Linux: pinning works, the xattr ACL carry does not.
+
+    A simulation: no real Mac runs this, and a native macOS ACL is not created.
+    """
+    from kiro_crew import atomic_write
+
+    monkeypatch.setattr(atomic_write, "ACCESS_CONTROL_XATTRS_SUPPORTED", False)
+
+
+def test_where_the_acl_cannot_be_carried_the_store_is_rewritten_in_place(tmp_path, monkeypatch):
+    """An atomic replace there would publish a fresh inode without the owner's ACL."""
+    _simulate_macos(monkeypatch)
+    src, dst, _ = _cron_pair(tmp_path)
+    os.chmod(dst, 0o640)
+    ino = dst.stat().st_ino
+
+    assert snapshot_merge._merge_crons(src, dst) is True
+
+    assert dst.stat().st_ino == ino, "the store was replaced, so a native ACL on it is dropped"
+    assert {j["name"] for j in json.loads(dst.read_text())["jobs"]} == {"local", "imported"}
+    assert dst.stat().st_mode & 0o777 == 0o640
+
+
+@requires_symlinks
+def test_the_in_place_rewrite_still_refuses_a_store_swapped_after_the_read(tmp_path, monkeypatch):
+    _simulate_macos(monkeypatch)
+    src, dst, outside = _cron_pair(tmp_path)
+    victim = outside / "victim.json"
+    victim.write_bytes(SECRET)
+    real = snapshot_merge._usable_cron_shape
+
+    def swapping(parsed, path):
+        if Path(path) == dst:
+            dst.unlink()
+            dst.symlink_to(victim)
+        return real(parsed, path)
+
+    monkeypatch.setattr(snapshot_merge, "_usable_cron_shape", swapping)
+    assert snapshot_merge._merge_crons(src, dst) is False
+    assert victim.read_bytes() == SECRET
+
+
+def test_where_the_acl_can_be_carried_the_store_is_still_replaced_atomically(tmp_path):
+    from kiro_crew import atomic_write
+
+    if not atomic_write.ACCESS_CONTROL_XATTRS_SUPPORTED:
+        pytest.skip("this platform takes the in-place path")
+    src, dst, _ = _cron_pair(tmp_path)
+    ino = dst.stat().st_ino
+
+    assert snapshot_merge._merge_crons(src, dst) is True
+    assert dst.stat().st_ino != ino, "the atomic replace was dropped where it is safe to keep"

@@ -61,6 +61,7 @@ from kiro_crew.snapshot import (
     NotificationCopyUnsupported,
     _copy_notifications,
     _copy_tree_no_overwrite,
+    _core_file_not_installed,
     _do_replace,
     _install_core_file_if_absent,
     _merge_crons,
@@ -2017,11 +2018,20 @@ def apply_import_zip(
                 if not (mc / "memory.db").is_file():
                     # Pinned, not copy2: see `_install_core_file_if_absent`.
                     if _install_core_file_if_absent(snap / "memory.db", mc / "memory.db"):
-                        if (snap / "memory_index.db").is_file():
+                        summary["items"].append("memory (copied)")
+                        if (snap / "memory_index.db").is_file() and not (
                             _install_core_file_if_absent(
                                 snap / "memory_index.db", mc / "memory_index.db"
                             )
-                        summary["items"].append("memory (copied)")
+                        ):
+                            # Never overwritten, so a leftover index does not match
+                            # the memory.db just installed; see `_core_file_not_installed`.
+                            summary["items"].append(
+                                _core_file_not_installed(
+                                    mc / "memory_index.db", index=True, dashboard=True
+                                )
+                            )
+                            summary.setdefault("refused_merges", []).append("memory_index")
                     else:
                         summary["items"].append("memory (skipped: not a regular file)")
                         summary.setdefault("refused_merges", []).append("memory")
