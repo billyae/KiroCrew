@@ -11,6 +11,7 @@ import type { ComposerVoiceInputProps } from '../../chat-core/composer/Composer'
 import type { usePromptHistory } from './draftHistory'
 import type { PromptHistoryItem } from '../composerPromptHistory'
 import type { PasteBlock } from '../../utils/pasteTokens'
+import type { MentionKeyMods } from './props'
 import { applyTextareaListBreak } from './listContinuation'
 
 /* The composer's keyboard and focus: autofocus on a session switch, the
@@ -108,7 +109,7 @@ export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, h
   handleUndoKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
   endUndoBurst: () => void
   handleTokenKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
-  onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: boolean) => { value: string; caret: number } | null
+  onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: MentionKeyMods) => { value: string; caret: number } | null
   promptOptimizer: boolean
   connected: boolean
   optimizePrompt: () => void
@@ -145,13 +146,21 @@ export function useComposerKeyDown({ rawPasteRef, handleUndoKey, endUndoBurst, h
     // `@mention` removes the whole mention as one unit, so an edit never
     // leaves a half-reference whose chip then silently unstages (#14675). Runs
     // in the same slot as the paste-token atom, before Enter/history, so the
-    // mention never reaches the default one-character edit.
-    if (onMentionKey && !ime.isComposing(e)) {
+    // mention never reaches the default one-character edit. Skipped while the
+    // optimizer runs: the textarea is readOnly then, so a Backspace next to a
+    // mention must not unstage its chip and make the optimizer discard its
+    // result on the now-shorter draft (crew-pr-reviewer).
+    if (onMentionKey && !ime.isComposing(e) && !optimizingRef.current) {
       const ta = e.currentTarget
-      const mods = e.metaKey || e.ctrlKey || e.altKey || e.shiftKey
+      const mods = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey }
       const edit = onMentionKey(valueRef.current, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, e.key, mods)
       if (edit) {
         e.preventDefault()
+        // Give the atomic delete its own undo entry: a short mention removed
+        // within the typing burst would otherwise fold into it, so Ctrl+Z
+        // would jump past the text typed before it instead of restoring just
+        // the mention (matches applyTextareaListBreak / removeFileEndingUndoBurst).
+        endUndoBurst()
         onChange(edit.value)
         requestAnimationFrame(() => inputRef.current?.setSelectionRange(edit.caret, edit.caret))
         return
