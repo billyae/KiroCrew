@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -3093,13 +3094,19 @@ class TestALeakedProcessIsEndedWithoutASecondNotice:
         return manager, info, key
 
     @staticmethod
-    async def _restart(agent_id: str, *, kill: Any) -> tuple[MagicMock, AsyncMock]:
-        """Run the next start's reconciliation over the folder; return the audit and the notifier."""
+    async def _restart(
+        agent_id: str, *, kill: Any, verified: bool = True
+    ) -> tuple[MagicMock, AsyncMock]:
+        """Run the next start's reconciliation over the folder; return the audit and the notifier.
+
+        ``verified`` False is a live pid the identity check cannot vouch for:
+        no ``/proc`` (macOS, Windows), or a ``/proc`` entry newer than the spawn.
+        """
         restarted = SubagentManager(sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder())
         notify = AsyncMock(return_value=None)
         with (
             patch.object(restarted, "_is_pid_alive", return_value=True),
-            patch.object(restarted, "_is_orphan_process", return_value=True),
+            patch.object(restarted, "_is_orphan_process", return_value=verified),
             patch.object(restarted, "_notify_orphan", notify),
             patch.object(platform_compat, "kill_pid", **kill),
             patch("kiro_crew.subagent.sel") as mock_sel,
@@ -3175,6 +3182,30 @@ class TestALeakedProcessIsEndedWithoutASecondNotice:
         notify.assert_not_awaited()
         assert _audit(mock_sel, "orphan_reconcile_kill")["outcome"] == "failed"
         assert (read_tombstone("leak-again") or {}).get("leaked_process") is True
+
+    @pytest.mark.asyncio
+    async def test_a_live_pid_it_cannot_verify_is_reported_as_possibly_running(
+        self, agent_root: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        manager, info, key = self._completed_run_on_disk("leak-unverified", pid=5757)
+        await self._fail_the_kill(manager, info, key)
+        kill = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="kiro_crew"):
+            mock_sel, notify = await self._restart(
+                "leak-unverified", kill={"new": kill}, verified=False
+            )
+
+        notify.assert_not_awaited()
+        kill.assert_not_called()
+        warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "5757" in r.getMessage() and "may still be running" in r.getMessage() for r in warned
+        ), "a process left standing was logged as gone"
+        assert not any(
+            "not running" in r.getMessage() and "leak-unverified" in r.getMessage()
+            for r in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_a_delivery_acknowledgement_does_not_erase_the_flag(

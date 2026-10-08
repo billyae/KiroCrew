@@ -3267,7 +3267,12 @@ Before that scan, `_end_leaked_processes` reads every tombstone flagged `leaked_
 process standing. Its outcome already reached the parent, so it sends no notice; it ends the
 pid `state.json` records through the same guarded kill as step 1 (`_end_orphan_process`,
 audited `orphan_reconcile_kill`), and `clear_leaked_process` drops the flag, keeping the rest
-of the tombstone, unless the kill `failed`, in which case the next start tries again. A later
+of the tombstone, unless the kill `failed`, in which case the next start tries again. A live
+pid the identity check cannot vouch for (`_is_orphan_process` False: no `/proc` on macOS or
+Windows, or a `/proc` entry newer than the recorded spawn) is not signalled; `_end_orphan_process`
+returns `unverified` for it, never the None that means not running, and the flag is dropped
+with a WARNING naming the pid and saying the process may still be running, because the next
+start would read the same answer. A later
 tombstone write that carries no outcome (a delivery acknowledgement) keeps the flag, as it keeps
 `outcome`. Not covered: a run that published its own report before a reap's kill failed keeps
 the `delivered` tombstone that report writes, with the failure on the audit row only; and a
