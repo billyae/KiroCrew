@@ -60,48 +60,63 @@ something each owner re-teaches by hand in every seed.
 
 Making a conductor the default dispatch target means conductors dispatching
 conductors, which is the case the `depth` cap bounds. Measuring that cap at
-`1c5a71db4d` turned up something other than "is 2 too tight". **Two guards use
-different comparisons against the same `MAX_DEPTH`, and they disagree about
+`1c5a71db4d` turned up something other than "is 2 too tight". **Three guards read
+the same `MAX_DEPTH` with two different comparisons, and they disagree about
 whether a conductor may exist at the cap.**
 
-`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`. Three guards there raise
-`CODE_DEPTH_EXCEEDED`, and the dashboard's `_bootstrap` in
-`src/kiro_crew/dashboard/handlers/work_ledger.py` calls the first of them to
-derive a child's depth:
+`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`, and exactly three comparisons
+in that module read it. Two use `>` and one uses `>=`, which is the whole finding:
 
-| Guard | Its comparison | Refuses |
+| Guard | Its comparison | A conductor at depth 2 |
 |---|---|---|
-| `child_depth` | `depth + 1 > MAX_DEPTH` | a parent already at depth 2 |
-| `ensure_conductor` | `checked_depth > MAX_DEPTH` | a ledger at depth 3 |
-| `_create_item` | `record.depth >= MAX_DEPTH` | a conductor AT depth 2 |
+| `child_depth` | `depth + 1 > MAX_DEPTH` | ADMITTED -- a depth-1 parent may create it |
+| `ensure_conductor` | `checked_depth > MAX_DEPTH` | ADMITTED -- its ledger opens |
+| `_create_item` | `record.depth >= MAX_DEPTH` | REFUSED on every item, worker items included |
 
-The asymmetry between the first and third comparisons is the finding. `child_depth`
-PERMITS a child at depth 2, because `1 + 1 > 2` is false, and `ensure_conductor`
-opens that child's ledger for the same reason. `_create_item` then refuses
-`record.depth >= MAX_DEPTH`, so a conductor sitting at depth 2 is refused on EVERY
-`create`. Not only a conductor child: `_create_item` takes no agent and no kind,
-so it cannot tell one item from another, and a plain leaf worker item is refused
-too.
+The middle guard is why the failure arrives late rather than early. It admits the
+depth-2 ledger, so the child bootstraps successfully and only then finds it can
+create nothing. The full chain:
 
-A conductor can therefore be created and seeded at depth 2 and then be unable to
-dispatch anything at all. The session, its slot and its whole seed are spent
-before anything discovers the dead end, and only that child sees the refusal --
-its parent's `create` succeeded.
+1. A depth-1 conductor creates an item for work nobody has sized.
+2. It creates and seeds a `kirocrew-conductor` child. Session creation carries no
+   depth check.
+3. `child_depth(1)` returns 2, because `1 + 1 > 2` is false, so the child's own
+   ledger opens at depth 2 through `ensure_conductor`, whose `>` admits it. The
+   child can record a goal: no depth comparison reads that write.
+4. The child's first `create` is refused -- "conductor is at depth 2 and the cap
+   is 2". `_create_item` takes no agent and no kind, so it cannot tell a conductor
+   item from a leaf worker item, and refuses both.
+
+The session, its slot and its whole seed are spent before anything discovers the
+dead end, and only the child ever sees the refusal: its parent's `create`
+succeeded.
+
+**A doc-versus-code mismatch rides along with this.** `_bootstrap` in
+`src/kiro_crew/dashboard/handlers/work_ledger.py` promises in its docstring that
+the refusal "surfaces as `depth_exceeded` (409) at the moment the child tries to
+open a ledger, rather than later when it tries to create an item". That holds for
+the generation PAST the cap -- a child of a depth-2 conductor is refused by
+`child_depth` at ledger-open -- and not for the generation AT the cap, which is
+the one that gets the late item-creation refusal. The docstring is neither simply
+right nor simply wrong: it states a guarantee that holds for one generation and
+not the other, and whichever shape below is chosen has to settle it. This document
+changes no code and no docstring.
 
 The fix is a choice between two shapes, and this document recommends neither:
 
 (a) **Refuse one level earlier.** Align `child_depth` with the item guard so a
-conductor is never created at a depth where it cannot dispatch. The refusal moves
-onto the parent, which still has its turn and can flatten the item into leaves
-instead.
+conductor is never created at a depth where it cannot create items. The refusal
+moves onto the parent, which still has its turn and can flatten the item into
+leaves instead, and the `_bootstrap` docstring's promise then holds for every
+generation.
 
-(b) **Let a conductor at the cap create leaf items.** Refuse only a conductor
-child, which is what the cap is actually for. A depth-2 conductor then works as a
-plain conductor over workers, and nothing is wasted.
+(b) **Let a conductor at the cap create LEAF items.** Refuse only a conductor
+child, which is what the cap is actually for. The third level stays useful as a
+worker-only lead, and nothing is wasted.
 
-This PR changes **no code** for either, and does **not** raise `MAX_DEPTH`. It is
-text only. The decision belongs to a maintainer and goes in §4; raising the cap,
-if that is ever wanted, is a separate capacity and evidence-fidelity question that
+`MAX_DEPTH` is **not raised here**, and this document carries **no code** for
+either shape. It is text only. The decision belongs to a maintainer and goes in
+§4; the size of the cap is a separate capacity and evidence-fidelity question that
 [rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) Q5 already holds, and
 would be bounded by `resource_status` and the server's slot limits rather than by
 a number in a prompt.
