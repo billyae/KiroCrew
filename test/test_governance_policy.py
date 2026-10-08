@@ -1379,7 +1379,7 @@ def _patch_trust(monkeypatch, *, require: bool, keys: dict):
     """Point the loader's trust root at fixed settings (no admission file I/O)."""
     monkeypatch.setattr(
         "kiro_crew.platform.governance._policy_trust_settings",
-        lambda: (require, dict(keys)),
+        lambda: (require, dict(keys), {}),
     )
 
 
@@ -1897,9 +1897,10 @@ class TestPolicySignatureAbsenceGate:
         monkeypatch.setenv("KIROCREW_ADMISSION_POLICY", str(adm))
         from kiro_crew.platform.governance import _policy_trust_settings
 
-        require, keys = _policy_trust_settings()
+        require, keys, public_keys = _policy_trust_settings()
         assert require is True
         assert keys == {"fleet-control": "k"}
+        assert public_keys == {}
 
     def test_security_policy_cannot_self_declare_the_requirement(self, monkeypatch, tmp_path):
         # A require_policy_signature key inside security_policy.json is NOT a

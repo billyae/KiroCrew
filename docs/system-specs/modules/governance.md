@@ -1307,8 +1307,8 @@ inventing a second scheme.
 | Piece | Where | Notes |
 |---|---|---|
 | Canonical payload | `policy_signing_payload()` | Routes through `admission.canonical_signing_bytes` — the **same** sorted-keys/compact-separators/UTF-8 canonicalization `PluginManifest.signing_payload` uses, so the two trust roots cannot drift |
-| Primitive | `admission.hmac_signature` | HMAC-SHA256 + `hmac.compare_digest`. POC symmetric; an asymmetric verify swaps in behind the same helper |
-| Trust key | admission policy `trust_keys[<issuer>]` | The **existing** operator-controlled key store — one store, not two |
+| Primitive | `admission.ed25519_verify` / `admission.hmac_signature` | Ed25519 when the issuer has a public key; otherwise HMAC-SHA256 + `hmac.compare_digest`. `ed25519_verify` never raises: malformed base64, wrong length (32-byte key, 64-byte signature) or a missing `cryptography` wheel is one `False` |
+| Trust key | admission policy `trust_public_keys[<issuer>]` (base64 Ed25519 public key), else `trust_keys[<issuer>]` (shared secret) | The **existing** operator-controlled trust root, read once per verification. An issuer with a public key is verified with it alone and **never** falls back to its `trust_keys` secret |
 | Opt-in | admission policy `require_policy_signature` | Separate from the plugin-facing `require_signature` |
 | Verdict | `GovernanceCeiling.signature_state` | `verified` / `unverified` / `unsigned` / `unchecked` |
 
@@ -1432,8 +1432,12 @@ can edit the admission policy (clearing the opt-in) as easily as the security
 policy. The `is_sensitive_path` keystone remains the control that stops the
 *agent* from reaching either file; signing is what makes a fleet-pushed ceiling
 tamper-**evident** to the host that loads it. Symmetric HMAC also means the
-verifier holds a secret capable of *producing* signatures, so key distribution is
-the residual weakness an asymmetric successor removes.
+verifier holds a secret capable of *producing* signatures, so anyone who can read
+`trust_keys` can mint a document that verifies. `trust_public_keys` removes that:
+the host holds only the public half, the private half never sits on a managed
+host, and because a public key disables the issuer's symmetric fallback, provisioning
+it is what stops an HMAC forgery from verifying. To stop accepting an issuer's
+symmetric proof without provisioning a public key, delete its `trust_keys` entry.
 
 `kirocrew policy show` prints the verdict verbatim
 (`GovernanceCeiling.signature_summary()`) so an operator can tell an established
@@ -3490,7 +3494,8 @@ carve-out stay as code. It expects `CONTRACT_VERSION == 1` (pinned pre-launch).
   per-process tier state: the remembered bundled tier and the two once-per-process
   latches).
 - `platform/admission.py` — `canonical_signing_bytes` / `hmac_signature` (shared
-  by both trust roots), `require_policy_signature` / `trust_keys`, and
+  by both trust roots), `ed25519_verify` (policy issuers only),
+  `require_policy_signature` / `trust_keys` / `trust_public_keys`, and
   `read_policy_trust_root` (the side-effect-free trust-root reader).
 - `platform/update_governance.py` — the shared update seam (`resolve_remote_url`,
   `update_blocked_reason`, `update_required`, `min_version`) called by

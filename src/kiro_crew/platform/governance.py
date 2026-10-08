@@ -64,6 +64,7 @@ from kiro_crew.config.paths import config_dir
 from kiro_crew.mcp_provenance import is_marked
 from kiro_crew.platform.admission import (
     canonical_signing_bytes,
+    ed25519_verify,
     hmac_signature,
     read_policy_trust_root,
 )
@@ -3002,15 +3003,22 @@ def policy_signing_payload(data: Mapping[str, object]) -> bytes:
 
 
 def _policy_signature_state(
-    data: Mapping[str, object], trust_keys: Mapping[str, str]
+    data: Mapping[str, object],
+    trust_keys: Mapping[str, str],
+    public_keys: Optional[Mapping[str, str]] = None,
 ) -> Tuple[str, str]:
     """Classify a policy document's signature.  Returns ``(state, detail)``.
 
     Pure and I/O-free: the caller supplies the trust keys, so this is directly
     unit-testable and the loader keeps the single responsibility of deciding what
-    to DO with the verdict.  Mirrors ``admission._signature_valid`` — HMAC-SHA256
-    over the canonical payload, compared with ``hmac.compare_digest`` — with the
-    key selected by ``identity.issuer`` instead of a plugin ``publisher``.
+    to DO with the verdict.  The key is selected by ``identity.issuer``.
+
+    An issuer with an entry in *public_keys* (``trust_public_keys``) is verified
+    with Ed25519 over the canonical payload and with nothing else: it NEVER falls
+    back to its ``trust_keys`` secret, because a fallback would let anyone who can
+    read that secret mint a document the asymmetric key was provisioned to stop.
+    An issuer without a public key keeps the HMAC-SHA256 check, compared with
+    ``hmac.compare_digest`` like ``admission._signature_valid``.
     """
     identity = data.get("identity")
     identity_map: Mapping[str, object] = identity if isinstance(identity, dict) else {}
@@ -3021,6 +3029,14 @@ def _policy_signature_state(
     if not issuer:
         # A signature with no issuer names no key, so nothing can verify it.
         return SIGNATURE_UNVERIFIED, "identity.signature present but identity.issuer is empty"
+    public_key = (public_keys or {}).get(issuer)
+    if public_key:
+        if ed25519_verify(public_key, policy_signing_payload(data), signature):
+            return SIGNATURE_VERIFIED, f"issuer {issuer!r} (ed25519)"
+        return (
+            SIGNATURE_UNVERIFIED,
+            f"signature does not verify against the Ed25519 public key for issuer {issuer!r}",
+        )
     secret = trust_keys.get(issuer)
     if not secret:
         return SIGNATURE_UNVERIFIED, f"no trust key for issuer {issuer!r}"
@@ -3047,8 +3063,12 @@ def _policy_signature_state(
     return SIGNATURE_UNVERIFIED, f"signature does not match trust key for issuer {issuer!r}"
 
 
-def _policy_trust_settings() -> Tuple[bool, Dict[str, str]]:
-    """Read the operator-controlled trust root: ``(require_policy_signature, keys)``.
+def _policy_trust_settings() -> Tuple[bool, Dict[str, str], Dict[str, str]]:
+    """Read the operator-controlled trust root.
+
+    Returns ``(require_policy_signature, trust_keys, trust_public_keys)`` from ONE
+    read, so a verification never pairs a symmetric map and a public-key map taken
+    from two different versions of a trust root mid-push.
 
     Sourced from the **admission policy** (``KIROCREW_ADMISSION_POLICY`` env path,
     else ``<data home>/admission_policy.json``) rather than from a new key store,
@@ -3078,10 +3098,14 @@ def _policy_trust_settings() -> Tuple[bool, Dict[str, str]]:
     """
     try:
         adm = read_policy_trust_root()
-        return bool(adm.require_policy_signature), dict(adm.trust_keys)
+        return (
+            bool(adm.require_policy_signature),
+            dict(adm.trust_keys),
+            dict(adm.trust_public_keys),
+        )
     except Exception:
         logger.debug("policy trust settings unavailable", exc_info=True)
-        return False, {}
+        return False, {}, {}
 
 
 def _policy_signature_required() -> bool:
@@ -3170,8 +3194,8 @@ def _verify_policy_signature(data: Mapping[str, object], *, source: str) -> str:
 
     Returns the state to record on the ceiling.  Never raises.
     """
-    _, trust_keys = _policy_trust_settings()
-    state, detail = _policy_signature_state(data, trust_keys)
+    _, trust_keys, public_keys = _policy_trust_settings()
+    state, detail = _policy_signature_state(data, trust_keys, public_keys)
     _audit_policy_signature(state, detail, source)
     return state
 
