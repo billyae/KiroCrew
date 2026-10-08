@@ -915,8 +915,21 @@ def _pin_private_agent_assignment(
             execution = execution.with_mode(previous.memory_mode)
     if validate_only:
         return store
+    # Establishing, so it vouches. Every caller of this helper has already
+    # authorized the owner's own request (see the docstring), and the store being
+    # published is the one CONFIG resolves for the selected member: `execution`
+    # comes from `resolve_member_execution`, and `previous` is reused above only
+    # when its member AND store equal that config-resolved pair. So the vouched
+    # store is never one the session's own record chose. Without the vouch, a
+    # dashboard tab the owner bound to a member is published but unvouched, and
+    # its own-store `session_create` is refused as `memory_delegation_denied`
+    # ("this process holds no vouched identity for the caller") for its whole life.
     bind_session_execution(
-        session_key, execution, replace_existing=previous is not None, expected=previous
+        session_key,
+        execution,
+        replace_existing=previous is not None,
+        expected=previous,
+        vouch=True,
     )
     return store
 

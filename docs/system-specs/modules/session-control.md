@@ -825,7 +825,11 @@ A private member store is reachable on two authorities and no others:
   chose would make the two sources one. Claiming it is OPT-IN: the default is not to
   vouch, so a binder that says nothing about provenance publishes the record and
   claims no authority, and a caller that should have claimed it fails loudly at a
-  refused dispatch rather than quietly widening access. A member-LESS identity is never
+  refused dispatch rather than quietly widening access. An owner's pick of a member
+  for a dashboard tab or member DM thread (`_pin_private_agent_assignment`) vouches:
+  every caller authorizes the owner's request first, and the store it publishes is
+  the one config resolves for that member, never one carried from the record. A
+  member-LESS identity is never
   vouched even when its caller asks: no member means the Global store, and the admission
   identifies its caller by member, so the entry could never be admitted.
   A record published elsewhere can also leave a vouched entry behind.
