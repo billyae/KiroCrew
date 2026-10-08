@@ -4106,16 +4106,51 @@ PID in `kiro_session_pids.txt` at spawn. These two runtime kinds live outside
 untracked orphans and SIGKILLed them mid-chat (surfacing as
 `process exited (rc=-9)`).
 
+**The active set is a pre-filter, not the authority.** It is a set gathered an
+event-loop hop before the decision, so it cannot see a party that started using a
+pid after it was read. What authorizes a signal on the periodic PID sweep
+(`_sweep_periodic_pids`) and on the orphan MCP sweep (`_sweep_untracked_mcps`) is the
+runtime ownership gate, asked once per pid at the decision point:
+`SessionCleanup._kill_authorized` calls `authorize_runtime_kill(pid, reason=...,
+caller="session_cleanup sweep")` for each candidate that survived the phase-2
+re-check. The gate refuses while either ownership table claims the pid: the lease
+table (`RuntimeOwnership`) or the tenancy table (`RuntimeTenancy`). A gate that raises
+is a refusal. A refusal withholds that pid only: it is dropped from the confirmed
+list, the rest of the pass continues, and the pid is asked about again on the next
+tick. Both verdicts are audited (`allowed` / `refused`), and `allowed` is never
+written as `killed`; the kill phase records what the signal actually did.
+
+The confirmed pids then pass through `teardown_barriers(confirmed, who="Sweep")`,
+which commits a tenancy teardown barrier for each one immediately before the
+kill phase runs and releases it when the phase exits, whether it returned or
+raised. The barrier closes the window between the gate's verdict and the signal (a
+thread hop, a pid-file read, token reads, a descendant walk): a tenant that claims
+the pid inside that window makes the barrier refuse it, and only the pids the
+barrier granted are signalled. The rest are left for the next tick. A new sweep
+that signals a pid must ask the gate per pid and take the barrier the same way;
+consulting the active set alone is the defect this section describes. The gate,
+the two tables and the barrier are specified in
+[runtime-ownership.md](runtime-ownership.md#the-one-kill-gate), and the
+kernel-against-registry reconciler that runs last on the same tick, with its
+`unowned_alive` / `owned_dead` counters, in
+[runtime-ownership.md](runtime-ownership.md#reconciliation-the-kernel-against-the-registry).
+
 ### Cross-platform process management (platform_compat)
 
 ### Reclaim identity: a projected marker set, and a subtractive token
 
 `kiro_session_pids.txt` entries are swept by `_sweep_pid_entries` (periodic, in two
 phases) and `cleanup_orphaned_session_roots` (run from the periodic cleanup loop;
-the startup/shutdown reclaim is `cleanup_orphaned_sessions`). What authorizes a signal in
-both is `_is_managed_agent_process(pid)` — does this PID still name the kind of process
+the startup/shutdown reclaim is `cleanup_orphaned_sessions`). What identifies the process
+in both is `_is_managed_agent_process(pid)` — does this PID still name the kind of process
 the entry described — plus each arm's own condition: a dead owning gateway, and for a
-token-less entry a reparent to init or to the dead gateway.
+token-less entry a reparent to init or to the dead gateway. On the periodic sweep that is
+not the whole authority: a pid that passes it still needs the ownership gate's per-pid
+allow and a committed teardown barrier before it is signalled (see
+[Orphan Sweep Active Set](#orphan-sweep-active-set)). `cleanup_orphaned_session_roots` and
+`cleanup_orphaned_sessions` do not ask the ownership gate: they reclaim entries whose
+owning gateway is dead, and the identity test and arm conditions here are the whole of
+their authority.
 
 That gate is per-TOKEN and exact wherever a command line can be read (Linux `/proc`,
 macOS `ps`), never a substring of the whole line: the projected names include
