@@ -358,6 +358,19 @@ returned summary, with a logged warning. Snapshot and restore keep refusing, bec
 copy opens `O_NOFOLLOW` and the walk rejects links and reparse points — so what the import
 path gives up is ancestor-swap resistance, not link resistance.
 
+The import's cron sanitizer (`portability._sanitize_imported_crons`) resolves the staged
+`crons.json` once in the same way: its parent is pinned where the platform can, the
+store is opened `O_NOFOLLOW|O_NONBLOCK` (through `platform_compat.open_file_no_reparse`
+where there is no pinning) and read through that descriptor, and anything that is not
+one regular file — a link, a FIFO, a hardlink alias — is reported as an unreadable store
+and replaced with an empty one. Every rewrite is an `atomic_write` into the pinned
+directory, so a link or hardlink alias swapped in after the read is replaced, never
+written through. A missing store, or a directory at that name, is left alone as before.
+The staged `notification_settings.json` in the same directory is rewritten by
+`atomic_write` too, for the same reason.
+The merge that consumes the sanitized store reads it again by name; closing that second
+resolution is the merge's job, not the sanitizer's.
+
 The dashboard import's Merge follows the same never-overwrite rule as
 `kirocrew restore --mode merge` for the settings documents (`config.json`,
 `config.local.json`, `ui-prefs.json`, `notification_settings.json`): it installs one
