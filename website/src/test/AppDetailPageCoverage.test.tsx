@@ -663,9 +663,23 @@ describe('AppDetailPage — uncovered surfaces', () => {
     renderDetail()
     await loaded()
 
-    expect(screen.getByText(/requests new permissions in this version: \/api\/memory, log\./)).toBeInTheDocument()
+    const notice = screen.getByText(/keeps running on the permissions you already approved/).closest('[role="status"]') as HTMLElement
+    expect(notice).not.toBeNull()
+    expect(within(notice).getByText(/API access: lets the app call/)).toBeInTheDocument()
+    expect(within(notice).getByText('/api/memory')).toBeInTheDocument()
+    expect(within(notice).getByText(/Live events: lets the app receive or send/)).toBeInTheDocument()
+    expect(within(notice).getByText('log')).toBeInTheDocument()
+    expect(within(notice).queryByText('/api/sessions')).not.toBeInTheDocument()
+    getApp.mockResolvedValue(installedApp({
+      manifest: {
+        displayName: 'Ledger Lens',
+        permissions: { api: ['/api/sessions', '/api/memory'], events: ['slots:own', 'log'] },
+      },
+    }))
     fireEvent.click(screen.getByRole('button', { name: 'Approve new permissions' }))
     await waitFor(() => expect(enableApp).toHaveBeenCalledWith(NAME, false, true))
+    expect(await screen.findByText('Approved: /api/memory, log. The app can use them now.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve new permissions' })).not.toBeInTheDocument()
   })
 
   it('shows no staged-permission notice when nothing is staged', async () => {

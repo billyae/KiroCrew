@@ -9803,7 +9803,10 @@
       "session_approval_confirm_title": "„{{name}}“ die Steuerung deiner Chats erlauben?",
       "session_approval_reconsent_notice": "{{name}} ist deaktiviert, weil die App neu darum bittet, deine Chats zu steuern. Prüfe die Berechtigung auf dieser Seite, bevor du sie aktivierst.",
       "approve_new_permissions": "Neue Berechtigungen genehmigen",
-      "grants_reconsent_notice": "{{name}} fordert in dieser Version neue Berechtigungen an: {{entries}}. Sie bleiben aus, und die App behält ihre bisherigen Berechtigungen, bis du sie genehmigst."
+      "grants_reconsent_notice": "{{name}} läuft weiter mit den Berechtigungen, die du bereits genehmigt hast. Diese Version fordert zusätzlich die folgenden an; sie bleiben aus, bis du sie genehmigst.",
+      "grants_reconsent_api": "API-Zugriff: erlaubt der App, diese Kiro-Crew-API-Pfade mit ihrem eigenen Token aufzurufen.",
+      "grants_reconsent_events": "Live-Ereignisse: erlaubt der App, diese Echtzeit-Ereignisse des Dashboards zu empfangen oder zu senden.",
+      "grants_approved": "Genehmigt: {{entries}}. Die App kann sie jetzt nutzen."
     },
     "appPage": {
       "loading_app": "App wird geladen…",

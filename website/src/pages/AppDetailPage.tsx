@@ -648,12 +648,15 @@ export default function AppDetailPage() {
     : ''
   // An update that added api/events entries is staged: the app keeps the set the
   // owner approved (`consentedGrants`) until they approve the new entries here.
-  const stagedGrants = app?.consentedGrants
-    ? [
-        ...(app.manifest?.permissions?.api || []).filter(p => !(app.consentedGrants?.api || []).includes(p)),
-        ...(app.manifest?.permissions?.events || []).filter(e => !(app.consentedGrants?.events || []).includes(e)),
-      ]
+  const stagedApi = app?.consentedGrants
+    ? (app.manifest?.permissions?.api || []).filter(p => !(app.consentedGrants?.api || []).includes(p))
     : []
+  const stagedEvents = app?.consentedGrants
+    ? (app.manifest?.permissions?.events || []).filter(e => !(app.consentedGrants?.events || []).includes(e))
+    : []
+  const hasStagedGrants = stagedApi.length + stagedEvents.length > 0
+  // Shown where the notice was once the owner approves, so the moment is confirmed.
+  const [grantsApprovedMsg, setGrantsApprovedMsg] = useState('')
   const enableLabel = app?.sessionApprovalConsentPending
     ? i18nT('pages.appDetailPage.enable_and_allow_chat_control')
     : i18nT('pages.appDetailPage.enable')
@@ -1433,20 +1436,43 @@ export default function AppDetailPage() {
           </div>
         )}
 
-        {app.installed && stagedGrants.length > 0 && (
+        {app.installed && hasStagedGrants && (
           <div
             role="status"
-            className="mb-4 flex flex-wrap items-start gap-2 rounded-lg border border-warn/30 bg-warn-subtle p-3 animate-rise"
+            className="mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-warn/30 bg-warn-subtle p-3 animate-rise"
           >
             <ShieldAlert size={14} className="mt-[3px] shrink-0 text-warn" />
-            <span className="text-text text-sm flex-1 min-w-0">
-              {i18nT('pages.appDetailPage.grants_reconsent_notice', { name: appDisplayName(app), entries: stagedGrants.join(', ') })}
-            </span>
+            <div className="text-text text-sm flex-1 min-w-0 grid gap-2">
+              <span>{i18nT('pages.appDetailPage.grants_reconsent_notice', { name: appDisplayName(app) })}</span>
+              {stagedApi.length > 0 && (
+                <div>
+                  <div className="text-[13px]">{i18nT('pages.appDetailPage.grants_reconsent_api')}</div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {stagedApi.map(p => (
+                      <code key={p} className="bg-bg-elevated border border-border px-1.5 py-0.5 rounded text-[11px] text-text">{p}</code>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {stagedEvents.length > 0 && (
+                <div>
+                  <div className="text-[13px]">{i18nT('pages.appDetailPage.grants_reconsent_events')}</div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {stagedEvents.map(e => (
+                      <code key={e} className="bg-bg-elevated border border-border px-1.5 py-0.5 rounded text-[11px] text-text">{e}</code>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <Btn
+              primary
               onClick={async () => {
                 setActionLoading('approve_grants')
+                const approved = [...stagedApi, ...stagedEvents].join(', ')
                 try {
                   await api.enableApp(app.name, false, true)
+                  setGrantsApprovedMsg(i18nT('pages.appDetailPage.grants_approved', { entries: approved }))
                   await load()
                   window.dispatchEvent(new Event('mc:apps-changed'))
                 } catch (e) {
@@ -1459,6 +1485,11 @@ export default function AppDetailPage() {
             >
               {i18nT('pages.appDetailPage.approve_new_permissions')}
             </Btn>
+          </div>
+        )}
+        {grantsApprovedMsg && !hasStagedGrants && (
+          <div role="status" className="mb-4 bg-ok/10 border border-ok/20 rounded-lg p-3 animate-rise">
+            <span className="text-ok text-sm block">{grantsApprovedMsg}</span>
           </div>
         )}
 

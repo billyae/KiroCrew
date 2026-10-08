@@ -1587,11 +1587,20 @@ that adds any entry to either is staged rather than disabled: `update_app` and
 every enforcement point -- `token_auth._app_api_allowlist`,
 `ws_event_scope._read_declared_events`, and the hook context's event bus via
 `approved_manifest_permissions` -- grants only declared entries that are also in
-that set (`staged_app_grants`). A later update keeps the original baseline, and
+that set (`staged_app_grants`). The manifest and `installed.json` are separate
+files written one after the other, so `staged_app_grants` reads the manifest
+between two reads of the record and uses it only when the record did not change
+around it (three tries, then nothing is granted); `get_app` is read-only, like
+`list_apps`, so a detail fetch cannot write back a record it read before a
+registration staged it. The approved event set is part of `hook_signature`, so
+approving staged events makes the hook reconciler reload the app and rebuild its
+event bus. A later update keeps the original baseline, and
 one back inside it clears the record. The detail page lists the held-back entries
-and its "Approve new permissions" button posts `/enable` with `grantsConsent:
-true` (owner-gated), which clears the record; the caches pick it up within their
-refresh interval. Failure direction is closed: an unreadable old manifest gives an
+under "API access" and "Live events" with a plain-words gloss for each group, and
+its "Approve new permissions" button posts `/enable` with `grantsConsent:
+true` (owner-gated), which clears the record and shows an "Approved: ..."
+confirmation; the API and WebSocket caches pick it up within their refresh
+interval. Failure direction is closed: an unreadable old manifest gives an
 empty baseline, a malformed `consentedGrants` record approves nothing, and an app
 directory with no readable record (corrupt, or mid-update between the tree swap
 and the new record) grants no `permissions.api` entry.

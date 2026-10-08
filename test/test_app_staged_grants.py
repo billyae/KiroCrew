@@ -205,3 +205,84 @@ def test_self_registration_adding_events_is_staged(app_home):
     )
     assert enable_app(name, grants_consent=True).ok
     assert "consentedGrants" not in get_app(name)
+
+
+def test_manifest_read_is_paired_with_an_unchanged_record(tmp_path, app_home, monkeypatch):
+    # A narrowing update lands between the manifest read and the record read:
+    # the widened manifest must not be judged against the record that no longer
+    # stages it.
+    _installed_v1(tmp_path)
+    assert update_app(_source(tmp_path, "v2", "2.0.0", api=[OLD_API, NEW_API])).ok
+    real_manifest = manager_mod.get_app_manifest
+    narrowed = []
+
+    def _manifest_then_narrow(name):
+        widened = real_manifest(name)
+        if not narrowed:
+            narrowed.append(True)
+            assert update_app(_source(tmp_path, "v3", "3.0.0", api=[OLD_API])).ok
+        return widened
+
+    monkeypatch.setattr(manager_mod, "get_app_manifest", _manifest_then_narrow)
+    assert _allowlist() == (OLD_API,)
+
+
+def test_record_that_keeps_changing_grants_nothing(tmp_path, app_home, monkeypatch):
+    _installed_v1(tmp_path)
+    real_read = manager_mod._read_installed
+    calls = []
+
+    def _always_new(name):
+        meta = real_read(name)
+        calls.append(1)
+        return None if meta is None else manager_mod.replace(meta, updatedAt=str(len(calls)))
+
+    monkeypatch.setattr(manager_mod, "_read_installed", _always_new)
+    assert _allowlist() == ()
+
+
+def test_detail_read_does_not_rewrite_a_freshly_staged_record(app_home, monkeypatch):
+    # get_app read the record, then a registration staged it and wrote the new
+    # manifest, then get_app read that manifest: writing its stale record back
+    # would erase the stage.
+    name = "ext-keypad"
+
+    def _manifest(version, events):
+        return {"name": name, "version": version, "permissions": {"events": events}}
+
+    assert register_external_app(
+        name, "1.0.0", "Keypad", manifest_data=_manifest("1.0.0", ["log"])
+    ).ok
+    real_read = manager_mod._read_installed
+    raced = []
+
+    def _read_then_register(app):
+        meta = real_read(app)
+        if not raced:
+            raced.append(True)
+            assert register_external_app(
+                name, "1.1.0", "Keypad", manifest_data=_manifest("1.1.0", ["log", "slots:all"])
+            ).ok
+        return meta
+
+    monkeypatch.setattr(manager_mod, "_read_installed", _read_then_register)
+    row = get_app(name)
+    monkeypatch.setattr(manager_mod, "_read_installed", real_read)
+    assert row["version"] == "1.1.0"
+    assert get_app(name)["consentedGrants"] == {"api": [], "events": ["log"]}
+
+
+def test_approving_staged_events_changes_the_hook_signature(tmp_path, app_home):
+    # The hook context's EventBus is built once per load; the reconciler reloads
+    # on a signature change, so approval must change it.
+    from kiro_crew.apps.hooks_integration import hook_signature
+
+    _installed_v1(tmp_path)
+    assert update_app(
+        _source(tmp_path, "v2", "2.0.0", api=[OLD_API], events=["slots:own", "log"])
+    ).ok
+    staged = hook_signature(get_app(APP))
+    assert enable_app(APP, grants_consent=True).ok
+    approved = hook_signature(get_app(APP))
+    assert staged != approved
+    assert approved_manifest_permissions(get_app(APP))["events"] == ["slots:own", "log"]

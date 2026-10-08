@@ -9674,7 +9674,10 @@
       "session_approval_confirm_title": "‘{{name}}’에 채팅 제어를 허용할까요?",
       "session_approval_reconsent_notice": "{{name}} 앱이 새로 채팅 제어 권한을 요청하여 비활성화되었습니다. 활성화하기 전에 이 페이지에서 권한을 검토하세요.",
       "approve_new_permissions": "새 권한 승인",
-      "grants_reconsent_notice": "{{name}} 앱이 이 버전에서 새 권한을 요청합니다: {{entries}}. 승인하기 전까지 이 권한은 꺼져 있으며 앱은 이전 권한으로 동작합니다."
+      "grants_reconsent_notice": "{{name}} 앱은 이미 승인한 권한으로 계속 동작합니다. 이 버전은 아래 권한도 요청합니다. 승인하기 전까지 이 권한은 꺼져 있습니다.",
+      "grants_reconsent_api": "API 액세스: 앱이 자체 토큰으로 이 Kiro Crew API 경로를 호출할 수 있게 합니다.",
+      "grants_reconsent_events": "실시간 이벤트: 앱이 이 대시보드 실시간 이벤트를 받거나 보낼 수 있게 합니다.",
+      "grants_approved": "승인됨: {{entries}}. 이제 앱에서 사용할 수 있습니다."
     },
     "appPage": {
       "loading_app": "앱을 불러오는 중…",

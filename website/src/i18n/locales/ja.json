@@ -9674,7 +9674,10 @@
       "session_approval_confirm_title": "「{{name}}」にチャットの操作を許可しますか？",
       "session_approval_reconsent_notice": "{{name}} は新たにチャットの制御を要求するため、無効になっています。有効にする前に、このページで権限を確認してください。",
       "approve_new_permissions": "新しい権限を承認",
-      "grants_reconsent_notice": "{{name}} はこのバージョンで新しい権限を要求しています: {{entries}}。承認するまでこれらは無効のままで、アプリは以前の権限で動作します。"
+      "grants_reconsent_notice": "{{name}} は承認済みの権限で動作を続けます。このバージョンでは下記の権限も要求しています。承認するまでこれらは無効のままです。",
+      "grants_reconsent_api": "API アクセス: アプリが自身のトークンでこれらの Kiro Crew API パスを呼び出せるようにします。",
+      "grants_reconsent_events": "ライブイベント: アプリがこれらのダッシュボードのリアルタイムイベントを受信または送信できるようにします。",
+      "grants_approved": "承認済み: {{entries}}。アプリはこれらを今すぐ使えます。"
     },
     "appPage": {
       "loading_app": "アプリを読み込み中…",
