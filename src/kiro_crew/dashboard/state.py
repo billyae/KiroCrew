@@ -2914,6 +2914,8 @@ class _ChatSlot:
         "_foreign_reported",
         "_pending_rewrite",
         "_file_changes",
+        "_git_repos",
+        "_git_repos_seeded",
         "_turn_reply_mids",
         "linked_session_key",
         # Relay-archive marker: an older build ran this slot's turns on a peer
@@ -3907,6 +3909,13 @@ class _ChatSlot:
         self._file_changes: list[dict[str, Any]] = (
             []
         )  # [{path, content, canonical_path, pending_str_replace?}] before-snapshots per turn for chips
+        # Real roots of the git repositories this session's tool calls worked
+        # in, oldest to newest touch (``git_repo_touches``). In memory only:
+        # ``_git_repos_seeded`` records whether the transcript's file-change rows
+        # have been folded in yet, which is how a restored slot gets its list
+        # back after a gateway restart.
+        self._git_repos: list[str] = []
+        self._git_repos_seeded: bool = False
         # ``meta.mid`` of every reply row the runner in flight appended this
         # turn (``chat_runner._flush_segment`` / ``_persist_partial_reply``).
         # ``_flush_file_changes`` attaches the turn's chips only to one of these

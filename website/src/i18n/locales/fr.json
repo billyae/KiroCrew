@@ -9067,7 +9067,6 @@
       "loading": "chargement...",
       "not_a_repository": "Ce n’est pas un dépôt Git",
       "not_a_repository_help": "Ce dossier de projet n’est pas un dépôt Git. Si le dépôt se trouve dans un sous-dossier, cliquez sur le nom du dossier sous la zone de message.",
-      "no_project": "Aucun dossier de projet défini pour cette session.",
       "refresh": "Actualiser",
       "title": "Git",
       "uncommitted": "{{count}} non validé(s)",
@@ -9087,7 +9086,10 @@
       "filter_refused_title_unreadable_changes": "Kiro ne peut pas afficher les modifications pour le moment",
       "filter_refused_title_unreadable_history": "Kiro ne peut pas afficher l’historique pour le moment",
       "ask_agent_changes": "Interroger l’agent sur les modifications",
-      "ask_agent_history": "Interroger l’agent sur l’historique"
+      "ask_agent_history": "Interroger l’agent sur l’historique",
+      "repos_empty": "Aucun dépôt Git pour l’instant. Les dépôts apparaissent ici dès que ce chat y modifie des fichiers ou y exécute des commandes.",
+      "source_project": "Projet",
+      "repos_failed": "Impossible de lister les dépôts de ce chat."
     },
     "workspaceTree": {
       "status_failed": "Impossible de lire l’état du dépôt.",

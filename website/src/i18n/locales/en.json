@@ -4044,7 +4044,9 @@
       "refresh": "Refresh",
       "title": "Git",
       "uncommitted": "{{count}} uncommitted",
-      "no_project": "No project folder set for this session."
+      "repos_empty": "No Git repositories yet. Repositories appear here once this chat edits files or runs commands in them.",
+      "source_project": "Project",
+      "repos_failed": "Couldn't list this chat's repositories."
     },
     "agentImportFlow": {
       "back": "Back",

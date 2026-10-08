@@ -8944,7 +8944,6 @@
       "loading": "wird geladen...",
       "not_a_repository": "Kein Git-Repository",
       "not_a_repository_help": "Dieser Projektordner ist kein Git-Repository. Wenn sich das Repository in einem Unterordner befindet, klicken Sie auf den Ordnernamen unter dem Nachrichtenfeld.",
-      "no_project": "Kein Projektordner für diese Sitzung festgelegt.",
       "refresh": "Aktualisieren",
       "title": "Git",
       "uncommitted": "{{count}} nicht committet",
@@ -8964,7 +8963,10 @@
       "filter_refused_title_unreadable_changes": "Kiro kann die Änderungen derzeit nicht anzeigen",
       "filter_refused_title_unreadable_history": "Kiro kann den Verlauf derzeit nicht anzeigen",
       "ask_agent_changes": "Agent zu den Änderungen fragen",
-      "ask_agent_history": "Agent zum Verlauf fragen"
+      "ask_agent_history": "Agent zum Verlauf fragen",
+      "repos_empty": "Noch keine Git-Repositorys. Repositorys erscheinen hier, sobald dieser Chat darin Dateien bearbeitet oder Befehle ausführt.",
+      "source_project": "Projekt",
+      "repos_failed": "Die Repositorys dieses Chats konnten nicht aufgelistet werden."
     },
     "workspaceTree": {
       "status_failed": "Der Repository-Status konnte nicht gelesen werden.",

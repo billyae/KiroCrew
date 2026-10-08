@@ -76,6 +76,7 @@ from kiro_crew.config.sections import (  # noqa: F401
     link_pattern_url_ok,
 )
 from kiro_crew.dashboard import file_api as _file_api
+from kiro_crew.dashboard import git_repo_touches as _git_repo_touches  # noqa: F401
 from kiro_crew.dashboard import part_stream, upload_destination  # noqa: F401
 from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
@@ -165,6 +166,7 @@ from kiro_crew.dashboard.file_api.pinned_io import (  # noqa: F401
 )
 from kiro_crew.dashboard.file_api.project_dirs import (  # noqa: F401
     _git_head_path,
+    _git_repo_listing,
     _known_project_dirs,
     _match_known_project,
     _match_known_project_for,
@@ -172,8 +174,10 @@ from kiro_crew.dashboard.file_api.project_dirs import (  # noqa: F401
     _read_git_meta_prefix,
     _redact_project_path,
     _resolve_project_git,
+    _slot_git_repo_snapshot,
     _slot_project_snapshot,
     api_project_git,
+    api_project_git_repos,
 )
 from kiro_crew.dashboard.file_api.project_tree import (  # noqa: F401
     _project_tree_allot,
@@ -237,6 +241,11 @@ from kiro_crew.dashboard.handlers._shared import (
 )
 from kiro_crew.dashboard.handlers.messaging import _resolve_session_target
 from kiro_crew.dashboard.origin import is_direct_local_request
+from kiro_crew.dashboard.slot_ownership import (  # noqa: F401
+    app_owns_slot_session,
+    deny_app_slot_session_access,
+    slot_not_found,
+)
 from kiro_crew.dashboard.state import (  # noqa: F401
     VALID_MEMORY_MODES,
     DashboardState,

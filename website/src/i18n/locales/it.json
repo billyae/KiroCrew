@@ -9067,7 +9067,6 @@
       "loading": "caricamento...",
       "not_a_repository": "Non è un repository Git",
       "not_a_repository_help": "Questa cartella di progetto non è un repository Git. Se il repository si trova in una sottocartella, fai clic sul nome della cartella sotto la casella del messaggio.",
-      "no_project": "Nessuna cartella di progetto impostata per questa sessione.",
       "refresh": "Aggiorna",
       "title": "Git",
       "uncommitted": "{{count}} non committati",
@@ -9087,7 +9086,10 @@
       "filter_refused_title_unreadable_changes": "Kiro non può mostrare le modifiche in questo momento",
       "filter_refused_title_unreadable_history": "Kiro non può mostrare la cronologia in questo momento",
       "ask_agent_changes": "Chiedi all'agente delle modifiche",
-      "ask_agent_history": "Chiedi all'agente della cronologia"
+      "ask_agent_history": "Chiedi all'agente della cronologia",
+      "repos_empty": "Ancora nessun repository Git. I repository compaiono qui non appena questa chat vi modifica file o esegue comandi.",
+      "source_project": "Progetto",
+      "repos_failed": "Impossibile elencare i repository di questa chat."
     },
     "workspaceTree": {
       "status_failed": "Impossibile leggere lo stato del repository.",
