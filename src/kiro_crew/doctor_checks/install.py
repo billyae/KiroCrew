@@ -292,6 +292,52 @@ def _doctor_path_launcher() -> None:
     )
 
 
+def _doctor_browser_bootstrap() -> None:
+    """Report the npm and Node the browser install would pick from THIS shell's PATH.
+
+    The in-product browser install resolves both through ``env.find_node_tool``
+    -- version-manager directories first, then ``PATH`` -- and that is the one
+    step of browser support that still reads the environment. Doctor repeats
+    the lookup in its own process, so where no version manager supplies the
+    tool and the gateway was started with a different ``PATH`` (a service
+    manager), the gateway can resolve another binary; the install logs the
+    paths it actually ran, which is the authoritative record. Writability comes
+    from the same predicate the CLI resolver refuses on. Nothing is refused here.
+
+    A writable toolchain under ``$HOME`` (nvm, fnm, volta, mise) is the NORMAL
+    case and reads as information. Only one writable OUTSIDE the home earns a
+    warning, and even that is not recorded as a doctor issue.
+    """
+    from kiro_crew.browser_cli.install import bootstrap_tool_provenance
+    from kiro_crew.env import find_node_tool
+
+    for name in ("npm", "node"):
+        label = f"  browser {name}:"
+        path = find_node_tool(name)
+        if path is None:
+            print(f"{label} ⏹ not found (the browser install needs Node.js with npm)")
+            continue
+        info = bootstrap_tool_provenance(path)
+        if info["writable_at"] is None:
+            print(f"{label} ✅ {path} (writability not checked on this platform)")
+        elif not info["writable_at"]:
+            print(f"{label} ✅ {path}")
+        elif info["under_home"]:
+            print(f"{label} ℹ️  {path} (user-owned toolchain under your home; expected)")
+        else:
+            print(f"{label} ⚠️  {path} is replaceable by this user outside its home")
+            render._print_wrapped(
+                f"{info['writable_at']} is writable by this user, so anything running "
+                "as it could swap the binary before the browser install runs it. "
+                "Install Node from a version manager under your home or a "
+                "root-owned system path."
+            )
+    render._print_wrapped(
+        "These rows resolve from this shell's PATH; the gateway logs the npm and "
+        "Node it actually ran at install time."
+    )
+
+
 def _doctor_source_checkout(repo: Path) -> None:
     """Report whether an editable install's source tree is current.
 

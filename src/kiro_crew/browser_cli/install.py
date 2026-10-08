@@ -549,6 +549,37 @@ def _gateway_writable_component(candidate: Path, resolved: Path) -> Path | None:
     return None
 
 
+def bootstrap_tool_provenance(path: str) -> dict[str, object]:
+    """Describe a resolved bootstrap ``npm``/``node``: where it lands, who can replace it.
+
+    Returns ``{"path", "real_path", "writable_at", "under_home"}``.
+    ``writable_at`` is the first component of the executable's hierarchy the
+    gateway user can write, from the SAME predicate the CLI resolver refuses on
+    (:func:`_gateway_writable_component`), or ``""`` when there is none.
+    ``under_home`` says whether that component sits under the user's home,
+    which is where nvm, fnm, volta and mise install, so a writable toolchain
+    there is the expected case rather than an anomaly.
+
+    Reporting only: the bootstrap never refuses on this answer. ``writable_at``
+    is ``None`` -- not checked -- on Windows, where ``os.access`` reads only the
+    read-only attribute and not the ACL. A gateway running as root gets the
+    resolver's own answer: every component is writable by it.
+    """
+    real = os.path.realpath(path)
+    writable_at: str | None
+    if platform_compat.IS_WINDOWS:
+        writable_at = None
+    else:
+        component = _gateway_writable_component(Path(path), Path(real))
+        writable_at = "" if component is None else str(component)
+    home = os.path.realpath(os.path.expanduser("~"))
+    under_home = bool(writable_at) and (
+        os.path.realpath(writable_at) == home
+        or os.path.realpath(writable_at).startswith(home + os.sep)
+    )
+    return {"path": path, "real_path": real, "writable_at": writable_at, "under_home": under_home}
+
+
 def _system_candidate(candidate: Path) -> tuple[Path | None, str | None]:
     """Validate a fixed system candidate with the tailnet planted-binary floor."""
     resolved, reason = _resolve_executable(candidate)
@@ -1811,6 +1842,30 @@ def _download_browser(command: list[str], engine: str | None = None) -> list[dic
     return [first, attempt(f"install-browser{suffix}-no-deps", base, True)]
 
 
+def _log_bootstrap_tools(npm: str | None, node: str | None) -> None:
+    """Log which npm and Node the install bootstrap is about to run.
+
+    These come from the gateway's PATH and version-manager directories, the one
+    place the browser install still reads that environment, so the resolved
+    paths -- and whether the gateway user could have replaced them -- are
+    recorded for whoever later asks what ran. ``kirocrew doctor`` reports the
+    same answer.
+    """
+    for name, path in (("npm", npm), ("node", node)):
+        if path is None:
+            logger.info("browser install bootstrap: %s not found", name)
+            continue
+        info = bootstrap_tool_provenance(path)
+        logger.info(
+            "browser install bootstrap: %s=%s (real %s, user-writable at=%s, under home=%s)",
+            name,
+            path,
+            info["real_path"],
+            info["writable_at"] if info["writable_at"] is not None else "not checked",
+            info["under_home"],
+        )
+
+
 def install(on_stage: StageCallback | None = None) -> dict[str, Any]:
     """Install the CLI, a browser, and the skills reference.
 
@@ -1825,7 +1880,12 @@ def install(on_stage: StageCallback | None = None) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     _emit_stage(on_stage, STAGE_INSTALLING_CLI)
 
+    # Both bootstrap tools are resolved ONCE, here, and the same answers are
+    # what runs: the gateway PATH and version-manager dirs are not re-read
+    # between the npm step and the Node staging step.
     npm = find_node_tool("npm")
+    node = find_node_tool("node")
+    _log_bootstrap_tools(npm, node)
     if npm is None:
         steps.append(
             {
@@ -1866,10 +1926,9 @@ def install(on_stage: StageCallback | None = None) -> dict[str, Any]:
     if not steps[-1]["ok"]:
         return {"ok": False, "steps": steps}
 
-    node = find_node_tool("node")
     try:
         if node is None:
-            raise OSError("node not found after npm install")
+            raise OSError("node not found on the gateway PATH or version-manager dirs")
         runtime_node = _node_runtime_executable(node)
         if runtime_node is None:
             raise OSError("Node did not report an executable process.execPath")
