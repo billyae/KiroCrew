@@ -209,6 +209,29 @@ export function useSessionRename({ dispatch, store, queryClient }: {
   }
 }
 
+/** "Regenerate title" from a session row's menu: the same endpoint and store
+ *  write as the chat header's hover-revealed button, reachable without making
+ *  the session active. A refusal lands in `autoTitleError`, rendered by the
+ *  sidebar-root ErrorNotice cluster beside the rename one. */
+export function useSessionAutoTitle({ dispatch }: { dispatch: AppDispatch }) {
+  const [autoTitleError, setAutoTitleError] = useState('')
+  // One request per slot at a time: a second pick while the first is still
+  // generating would pay for a second model call whose answer races the first.
+  const inFlightRef = useRef(new Set<string>())
+  const onAutoTitle = useCallback((key: string) => {
+    if (inFlightRef.current.has(key)) return
+    inFlightRef.current.add(key)
+    setAutoTitleError('')
+    api.generateTitle(key).then(r => {
+      /* title is redacted server-side via redact_exfiltration_urls + redact_credentials */
+      if (r.title) dispatch(sseSlotTitle({ key, title: r.title }))
+    }).catch(e => {
+      setAutoTitleError(errMessage(e) || i18nT('pages.chatPage.unknown_error'))
+    }).finally(() => { inFlightRef.current.delete(key) })
+  }, [dispatch])
+  return { autoTitleError, setAutoTitleError, onAutoTitle }
+}
+
 /** Folder rename state, scoped to the render instance being edited. */
 export function useFolderRename({ renamingSlot, suppressMenuRestoreRef }: {
   renamingSlot: string | null
