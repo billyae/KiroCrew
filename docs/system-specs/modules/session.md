@@ -353,6 +353,20 @@ do their work, and release — the process stays warm.
 It checks context usage and **recycles** (kill + fresh spawn) the session
 if needed — no compaction, since background tasks are stateless:
 
+- A turn refused as too long for the model's window → recycle, whatever
+  percentage is reported, on the shared-conversation path only (backends outside
+  `_bg_runtime_backends()`). After a refusal the reported percentage is still the
+  last successful turn's, so the threshold alone kept a conversation that every
+  later turn was refused on until the gateway restarted. The verdict reaches
+  `recycle_background()` two ways: `run_bg_oneliner()` passes
+  `context_overflowed=True` when its own turn raised it, and `stream_and_collect()`
+  leaves it on the provider (`mark_context_overflowed`) because its callers, such
+  as history consolidation, may swallow the error before `background_turn()`'s
+  recycle runs. `llm_helpers.is_context_overflow_error()` is the one predicate: the
+  classifier's `context_overflow` tag, or the backends' "Prompt is too long" /
+  "context window overflowed" / "maximum context length" text, since the claude
+  adapter puts its refusal in the JSON-RPC `message` the classifier does not read.
+  Runtime-capable backends keep the criteria below unchanged.
 - At ≥ 70% context → recycle (same threshold as chat's default compaction)
 - A reported 0% that the provider flags as *unknown* (`context_usage_unknown` —
   the backend compacted in place) → recycle
@@ -370,7 +384,13 @@ if needed — no compaction, since background tasks are stateless:
   bounded either way.
 - Below thresholds → no-op (session stays warm)
 
-Callers: heartbeat callback, taskrunner lesson extraction.
+Callers: heartbeat callback, taskrunner lesson extraction, `background_turn()`,
+and `run_bg_oneliner()` whenever its handle is a `_ProviderBgSession` (marked
+`shares_background_conversation`). That handle's `destroy()` only releases the
+turn semaphore, so without this call one-liner traffic (titles, nav labels,
+folder icons, summaries) grew the shared conversation for the whole gateway
+uptime with no criterion ever evaluated (#18230). A runtime handle's session is
+ephemeral and carries no marker, so it is not followed by a recycle.
 
 ### Multiplexed _bg runtime
 
