@@ -928,7 +928,9 @@ def _session_tools() -> tuple[Tool, ...]:
                 "(a finished watcher, a workstream you handed off), not to interrupt one "
                 "you might still need — for that, session_stop only cancels the turn and "
                 "leaves the tab open. Read the session first when you are unsure what it "
-                "is doing."
+                "is doing. You may also pass your OWN session key to close yourself once "
+                "your one job is finished; that cancels this turn, so make it your last "
+                "call and write anything the person should read before it."
             ),
             schema={
                 "type": "object",

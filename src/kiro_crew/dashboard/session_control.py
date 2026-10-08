@@ -4037,9 +4037,12 @@ def authorize_target(
     member) the fence is evaluated inline as before.
 
     ``allow_self`` waives the self-target refusal, and with it the ownership fence for
-    that one case. Exactly one verb passes it: a release, where the target itself is a
+    that one case. Two verbs pass it. A release, where the target itself is a
     legitimate caller because a session taken over must not depend on its holder still
-    running to get out. It waives nothing else -- an ephemeral, app-scoped or
+    running to get out. A close, so a session that has finished its one job can archive
+    its own tab instead of leaving it for the person or its creator to dismiss; the close
+    is the same recoverable archival a peer close is, and it cancels the caller's own
+    running turn, which is the turn asking for it. It waives nothing else -- an ephemeral, app-scoped or
     channel-linked caller is still refused, and a target that is not the caller is
     still judged by every rule above.
     """
@@ -5741,6 +5744,7 @@ async def close_target(
         target=target,
         operation="close",
         precomputed_ownership_fenced=caller_fenced,
+        allow_self=True,
     )
     slot_key = slot.key
     # Deferred for the same import cycle `stop_target` documents.
@@ -5776,6 +5780,7 @@ async def close_target(
                 operation="close",
                 skip_enabled_check=True,
                 precomputed_ownership_fenced=caller_fenced,
+                allow_self=True,
             )
         except SessionControlError as exc:
             # A stale-authorization refusal (mirrored/linked/workspace/caller-gone)

@@ -389,7 +389,7 @@ Both take only `target`. They are not interchangeable.
 | The tab afterwards | Still open, idle | Archived to history, reopenable |
 | A running turn | Cancelled, its work discarded | Cancelled first, then archived |
 | Queued messages | Kept by the first stop; an escalated stop clears them | Saved with the archive and handed back when the conversation is reopened |
-| Use it when | A peer is working on something wrong or already done | You are finished with a peer session you created |
+| Use it when | A peer is working on something wrong or already done | You are finished with a peer session you created, or with your own session |
 
 `session_stop` is **cooperative and safe to re-send**. A repeat within
 `stop_retry.WINDOW_SECS` (120 seconds) of your own first stop of that target
@@ -407,6 +407,13 @@ cancel is still in flight.
 `session_close` is not a permanent delete — the conversation is archived and
 `session_revive` brings it back — but it does discard a running turn's work. Read the session first
 when you are not sure what it is doing.
+
+A session may close **itself**: pass your own session key as `target`. This is
+for a session that was opened for one job and has finished it, so it does not
+leave a tab for the person to dismiss. It is the same archival as closing a
+peer, and it cancels the turn that asked for it, so make it your last call and
+write whatever the person should read before it. `session_close` is the only
+verb (besides `session_release`) that accepts its own caller as the target.
 
 ### `session_end_wait`
 
@@ -685,7 +692,7 @@ gateway-issued key counts. Refusals you should expect, by code:
 | `target_not_found` | No open session matches that key or title. A closed tab is out of scope for every verb except session_revive, whose target is precisely an archived session |
 | `target_already_live` | session_revive only: the session is open already. The message carries its live key — address it directly |
 | `ambiguous_target` | The string matches more than one session across the three forms below. Address it by its session key |
-| `self_target` | A session cannot control itself |
+| `self_target` | A session cannot control itself. session_close and session_release are the exceptions: both accept the caller as the target |
 | `not_creator` | The caller is fenced to sessions it created itself (a crew member's DM slot, a scheduled run, and anything either of them created) |
 | `workspace_mismatch` | Peers must be in the same workspace — that is the memory boundary |
 | `ephemeral_target` | Incognito and temporary sessions are not addressable |
