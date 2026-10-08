@@ -56,64 +56,59 @@ something each owner re-teaches by hand in every seed.
 | 8 | When the conductor runs as a crewmate, the dynamic dashboard is the person's status board. | `dashboard_fields` / `dashboard_write` ([rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md)) for the agentic fields, and `panel_publish` with the `kirocrew-conductor` template (`kiro_crew.conductor_board_contract`) for the drawer board. | The dashboard section says to refresh the agentic fields -- the verdict line and "what I want you to look at next" -- at each milestone from ledger data, and never to type a number the fold already provides. |
 | 9 | Pin the scope in one line before fanning out. The newest owner statement wins. | The ledger `goal` and its `goal_version`, written by `action=goal`, and the skill's existing "Goal changes mid-flight" section. | Round 0 restates the ask in one sentence and checks it against what the owner said earlier. On a conflict, the newest statement wins and the conductor says which one it is following. |
 
-## 3. Open question
+## 3. Open question: two `depth` guards disagree
 
-**Is `depth` 2 the right cap once a conductor is the default?**
+Making a conductor the default dispatch target means conductors dispatching
+conductors, which is the case the `depth` cap bounds. Measuring that cap at
+`1c5a71db4d` turned up something other than "is 2 too tight". **Two guards use
+different comparisons against the same `MAX_DEPTH`, and they disagree about
+whether a conductor may exist at the cap.**
 
-`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`, and `child_depth` refuses past
-it rather than clamping. A root conductor may dispatch a conductor; that child's
-items must be leaves. The code comment at `child_depth` calls the number "a guess
-informed by session multiplication, not a measurement", and
-[rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) Q5 sets the condition
-for re-examining it: once a conductor of conductors has actually run.
+`MAX_DEPTH` is 2 in `src/kiro_crew/work_ledger.py`. Three guards there raise
+`CODE_DEPTH_EXCEEDED`, and the dashboard's `_bootstrap` in
+`src/kiro_crew/dashboard/handlers/work_ledger.py` calls the first of them to
+derive a child's depth:
 
-Lesson 1 makes that condition routine, and makes the cap bite: an unsized item at
-the second level routes to a conductor too, that dispatch is refused, and the item
-is left to be flattened into leaves at a level where nobody has sized it -- the
-failure lesson 1 exists to stop.
+| Guard | Its comparison | Refuses |
+|---|---|---|
+| `child_depth` | `depth + 1 > MAX_DEPTH` | a parent already at depth 2 |
+| `ensure_conductor` | `checked_depth > MAX_DEPTH` | a ledger at depth 3 |
+| `_create_item` | `record.depth >= MAX_DEPTH` | a conductor AT depth 2 |
 
-This document does **not** propose raising the cap. Two readings are both
-consistent with what is on main:
+The asymmetry between the first and third comparisons is the finding. `child_depth`
+PERMITS a child at depth 2, because `1 + 1 > 2` is false, and `ensure_conductor`
+opens that child's ledger for the same reason. `_create_item` then refuses
+`record.depth >= MAX_DEPTH`, so a conductor sitting at depth 2 is refused on EVERY
+`create`. Not only a conductor child: `_create_item` takes no agent and no kind,
+so it cannot tell one item from another, and a plain leaf worker item is refused
+too.
 
-1. **2 is correct, and lesson 1 needs a boundary clause.** Route an unsized item
-   to a conductor only while `depth` allows it, which a conductor can tell from
-   its own `depth` before it creates the item. At the cap, size the item yourself
-   and dispatch leaves. `depth_exceeded` stays an error that means flatten, never
-   retry.
-2. **2 is too tight, and the cap moves.** Each level multiplies sessions and turns
-   a report into a summary of summaries, which is why the cap is 2. Raising it is
-   a capacity and evidence-fidelity decision rather than a text change, so it
-   needs its own proposal, bounded by `resource_status` and the server's slot
-   limits rather than by a number in the prompt.
+A conductor can therefore be created and seeded at depth 2 and then be unable to
+dispatch anything at all. The session, its slot and its whole seed are spent
+before anything discovers the dead end, and only that child sees the refusal --
+its parent's `create` succeeded.
 
-A second input to the same decision: the per-goal item budget is per ledger, not
-per program. A second-level conductor opens its own board with its own cap, so the
+The fix is a choice between two shapes, and this document recommends neither:
+
+(a) **Refuse one level earlier.** Align `child_depth` with the item guard so a
+conductor is never created at a depth where it cannot dispatch. The refusal moves
+onto the parent, which still has its turn and can flatten the item into leaves
+instead.
+
+(b) **Let a conductor at the cap create leaf items.** Refuse only a conductor
+child, which is what the cap is actually for. A depth-2 conductor then works as a
+plain conductor over workers, and nothing is wasted.
+
+This PR changes **no code** for either, and does **not** raise `MAX_DEPTH`. It is
+text only. The decision belongs to a maintainer and goes in §4; raising the cap,
+if that is ever wanted, is a separate capacity and evidence-fidelity question that
+[rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) Q5 already holds, and
+would be bounded by `resource_status` and the server's slot limits rather than by
+a number in a prompt.
+
+One more input to the same decision: the per-goal item budget is per ledger, not
+per program. A second-level conductor opens its own board with its own cap, so a
 parent's count does not cover its grandchildren.
-
-**How the cap is enforced**, measured at `1c5a71db4d`. Three guards, each raising
-`CODE_DEPTH_EXCEEDED`, all in `src/kiro_crew/work_ledger.py`: `child_depth`
-refuses when `depth + 1 > MAX_DEPTH`, `ensure_conductor` refuses a ledger whose
-own `depth > MAX_DEPTH`, and `_create_item` refuses when
-`record.depth >= MAX_DEPTH`.
-
-Which guard a real run meets, and where, is the part that bears on this question.
-`_bootstrap` in `src/kiro_crew/dashboard/handlers/work_ledger.py` opens a
-session's own ledger and derives its depth from its parent, and its docstring pins
-the refusal point: the 409 "surfaces ... at the moment the child tries to open a
-ledger, rather than later when it tries to create an item". So the guard that
-fires is `child_depth`, on the CHILD's first `work_ledger_record` call, after that
-session was created, seeded and started a turn. The parent's own `create` is not
-refused: at depth 1 `record.depth >= MAX_DEPTH` is false, so `_create_item`'s
-guard is reached only by a depth-2 record, which `_bootstrap` never produces. It
-is defence in depth, not the refusal anyone meets.
-
-That sharpens the question rather than settling it. Under lesson 1 a grandchild
-conductor is created, seeded and spends a turn before learning it may not conduct,
-and the item it was dispatched for is then held by a session that cannot decompose
-it. Reading 1 therefore has to put its boundary clause in the text that PLANS an
-item, where the conductor knows its own depth, and not in the Which-agent table,
-which the refused session reaches too late. The maintainer's answer goes in §4,
-before the implementation merges.
 
 ## 4. Decision
 
