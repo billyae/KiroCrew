@@ -165,7 +165,7 @@ def _url_payload_command(n: int) -> str:
 #: inline. No new entry point, no target, no matching rule and no threshold moved.
 #:
 #: Raised again, from 28,572, for naming the program and target tokens in a self-kill
-#: refusal: ``argv_floor`` splits the command into shell words at their real source
+#: refusal: ``argv_spans`` splits the command into shell words at their real source
 #: offsets through the shared quote/escape state machine, aligns those raw word spans
 #: to the resolved frame's tokens by index, and brackets the kill program and its
 #: target at their true offsets even when the program entered through a ``$VAR``
@@ -177,6 +177,37 @@ def _url_payload_command(n: int) -> str:
 #: ``argv_spans`` module -- the raw word-span splitter and its index alignment -- so
 #: ``argv_floor`` stays under its per-module cap; most of the cost is that machinery
 #: and its record, not new matching logic.
+#:
+#: Raised again, from 28,631, for the review fix that stops the self-kill
+#: diagnostic naming the wrong tokens: ``argv_spans`` now emits a span for an
+#: active newline (the token walk turns it into a ``;`` separator token, so
+#: without it the raw and resolved lists shift by one on any multi-line command)
+#: and, before returning a pair, re-tokenises each picked slice and keeps it only
+#: when both are a single shell word and the program slice is itself a by-name
+#: kill program -- so a residual shift that slipped past the count check (a
+#: cancelling newline-plus-redirect) falls back to the whole-command span instead
+#: of bracketing ``-f`` as the program and ``>`` as the target. The additions are
+#: that newline branch, the re-tokenise check and their comments, plus the
+#: defensive ``try/except`` wrapping the span call in ``__init__`` so a parser
+#: edge case can never raise inside the deny gate. No new matching pass and no
+#: moved threshold -- the verdict is unchanged, only the reader-facing fields.
+#:
+#: Raised again, from 28,873, for verifying the self-kill diagnostic's TARGET
+#: slice before naming it. ``argv_spans`` runs the picked target word through the
+#: same self-name predicate that picks ``j`` (accepting an unresolved ``$`` slice,
+#: which cannot be name-matched but is still the resolved target), so a shift that
+#: lands only on the target index -- a redirect/here-string/NBSP/comment the raw
+#: split and the token walk break differently, cancelling in the word count --
+#: falls back to the whole-command span instead of bracketing ``>``/``in``/``x``
+#: as the target. ``__init__`` also falls back when case-lowering changes the
+#: string length (``İ`` -> two code points), so an offset computed on the
+#: lower-cased command cannot misindex the submitted one. ``RefusalTokenSpan`` is
+#: internal to ``diagnostics`` only -- the facade does not re-export it (it has no
+#: package-level consumer). Most of the added lines are the explanatory comments,
+#: including a MIRROR note pinning the by-name walk to its twin in
+#: ``_is_self_kill`` (which the per-frame-memo invariant keeps from being factored
+#: into a shared helper). No new matching pass and no moved threshold -- the
+#: verdict is unchanged, only the reader-facing fields.
 #:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
@@ -213,7 +244,7 @@ def _url_payload_command(n: int) -> str:
 #: refusal: the ``argv_spans`` module and the optional program/target span fields on
 #: ``diagnostics`` are the measured growth; the number below is re-pinned to the new
 #: measured total.
-_PACKAGE_LINE_BUDGET = 28_572
+_PACKAGE_LINE_BUDGET = 28_921
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

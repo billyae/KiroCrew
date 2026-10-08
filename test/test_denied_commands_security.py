@@ -924,6 +924,35 @@ class TestSelfProtectionKillDiagnosticSpans:
         assert "kirocrew" in cmd[target[0] : target[1]]
         assert "kirocrew" not in line  # still no bytes on the line itself
 
+    def test_multiline_with_redirect_keeps_whole_span_not_misaligned_tokens(self) -> None:
+        # A top-level newline is a ``;`` token in the floor's walk, and a
+        # redirect ``>out`` is one walk token but two raw words. When those two
+        # divergences cancel, the word COUNTS match while the slices are shifted
+        # by one, which an index-only alignment would read as ``-f`` the program
+        # and ``>`` the target -- the exact misdiagnosis this feature exists to
+        # prevent. The per-pair re-tokenise check rejects such a shifted pair, so
+        # the diagnostic keeps the honest whole-command span with no
+        # program=/target= fields rather than naming the wrong tokens.
+        for cmd in (
+            "true\npkill -f kirocrew >out",
+            "ls -la\npkill -f kirocrew >/dev/null",
+        ):
+            line = self._diag_line(cmd)
+            assert self._field(line, "program") is None, line
+            assert self._field(line, "target") is None, line
+            assert self._field(line, "span") == (0, len(cmd)), line
+
+    def test_multiline_without_redirect_still_names_the_tokens(self) -> None:
+        # The newline span keeps the common multi-line case (no cancelling
+        # redirect) precise: program=/target= still bracket the real tokens.
+        cmd = "true\npkill -f kirocrew"
+        line = self._diag_line(cmd)
+        program = self._field(line, "program")
+        target = self._field(line, "target")
+        assert program is not None and target is not None, line
+        assert cmd[program[0] : program[1]] == "pkill"
+        assert cmd[target[0] : target[1]] == "kirocrew"
+
     def test_other_floors_have_no_token_fields(self) -> None:
         # Acceptance criterion 3: a different floor's diagnostic line is
         # byte-identical to before -- no program=/target=.
@@ -934,6 +963,49 @@ class TestSelfProtectionKillDiagnosticSpans:
         line = [ln for ln in str(reason).splitlines() if ln.startswith("Refusal diagnostic:")]
         assert line, reason
         assert "program=" not in line[-1] and "target=" not in line[-1], line[-1]
+
+    def test_target_shift_keeps_whole_span_not_a_wrong_token(self) -> None:
+        # buluoray's blocking repros: a redirect / here-string the raw split
+        # breaks but the walk keeps as one token, plus a trailing comment or an
+        # NBSP, cancel in the word COUNT while shifting only the TARGET index.
+        # The program slice is still ``pkill``, so the program-only check passed
+        # them, but the slice at ``j`` is ``in`` / ``x`` / ``>`` -- not the
+        # product name. The target slice is now run through the same self-name
+        # predicate that picked ``j``, so these fall back to the whole-command
+        # span with NO program=/target= fields rather than naming a wrong token.
+        from kiro_crew import security
+
+        for cmd in (
+            "pkill -f <in kirocrew # it's ok",
+            "pkill -f <<<x kirocrew # it's fine",
+            "pkill -f \u00a0 kirocrew >/dev/null",
+            "pkill -9 -f \u00a0 kirocrew ( >|x",
+        ):
+            assert security.is_denied(cmd), cmd  # the verdict is unchanged: still denied
+            line = self._diag_line(cmd)
+            assert self._field(line, "program") is None, (cmd, line)
+            assert self._field(line, "target") is None, (cmd, line)
+            assert self._field(line, "span") == (0, len(cmd)), (cmd, line)
+
+    def test_case_expansion_length_shift_keeps_whole_span(self) -> None:
+        # ``İ`` (LATIN CAPITAL I WITH DOT ABOVE) lower-cases to two code points
+        # (``i`` + combining dot), so ``command.lower()`` is longer than the
+        # submitted command and an offset computed on the lower-cased string
+        # would land on the wrong bytes of the original. The diagnostic does not
+        # build an offset map for that: when lowering changes the length it
+        # falls back to the whole-command span. The verdict is unchanged.
+        from kiro_crew import security
+
+        # A dotted-capital I appended as its own argument: it keeps the command
+        # a denied self-kill while making ``command.lower()`` longer than the
+        # submitted command.
+        cmd = "pkill -f kirocrew \u0130"
+        assert security.is_denied(cmd), cmd
+        assert len(cmd.lower()) != len(cmd), "test precondition: lowering must change length"
+        line = self._diag_line(cmd)
+        assert self._field(line, "program") is None, line
+        assert self._field(line, "target") is None, line
+        assert self._field(line, "span") == (0, len(cmd)), line
 
     def test_refusal_diagnostic_id_still_reads_the_rule(self) -> None:
         # Acceptance criterion 4: extra fields do not disturb the rule-id reader.

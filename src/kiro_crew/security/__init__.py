@@ -1434,14 +1434,29 @@ def is_denied(
             # bare identifier reads as a false explanation.
             _emit_deny_event(tool_name, pattern, lower)
             # self-protection-kill decides on two specific tokens, so it names
-            # them. The offsets come from ``lower``; lower-casing never
-            # changes length, so they index ``tool_name`` identically. ``None``
-            # (the bare-kill leg, or a token with no literal source span) keeps
-            # the whole-command span. Every other floor passes neither.
+            # them. The offsets come from ``lower`` and index ``tool_name`` only
+            # while the two have the SAME length. Lower-casing is usually
+            # length-preserving, but a few code points expand (``İ`` ->
+            # ``i`` + combining dot, so ``"İ".lower()`` is two chars): then a
+            # span from ``lower`` lands on the wrong bytes of ``tool_name``. We
+            # do not build an offset map for that rare case -- we fall back to
+            # the whole-command span, exactly as for any other shape the span
+            # code does not plainly understand. ``None`` (the bare-kill leg, or a
+            # token with no literal source span) also keeps the whole-command
+            # span. Every other floor passes neither.
             program_span: "tuple[int, int] | None" = None
             target_span: "tuple[int, int] | None" = None
-            if rule_id == "self-protection-kill":
-                spans = _submodule("argv_spans")._self_kill_token_spans(lower)
+            if rule_id == "self-protection-kill" and len(lower) == len(tool_name):
+                # The span computation is a reader-facing diagnostic, never part
+                # of the verdict (the deny is already decided above). It must not
+                # be the thing that raises inside a gate -- the contract
+                # ``refusal_diagnostic`` states -- so any parser edge case in it
+                # degrades to the plain whole-command span rather than letting an
+                # exception escape ``is_denied`` from a deny branch.
+                try:
+                    spans = _submodule("argv_spans")._self_kill_token_spans(lower)
+                except Exception:
+                    spans = None
                 if spans is not None:
                     program_span, target_span = spans
             return _reason(
@@ -2761,7 +2776,6 @@ _EXPORTS: dict[str, str] = {
     "REFUSAL_DIAGNOSTIC_PREFIX": "diagnostics",
     "RefusalDiagnostic": "diagnostics",
     "RefusalSpanShape": "diagnostics",
-    "RefusalTokenSpan": "diagnostics",
     "annotate_refusal": "diagnostics",
     "refusal_diagnostic": "diagnostics",
     "refusal_span_shape": "diagnostics",
@@ -3348,7 +3362,6 @@ if TYPE_CHECKING:  # keep the names visible to type checkers and IDEs
         REFUSAL_DIAGNOSTIC_PREFIX,
         RefusalDiagnostic,
         RefusalSpanShape,
-        RefusalTokenSpan,
         annotate_refusal,
         refusal_diagnostic,
         refusal_span_shape,
