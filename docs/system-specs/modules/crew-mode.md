@@ -919,8 +919,13 @@ and a junk watchdog override collapses to `0`.
 
 When a crewmate conversation is open, the standing roster is hidden at every
 desktop width and the thread receives that space. `CrewmateSwitcher` replaces it
-in the thread header: the closed Glass chip stacks up to three faces plus the
-roster count; its popover searches every crewmate, marks the current one, switches
+in the thread header: the closed Glass chip stacks up to three faces, then the
+page's name as visible text (`pages.membersPage.title`, "Crewmates") and the
+roster count. Faces and a number alone did not read as the crew list to a
+first-time visitor whom a bare `/members` had dropped into a thread, so the
+word names the chip as the roster. The chip's accessible name starts with that
+visible word (label in name) and the action ("Switch crewmate") is its tooltip.
+Its popover searches every crewmate, marks the current one, switches
 the thread through the existing verified `openMember` path, and opens the same
 `NewCrewmateDialog` as the roster's create entry. The stacked faces are the OTHER
 crewmates' in roster order — the open crewmate's face is already the identity
