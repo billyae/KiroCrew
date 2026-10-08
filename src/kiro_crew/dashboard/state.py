@@ -2863,6 +2863,8 @@ class _ChatSlot:
         "_foreign_reported",
         "_pending_rewrite",
         "_file_changes",
+        "_file_changes_since",
+        "_path_write_token",
         "_turn_reply_mids",
         "linked_session_key",
         # Relay-archive marker: an older build ran this slot's turns on a peer
@@ -3856,6 +3858,12 @@ class _ChatSlot:
         self._file_changes: list[dict[str, Any]] = (
             []
         )  # [{path, content, canonical_path, pending_str_replace?}] before-snapshots per turn for chips
+        # Sequence number on the process-wide file-write log
+        # (``chat_turn.file_changes._PATH_WRITES``) when this slot's turn began;
+        # 0 until a turn starts, which widens the cross-session window.
+        self._file_changes_since: int = 0
+        # This slot's identity on that log, minted on first use (0 = unset).
+        self._path_write_token: int = 0
         # ``meta.mid`` of every reply row the runner in flight appended this
         # turn (``chat_runner._flush_segment`` / ``_persist_partial_reply``).
         # ``_flush_file_changes`` attaches the turn's chips only to one of these

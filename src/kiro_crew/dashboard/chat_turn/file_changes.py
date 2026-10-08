@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         _MAX_SNAPSHOT_PATH_CHARS,
         _MAX_TURN_SNAPSHOT_CHARS,
         _MAX_TURN_SNAPSHOT_ENTRIES,
+        _PATH_WRITES,
         _SNAPSHOT_READ_BYTES,
         _SNAPSHOT_TRUNCATION_MARKER,
         _WRITE_COMMANDS,
@@ -259,6 +260,10 @@ def _resolve_pending_str_replace(pending: dict[str, Any], after: str) -> _Snapsh
         path. ``_flush_file_changes`` therefore skips resolution for the whole
         turn when a shell tool ran (its ``turn_had_shell`` argument), keeping
         the fragment rather than trusting an unattributable turn-end read.
+      * The same edit made by ANOTHER session on the same file: the writer-id
+        gate is slot-local and never sees it, so ``_flush_file_changes`` asks
+        the process-wide ``_PATH_WRITES`` log and skips resolution for a path
+        another slot wrote inside this turn's window.
     This resolver settles only the single-tracked-write case the deferral is
     safe for, and every before it returns is captured disk content.
 
@@ -493,6 +498,196 @@ def _apply_turn_snapshot_budget(
 _PATH_TRUNCATION_MARKER = "..."
 
 
+class _PathWriteLog:
+    """Which chat slots recorded a write to which canonical path, and when.
+
+    The writer-id gate in ``_record_turn_snapshot`` sees only the writes its own
+    slot records, but every slot's writes land on one filesystem. A second
+    session making the same strReplace on the same file inside this turn's
+    window shapes the turn-end read exactly as a second same-slot writer would,
+    so the flush asks this log whether ANOTHER slot touched the path and keeps
+    the fragment when one did.
+
+    Each path maps a slot token to ``[last_seq, open]``: the global sequence
+    number of that slot's latest recorded write, and whether the slot's turn is
+    still open. A foreign writer counts when it wrote after this turn began OR
+    its own turn is still open, because a permission-gated write is recorded
+    when it is requested and can land on disk minutes later, inside a turn that
+    began after the record.
+
+    Every caller runs on the event loop (the snapshot read is offloaded, the
+    record is not), so the log takes no lock. Both dimensions are bounded:
+    past ``max_paths`` the least recently written path is forgotten, and past
+    ``max_writers`` writers on one path the oldest writer record is dropped.
+    A forgotten record keeps exactly the uncertainty it carried, on whichever
+    path it was on, because a path re-created after eviction holds only the
+    writers seen since:
+
+    * a CLOSED record mattered only to turns that began before its write, so
+      ``_evicted_seq`` rises to that write's sequence number and those turns
+      treat every path as foreign. A turn that began after it is unaffected,
+      so a long-lived process does not lose resolution for good;
+    * an OPEN record may still land on disk, so its slot joins
+      ``_lost_open`` and every other slot's turn treats every path as foreign
+      until that slot's turn closes. The set holds at most one entry per slot
+      with an open turn.
+
+    Closing a turn re-stamps that slot's records with the CLOSE's sequence
+    number: a write requested before another turn began can land inside it
+    (approval arrives late), and the close is the last moment it could have,
+    so a turn that began before the close still sees it. A slot with a write
+    snapshot still being taken off the event loop is ``_in_flight``: its
+    write may already be on disk while its record does not exist yet, so
+    every other slot's turn treats every path as foreign until it records.
+
+    So a bound can only make a resolution fail closed. The instance is runner
+    state (``chat_runner._PATH_WRITES``), as the composition contract requires.
+    """
+
+    def __init__(self, max_paths: int, max_writers: int) -> None:
+        self._seq = 0
+        self._evicted_seq = 0
+        self._next_token = 0
+        self._max_paths = max_paths
+        self._max_writers = max_writers
+        self._paths: dict[str, dict[int, list[Any]]] = {}
+        self._lost_open: set[int] = set()
+        self._in_flight: dict[int, int] = {}
+
+    def now(self) -> int:
+        return self._seq
+
+    def new_token(self) -> int:
+        """A slot identity never reused in this process (``id()`` can be)."""
+        self._next_token += 1
+        return self._next_token
+
+    def _forget(self, token: int, record: list[Any]) -> None:
+        seq, is_open = record
+        if is_open:
+            self._lost_open.add(token)
+        else:
+            self._evicted_seq = max(self._evicted_seq, seq)
+
+    def note(self, key: str, token: int) -> None:
+        self._seq += 1
+        # Re-inserting moves the path to the end: dict order is recency order.
+        writers = self._paths.pop(key, None)
+        if writers is None:
+            writers = {}
+            while len(self._paths) >= self._max_paths:
+                evicted = self._paths.pop(next(iter(self._paths)))
+                for other, record in evicted.items():
+                    self._forget(other, record)
+        self._paths[key] = writers
+        writers.pop(token, None)
+        while len(writers) >= self._max_writers:
+            # Insertion order is write order, so the first entry is the oldest.
+            oldest = next(iter(writers))
+            self._forget(oldest, writers.pop(oldest))
+        writers[token] = [self._seq, True]
+
+    def close(self, keys: Any, token: int) -> None:
+        """End ``token``'s turn: none of its recorded writes is still pending."""
+        self._seq += 1
+        for key in keys:
+            held = self._paths.get(key, {}).get(token)
+            if held is not None:
+                held[0] = self._seq
+                held[1] = False
+        if token in self._lost_open:
+            # Its forgotten writes could have landed at any point up to now.
+            self._lost_open.discard(token)
+            self._evicted_seq = self._seq
+
+    def begin_snapshot(self, token: int) -> None:
+        self._in_flight[token] = self._in_flight.get(token, 0) + 1
+
+    def end_snapshot(self, token: int) -> None:
+        remaining = self._in_flight.get(token, 0) - 1
+        if remaining > 0:
+            self._in_flight[token] = remaining
+        else:
+            self._in_flight.pop(token, None)
+
+    def foreign_since(self, key: str, token: int, since: int) -> bool:
+        if self._evicted_seq > since:
+            return True
+        if any(other != token for other in self._lost_open):
+            return True
+        if any(other != token for other in self._in_flight):
+            return True
+        writers = self._paths.get(key, {})
+        return any(
+            other != token and (is_open or seq > since) for other, (seq, is_open) in writers.items()
+        )
+
+
+def _slot_write_token(slot: Any) -> int:
+    """The write log's identity for one slot, minted once and kept on it.
+
+    ``id()`` alone is reusable after a slot is collected, which would let a new
+    slot read a dead one's open record as its own. A slot that cannot hold the
+    attribute (a test double) falls back to ``id()``.
+    """
+    token = getattr(slot, "_path_write_token", 0)
+    if isinstance(token, int) and not isinstance(token, bool) and token > 0:
+        return token
+    token = _PATH_WRITES.new_token()
+    try:
+        slot._path_write_token = token
+    except AttributeError:
+        return id(slot)
+    return token
+
+
+def _begin_turn_path_writes(slot: Any) -> None:
+    """Mark where this slot's turn starts on the process-wide write log."""
+    try:
+        slot._file_changes_since = _PATH_WRITES.now()
+    except AttributeError:
+        pass
+
+
+def _begin_write_snapshot(slot: Any, raw_params: Any) -> bool:
+    """Mark ``slot`` as taking a write-tool snapshot; True when it was marked.
+
+    Called before the snapshot is offloaded, so the window in which the write
+    can be on disk with no record yet is visible to every other slot's flush.
+    Pair a True return with ``_end_write_snapshot`` once the record is made.
+    """
+    if not isinstance(raw_params, dict):
+        return False
+    # A shell tool's ``command`` can be an argv list, which is unhashable.
+    command = raw_params.get("command")
+    if not isinstance(command, str) or command not in _WRITE_COMMANDS:
+        return False
+    _PATH_WRITES.begin_snapshot(_slot_write_token(slot))
+    return True
+
+
+def _end_write_snapshot(slot: Any) -> None:
+    _PATH_WRITES.end_snapshot(_slot_write_token(slot))
+
+
+def _close_turn_path_writes(slot: Any, keys: Any) -> None:
+    """Mark this slot's writes to ``keys`` as belonging to a finished turn."""
+    _PATH_WRITES.close(keys, _slot_write_token(slot))
+
+
+def _foreign_path_write(slot: Any, key: str) -> bool:
+    """True when another slot wrote ``key`` inside this slot's turn window.
+
+    A slot with no recorded turn start (a test double, a turn that never ran
+    the start hook) uses 0, the whole process lifetime, so a missing start
+    widens the window instead of narrowing it.
+    """
+    since = getattr(slot, "_file_changes_since", 0)
+    if not isinstance(since, int):
+        since = 0
+    return _PATH_WRITES.foreign_since(key, _slot_write_token(slot), since)
+
+
 def _record_turn_snapshot(
     slot: "_ChatSlot", snapshot: dict[str, Any], writer_key: str = ""
 ) -> None:
@@ -529,8 +724,14 @@ def _record_turn_snapshot(
     the change with no flag. The gate fails closed — an unknown writer is
     treated as a different one — so a resolution survives only the
     single-known-writer case the deferral is actually safe for.
+
+    The gate is slot-local, so every record is also noted on the process-wide
+    ``_PATH_WRITES`` log under this slot's token; ``_flush_file_changes`` asks
+    that log whether ANOTHER slot wrote the same canonical path inside this
+    turn's window and keeps the fragment when one did.
     """
     key = snapshot.get("canonical_path") or snapshot["path"]
+    _PATH_WRITES.note(key, _slot_write_token(slot))
     for index, held in enumerate(slot._file_changes):
         if (held.get("canonical_path") or held.get("path")) == key:
             # A second writer to this path makes a deferred before unsafe:

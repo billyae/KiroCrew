@@ -44,15 +44,21 @@ from kiro_crew.dashboard.chat_runner import (
     _MAX_TURN_SNAPSHOT_CHARS,
     _MAX_TURN_SNAPSHOT_ENTRIES,
     _apply_turn_snapshot_budget,
+    _begin_turn_path_writes,
+    _begin_write_snapshot,
+    _end_write_snapshot,
     _flush_file_changes,
+    _foreign_path_write,
     _note_reply_row,
     _record_turn_snapshot,
     _run_chat,
     _safe_read_snapshot,
+    _slot_write_token,
     _snapshot_write_target,
     _truncate_snapshot,
     _turn_line_changes,
 )
+from kiro_crew.dashboard.chat_turn.file_changes import _PathWriteLog
 from kiro_crew.dashboard.state import _ChatSlot, row_mid
 from kiro_crew.security import redact
 
@@ -2331,6 +2337,213 @@ class TestPendingStrReplaceResolution:
         assert entries[0]["before"] == self.BEFORE
         assert entries[0]["after"] == self.AFTER
         assert "pending_str_replace" not in entries[0]
+
+    def _deferred(self, f: Path, slot: _ChatSlot, writer: str) -> None:
+        snap = _snapshot_write_target(
+            {**self.PARAMS, "path": str(f)},
+            diff_old_text=self.PARAMS["oldStr"],
+            diff_path=str(f),
+        )
+        assert snap is not None and "pending_str_replace" in snap
+        _record_turn_snapshot(slot, snap, writer)
+
+    def test_identical_edit_by_another_session_keeps_the_fragment(self, short_tmp_dir: Path):
+        """The writer-id gate is slot-local, so a SECOND session making the
+        same strReplace on the same file in the same turn window never reaches
+        it. The turn-end file then equals ``if_pre_write`` of the first
+        session's post-write snapshot, and content-only resolution would show
+        the after-first-edit content as the before. The process-wide write log
+        sees the other slot's record, so the first slot keeps the fragment."""
+        f = short_tmp_dir / "rc"
+        f.write_text(self.BEFORE)
+        mine = _make_slot_with_assistant_message()
+        other = _make_slot_with_assistant_message()
+        _begin_turn_path_writes(mine)
+        _begin_turn_path_writes(other)
+        self._deferred(f, mine, "writer-A")
+        self._deferred(f, other, "writer-A")
+        # Each slot's own gate saw only one writer, so both deferrals survive.
+        assert "pending_str_replace" in mine._file_changes[0]
+        f.write_text(self.AFTER)
+        _flush_file_changes(mine)
+        entry = mine.messages[-1]["meta"]["file_changes"][0]
+        assert entry["before"] == self.PARAMS["oldStr"]
+
+    def test_other_session_still_in_its_turn_keeps_the_fragment(self, short_tmp_dir: Path):
+        """A permission-gated write is recorded when it is requested and can
+        land on disk minutes later, so another slot whose turn is still OPEN
+        counts even when it recorded before this turn began."""
+        f = short_tmp_dir / "rc"
+        f.write_text(self.BEFORE)
+        mine = _make_slot_with_assistant_message()
+        other = _make_slot_with_assistant_message()
+        _begin_turn_path_writes(other)
+        self._deferred(f, other, "writer-B")
+        _begin_turn_path_writes(mine)
+        self._deferred(f, mine, "writer-A")
+        f.write_text(self.AFTER)
+        _flush_file_changes(mine)
+        assert mine.messages[-1]["meta"]["file_changes"][0]["before"] == self.PARAMS["oldStr"]
+
+    def test_other_session_finished_before_this_turn_still_resolves(self, short_tmp_dir: Path):
+        """Control: a write another slot made in a turn that FINISHED before
+        this one began is outside the window, so the ordinary single-writer
+        resolution still settles to the captured disk content."""
+        f = short_tmp_dir / "rc"
+        f.write_text(self.BEFORE)
+        mine = _make_slot_with_assistant_message()
+        other = _make_slot_with_assistant_message()
+        _begin_turn_path_writes(other)
+        self._deferred(f, other, "writer-B")
+        _flush_file_changes(other)
+        f.write_text(self.BEFORE)
+        _begin_turn_path_writes(mine)
+        self._deferred(f, mine, "writer-A")
+        f.write_text(self.AFTER)
+        _flush_file_changes(mine)
+        entry = mine.messages[-1]["meta"]["file_changes"][0]
+        assert entry["before"] == self.BEFORE
+        assert entry["after"] == self.AFTER
+
+
+class TestPathWriteLog:
+    """The process-wide log behind the cross-session check fails closed."""
+
+    def test_evicted_closed_write_counts_only_for_turns_begun_before_it(self):
+        log = _PathWriteLog(max_paths=2, max_writers=8)
+        since = log.now()
+        log.note("/a", 2)
+        log.close(["/a"], 2)
+        log.note("/b", 3)
+        log.close(["/b"], 3)
+        log.note("/c", 3)  # evicts /a with slot 2's closed record
+        assert log.foreign_since("/a", 1, since) is True
+        # A turn that began after that write has nothing to fear from it.
+        assert log.foreign_since("/a", 1, log.now()) is False
+
+    def test_evicting_an_old_closed_write_leaves_later_turns_resolvable(self):
+        """The bound must not disable resolution for the rest of the process:
+        churning through closed history only affects turns older than it."""
+        log = _PathWriteLog(max_paths=2, max_writers=8)
+        log.note("/old", 2)
+        log.close(["/old"], 2)
+        since = log.now()
+        for index in range(5):
+            log.note(f"/churn{index}", 1)
+        assert log.foreign_since("/churn4", 1, since) is False
+
+    def test_evicted_open_write_stays_foreign_until_its_turn_closes(self):
+        """A permission-held write can land after its record is evicted, and
+        after the path is re-recorded, so its slot stays a suspect for every
+        other turn -- including ones begun after the eviction."""
+        log = _PathWriteLog(max_paths=2, max_writers=8)
+        log.note("/a", 2)  # slot 2's turn stays open
+        log.note("/b", 3)
+        log.close(["/b"], 3)
+        log.note("/c", 3)  # evicts /a with slot 2's OPEN record
+        log.close(["/c"], 3)
+        log.note("/a", 3)  # re-created without slot 2
+        log.close(["/a"], 3)
+        since = log.now()
+        assert log.foreign_since("/a", 1, since) is True
+        assert log.foreign_since("/a", 2, since) is False  # never its own
+        log.close(["/a"], 2)
+        # Its forgotten write may have landed up to the close, so a turn that
+        # was running stays wary; one begun after the close does not.
+        assert log.foreign_since("/a", 1, since) is True
+        assert log.foreign_since("/a", 1, log.now()) is False
+
+    def test_own_writes_never_count_and_closed_old_writes_do_not(self):
+        log = _PathWriteLog(max_paths=8, max_writers=8)
+        log.note("/a", 1)
+        assert log.foreign_since("/a", 1, 0) is False
+        log.note("/a", 2)
+        assert log.foreign_since("/a", 1, log.now()) is True  # still open
+        log.close(["/a"], 2)
+        assert log.foreign_since("/a", 1, log.now()) is False
+        assert log.foreign_since("/a", 1, 0) is True
+
+    def test_a_path_recreated_after_eviction_still_counts_as_foreign(self):
+        """Slot 2 writes /a inside slot 1's turn, /a is evicted, then slot 1
+        writes /a again: the re-created entry holds only slot 1, so the lookup
+        must not trust it -- the eviction watermark decides first."""
+        log = _PathWriteLog(max_paths=2, max_writers=8)
+        since = log.now()
+        log.note("/a", 2)
+        log.close(["/a"], 2)
+        log.note("/b", 3)
+        log.note("/c", 3)  # evicts /a with slot 2's record
+        log.note("/a", 1)  # re-creates /a holding only slot 1
+        assert log.foreign_since("/a", 1, since) is True
+
+    def test_writers_per_path_are_bounded_and_dropping_one_fails_closed(self):
+        log = _PathWriteLog(max_paths=8, max_writers=3)
+        since = log.now()
+        for token in range(1, 6):
+            log.note("/a", token)
+            log.close(["/a"], token)
+        assert len(log._paths["/a"]) == 3
+        # Dropped writer history makes every turn begun before the drop wary.
+        assert log.foreign_since("/a", 99, since) is True
+        assert log.foreign_since("/a", 99, log.now()) is False
+
+    def test_a_write_requested_before_this_turn_and_closed_inside_it_counts(self):
+        """Slot 2 requests its write before slot 1's turn starts, the approval
+        lands the write during slot 1's turn, and slot 2 closes before slot 1
+        flushes: the close re-stamps the record, so slot 1 still sees it."""
+        log = _PathWriteLog(max_paths=8, max_writers=8)
+        log.note("/a", 2)
+        since = log.now()
+        log.note("/a", 1)
+        log.close(["/a"], 2)
+        assert log.foreign_since("/a", 1, since) is True
+
+    def test_closing_a_slot_with_forgotten_open_writes_fails_closed_for_running_turns(self):
+        log = _PathWriteLog(max_paths=1, max_writers=8)
+        log.note("/a", 2)  # open
+        log.note("/b", 3)  # evicts /a with slot 2's OPEN record
+        log.close(["/b"], 3)
+        since = log.now()
+        log.close(["/a"], 2)
+        assert log.foreign_since("/b", 1, since) is True
+        assert log.foreign_since("/b", 1, log.now()) is False
+
+    def test_an_in_flight_write_snapshot_counts_until_it_ends(self):
+        """A write can be on disk while its snapshot is still being taken off
+        the event loop and no record exists yet."""
+        log = _PathWriteLog(max_paths=8, max_writers=8)
+        since = log.now()
+        log.begin_snapshot(2)
+        assert log.foreign_since("/a", 1, since) is True
+        assert log.foreign_since("/a", 2, since) is False
+        log.end_snapshot(2)
+        assert log.foreign_since("/a", 1, since) is False
+
+    def test_only_write_tools_are_marked_in_flight(self):
+        slot = _ChatSlot("in-flight")
+        other = _ChatSlot("in-flight-other")
+        _begin_turn_path_writes(other)
+        assert _begin_write_snapshot(slot, {"command": "view", "path": "/x"}) is False
+        assert _begin_write_snapshot(slot, None) is False
+        # A Codex shell call carries an argv list as ``command``.
+        argv = {"command": ["bash", "-lc", "echo acp-replay-corpus"]}
+        assert _begin_write_snapshot(slot, argv) is False
+        assert _begin_write_snapshot(slot, {"command": "strReplace", "path": "/x"}) is True
+        try:
+            assert _foreign_path_write(other, "/unrelated") is True
+        finally:
+            _end_write_snapshot(slot)
+        assert _foreign_path_write(other, "/unrelated") is False
+
+    def test_slot_tokens_are_minted_once_and_never_reused(self):
+        first = _ChatSlot("tok-a")
+        second = _ChatSlot("tok-b")
+        token = _slot_write_token(first)
+        # Kept on the slot, not derived from id(), so a collected slot's
+        # recycled address can never alias a live slot's record.
+        assert first._path_write_token == token
+        assert _slot_write_token(first) == token
+        assert _slot_write_token(second) != token
 
 
 class TestPendingStrReplaceThroughTheTurnLoop:
