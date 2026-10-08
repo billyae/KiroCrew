@@ -393,15 +393,21 @@ describe('chat sidebar — conductor lane', () => {
   })
 
   it('a tree with a running session says it cannot close before the press, and the press closes nothing', async () => {
-    /* Worker A is running, so the plan would refuse: the lead's ✕ reads muted
-       "Can't close: 1 running", never "Close 4", and its tooltip says why. */
+    /* Worker A is running, so the plan would refuse: the lead's ✕ becomes a
+       muted lock of the same size, never "Close 4", and its tooltip says why. No
+       visible label: a "Can't close: N running" pill covered the card's title. */
     localStorage.setItem('mc-sidebar-lane', 'conductor')
     const { getByTestId } = renderSidebar(NESTED)
     const lane = getByTestId('conductor-view-lane')
     const lead = lane.querySelector('[data-slot-key="k-conductor"]') as HTMLElement
     expect(lead.querySelector('[data-testid="row-close-tree"]')).toBeNull()
     const x = lead.querySelector('[data-testid="row-close-blocked"]') as HTMLElement
-    expect(x.querySelector('[data-testid="row-close-blocked-label"]')?.textContent).toBe("Can't close: 1 running")
+    expect(x.textContent).toBe('')
+    // A lock in the X's place says "refused" without a label, on touch screens too.
+    expect(x.querySelector('[data-testid="row-close-blocked-icon"]')).not.toBeNull()
+    expect(x.className).not.toContain('whitespace-nowrap')
+    // The title keeps its room: there is no wide label to reserve space for.
+    expect(lead.querySelector('[data-session-title]')?.className).not.toContain('[@media(hover:none)]:pr-24')
     expect(x.getAttribute('title')).toBe("Can't close: 1 session is still running")
     expect(x.getAttribute('aria-label')).toBe("Can't close: 1 session is still running")
     expect(x.className).toContain('opacity-60')
@@ -411,10 +417,26 @@ describe('chat sidebar — conductor lane', () => {
     expect(mocks.deleteChatSlot).not.toHaveBeenCalled()
   })
 
+  it('the row toolbar opens on hover and keyboard focus, not on a mouse click', () => {
+    /* The row is focusable, so a `focus-within` reveal pinned the toolbar open on
+       the active row after every click. Keyboard focus still shows it. */
+    localStorage.setItem('mc-sidebar-lane', 'conductor')
+    const { getByTestId } = renderSidebar(NESTED)
+    const lead = getByTestId('conductor-view-lane').querySelector('[data-slot-key="k-conductor"]') as HTMLElement
+    const bar = (lead.querySelector('[data-testid="row-close-blocked"]') as HTMLElement).parentElement as HTMLElement
+    expect(bar.className).toContain('opacity-0')
+    expect(bar.className).toContain('group-hover:opacity-100')
+    expect(bar.className).toContain('[@media(hover:none)]:opacity-100')
+    expect(bar.className).toContain('group-focus-visible:opacity-100')
+    expect(bar.className).toContain('group-has-[:focus-visible]:opacity-100')
+    expect(bar.className).toContain('has-[[data-state=open]]:opacity-100')
+    expect(bar.className).not.toContain('focus-within')
+  })
+
   it('every row that says Thinking is counted by the blocked X', () => {
     /* The row's "Thinking..." line and the X read one running signal. A row
-       whose own turn runs says "Thinking..." and adds one to "Can't close: N
-       running"; a live workflow with the turn idle shows its run instead and
+       whose own turn runs says "Thinking..." and adds one to the X's "Can't
+       close: N sessions are still running"; a live workflow with the turn idle shows its run instead and
        still counts; an idle row adds nothing. */
     localStorage.setItem('mc-sidebar-lane', 'conductor')
     localStorage.setItem('mc-sidebar-conductor-expanded', JSON.stringify(['k-root']))
@@ -435,7 +457,7 @@ describe('chat sidebar — conductor lane', () => {
     expect(thinking).toEqual(['k-root', 'k-turn'])
     const lead = rowOf('k-root')
     expect(lead.querySelector('[data-testid="row-close-tree"]')).toBeNull()
-    expect(lead.querySelector('[data-testid="row-close-blocked-label"]')?.textContent).toBe("Can't close: 3 running")
+    expect(lead.querySelector('[data-testid="row-close-blocked"]')?.getAttribute('aria-label')).toBe("Can't close: 3 sessions are still running")
   })
 
   it('a running card with nothing under it keeps the plain close, as in the flat lane', async () => {

@@ -12058,11 +12058,8 @@
       "close_all_other": "Cerrar todas ({{count}})",
       "close_session_tree_hint_other": "Esta sesión y {{count}} de debajo. Puedes deshacerlo o reabrirlas desde Sesiones anteriores.",
       "close_blocked_one": "No se puede cerrar: {{count}} sesión sigue en ejecución",
-      "close_blocked_short_one": "No se puede cerrar: {{count}} en ejecución",
       "close_blocked_many": "No se puede cerrar: {{count}} sesiones siguen en ejecución",
-      "close_blocked_short_many": "No se puede cerrar: {{count}} en ejecución",
-      "close_blocked_other": "No se puede cerrar: {{count}} sesiones siguen en ejecución",
-      "close_blocked_short_other": "No se puede cerrar: {{count}} en ejecución"
+      "close_blocked_other": "No se puede cerrar: {{count}} sesiones siguen en ejecución"
     },
     "connectionsPage": {
       "action_failed": "La acción falló: {{error}}",

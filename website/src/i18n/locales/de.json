@@ -11858,9 +11858,7 @@
       "close_all_other": "Alle {{count}} schließen",
       "close_session_tree_hint_other": "Diese Sitzung und die {{count}} darunter. Du kannst es rückgängig machen oder sie in Ältere Sitzungen wieder öffnen.",
       "close_blocked_one": "Schließen nicht möglich: {{count}} Sitzung läuft noch",
-      "close_blocked_short_one": "Schließen nicht möglich: {{count}} läuft",
-      "close_blocked_other": "Schließen nicht möglich: {{count}} Sitzungen laufen noch",
-      "close_blocked_short_other": "Schließen nicht möglich: {{count}} laufen"
+      "close_blocked_other": "Schließen nicht möglich: {{count}} Sitzungen laufen noch"
     },
     "connectionsPage": {
       "action_failed": "Aktion fehlgeschlagen: {{error}}",

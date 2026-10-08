@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, memo, useMemo, useCallback, useId, useContext, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { LayoutGroup, AnimatePresence, motion } from 'framer-motion'
-import { Plus, X, Pin, Monitor, ArrowUpDown, Eye, EyeOff, VenetianMask, Ghost, FolderPlus, FolderX, MessageSquare, MessageSquarePlus, Folder, ChevronRight, ChevronDown, ChevronUp, Clock, Pencil, BrushCleaning, Link2, Circle, MoreVertical, Tag as TagIcon, Columns3, CornerDownRight, GripVertical, Check, GitFork, List, ListTree, Loader, Loader2, Settings, RotateCcw, Bot, ExternalLink, Cpu, GitMerge, Workflow, CircleDot, Users, TriangleAlert, Goal, MessageCircleQuestionMark, ShieldCheck, Server, Pause, Play, Hourglass } from 'lucide-react'
+import { Plus, X, Lock, Pin, Monitor, ArrowUpDown, Eye, EyeOff, VenetianMask, Ghost, FolderPlus, FolderX, MessageSquare, MessageSquarePlus, Folder, ChevronRight, ChevronDown, ChevronUp, Clock, Pencil, BrushCleaning, Link2, Circle, MoreVertical, Tag as TagIcon, Columns3, CornerDownRight, GripVertical, Check, GitFork, List, ListTree, Loader, Loader2, Settings, RotateCcw, Bot, ExternalLink, Cpu, GitMerge, Workflow, CircleDot, Users, TriangleAlert, Goal, MessageCircleQuestionMark, ShieldCheck, Server, Pause, Play, Hourglass } from 'lucide-react'
 import GithubLogo from '../components/icons/GithubLogo'
 import GitlabLogo from '../components/icons/GitlabLogo'
 import { FolderBody } from '../components/FolderBody'
@@ -192,6 +192,11 @@ export const SIDEBAR_DISPLACEMENT_WINDOW = 48
 const ROW_STATUS_LINE_CLS = `${ROW_STATUS_CLS} flex items-center gap-1.5 min-w-0`
 const ROW_STATUS_LINE_ACCENT_CLS = `${ROW_STATUS_CLS} text-accent truncate flex items-center gap-1`
 const ROW_STATUS_LINE_MUTED_CLS = `${ROW_STATUS_CLS} text-muted flex items-center gap-1.5 min-w-0`
+/** The session row's hover toolbar (⋯ / fork / ✕). Shown on hover, always on a
+ *  touch screen, while its menu is open, and on KEYBOARD focus of the row or a
+ *  button in it. Not on `focus-within`: the row is focusable, so a mouse click
+ *  would pin the toolbar open on the active row. */
+const SESSION_ROW_ACTIONS_REVEAL_CLS = 'absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100'
 
 /** Every glyph in a session row is drawn at ONE size — the status marker, the
  *  meta line's mode/channel markers, and the pin. Three sizes (9 / 10 / 12) read
@@ -1616,7 +1621,10 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
         </DropdownMenu>
       </div>
     ) : (
-      <IconButtonGroup reveal className="absolute top-1/2 -translate-y-1/2 right-1.5 has-[[data-state=open]]:opacity-100">
+      // Revealed on hover, on a touch screen, and on KEYBOARD focus only. The row is
+      // itself focusable, so `focus-within` kept this toolbar open on the active row
+      // after every mouse click; `focus-visible` still shows it to a keyboard user.
+      <IconButtonGroup className={SESSION_ROW_ACTIONS_REVEAL_CLS}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <IconButton title={i18nT('pages.chatSidebar.more')} aria-label={i18nT('pages.chatSidebar.more_options')} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}><MoreVertical size={12} /></IconButton>
@@ -1626,13 +1634,13 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
           </DropdownMenuContent>
         </DropdownMenu>
         <IconButton variant="accent" title={i18nT('pages.chatSidebar.duplicate')} aria-label={i18nT('pages.chatSidebar.duplicate')} onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onDuplicate(rowKey) }}><GitFork size={12} /></IconButton>
-        <IconButton variant={closeBlockedCount ? 'default' : 'danger'} title={closeSessionLabel ?? i18nT('pages.chatSidebar.close')} aria-label={closeSessionLabel ?? i18nT('pages.chatSidebar.close_session')} onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onCloseSession(rowKey) }} className={closeBlockedCount ? 'flex shrink-0 items-center gap-0.5 whitespace-nowrap opacity-60' : closeSessionCount ? 'flex shrink-0 items-center gap-0.5 whitespace-nowrap' : undefined} data-testid={closeBlockedCount ? 'row-close-blocked' : closeSessionCount ? 'row-close-tree' : undefined} aria-describedby={closeSessionCount ? `row-close-hint-${rowKey}` : undefined}>
-          <X size={12} />
-          {closeBlockedCount ? (
-            <span aria-hidden="true" className="text-[11px] font-semibold leading-none tabular-nums" data-testid="row-close-blocked-label">
-              {i18nT('pages.chatSidebar.close_blocked_short', { count: closeBlockedCount })}
-            </span>
-          ) : null}
+        <IconButton variant={closeBlockedCount ? 'default' : 'danger'} title={closeSessionLabel ?? i18nT('pages.chatSidebar.close')} aria-label={closeSessionLabel ?? i18nT('pages.chatSidebar.close_session')} onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onCloseSession(rowKey) }} className={closeBlockedCount ? 'opacity-60' : closeSessionCount ? 'flex shrink-0 items-center gap-0.5 whitespace-nowrap' : undefined} data-testid={closeBlockedCount ? 'row-close-blocked' : closeSessionCount ? 'row-close-tree' : undefined} aria-describedby={closeSessionCount ? `row-close-hint-${rowKey}` : undefined}>
+          {/* A blocked close is a muted lock in the ✕'s place, the same size: a
+              "Can't close: N running" label on the button covered the card's title,
+              and a plain ✕ did not say the close is refused. The full reason is in the
+              tooltip and accessible name; the press opens the notice that lists who is
+              running. */}
+          {closeBlockedCount ? <Lock size={12} data-testid="row-close-blocked-icon" /> : <X size={12} />}
           {/* The reach, on the button itself: it reads "Close 5" whenever it is
               shown. A bare count read as an unread or alert badge, and the word
               alone hid that the press reaches more than this one session.
@@ -2126,7 +2134,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                 truncates first, never the control. */}
             <div
               data-session-title
-              className={`${ROW_TITLE_CLS} font-semibold text-text ${renamingHere ? '' : 'truncate'}${(closeSessionCount || closeBlockedCount) && !isMobile ? ' [@media(hover:none)]:pr-24' : ''}`}
+              className={`${ROW_TITLE_CLS} font-semibold text-text ${renamingHere ? '' : 'truncate'}${closeSessionCount && !isMobile ? ' [@media(hover:none)]:pr-24' : ''}`}
               title={s.title && s.title !== s.key ? s.title : s.key}
             >
               {/* No separate fork glyph: forked titles already carry the
@@ -3236,7 +3244,7 @@ function ChatSidebar({
           {/* List-view parity: an empty folder's row keeps its action cluster
             *  visible (see the note in renderFolderHeader). */}
           {!(editingId === folder.id && editScope === columnId) && (
-          <span className={`${emptyBody ? '' : 'opacity-0 '}group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100 transition-opacity flex items-center gap-0.5`}>
+          <span className={`${emptyBody ? '' : 'opacity-0 '}group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100 transition-opacity flex items-center gap-0.5`}>
             {/* ⋯ menu + a primary "new chat in folder" action, mirroring the
              *  list-view folder header (renderFolderHeader) so board view has
              *  the same one-click way to start a session inside a folder. */}
@@ -3911,7 +3919,7 @@ function ChatSidebar({
           *  is what an empty folder usually wants), so nothing is ADDED to the
           *  row and the two-buttons-per-row cap is untouched. */}
         {!(editingId === folder.id && editScope === 'list') && (
-        <div className={`transition-all flex items-center gap-0.5 rounded-md group-focus-within:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100${emptyRow ? ' shrink-0 -my-1' : ' absolute top-1/2 -translate-y-1/2 right-1.5 p-1 bg-card border border-border shadow-sm opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:translate-y-0 [@media(hover:none)]:shrink-0 [@media(hover:none)]:-my-1 [@media(hover:none)]:p-0 [@media(hover:none)]:bg-transparent [@media(hover:none)]:border-transparent [@media(hover:none)]:shadow-none'}`}>
+        <div className={`transition-all flex items-center gap-0.5 rounded-md group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100${emptyRow ? ' shrink-0 -my-1' : ' absolute top-1/2 -translate-y-1/2 right-1.5 p-1 bg-card border border-border shadow-sm opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:translate-y-0 [@media(hover:none)]:shrink-0 [@media(hover:none)]:-my-1 [@media(hover:none)]:p-0 [@media(hover:none)]:bg-transparent [@media(hover:none)]:border-transparent [@media(hover:none)]:shadow-none'}`}>
           {/* ⋯ menu first, then the primary "new chat" action.  Sibling
            *  <button>s of the collapse toggle (valid ARIA — no nesting). */}
           <DropdownMenu>
@@ -6635,7 +6643,7 @@ function ChatSidebar({
                           Hidden for remote rows: deleteHistorySession targets the
                           LOCAL session file, which for a remote row is at best a
                           same-keyed unrelated conversation. */}
-                      {!remoteInstanceId && <div className="absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 transition-all flex items-center gap-0.5 rounded-md p-1 bg-card border border-border shadow-sm">
+                      {!remoteInstanceId && <div className="absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 transition-all flex items-center gap-0.5 rounded-md p-1 bg-card border border-border shadow-sm">
                         <button type="button" title={i18nT('pages.chatSidebar.delete_history_session')} aria-label={i18nT('pages.chatSidebar.delete_history_session')} className="text-[12px] text-muted cursor-pointer p-[4px] rounded hover:text-danger hover:bg-danger-subtle transition-all bg-transparent border-none" onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (confirm(i18nT('pages.chatSidebar.are_you_sure_you_want_to_delete_this_history_ses'))) dispatch(deleteHistorySession(s.key)) }}><X size={12} /></button>
                       </div>}
                     </div>

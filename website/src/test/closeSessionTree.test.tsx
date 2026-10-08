@@ -651,7 +651,6 @@ describe('close-tree copy: singular forms', () => {
   it('reads correctly for exactly one', () => {
     expect(i18nT('hooks.useCloseSessionTree.title', { count: 1 })).toBe("Can't close: 1 session under this one is still running")
     expect(i18nT('pages.chatSidebar.close_blocked', { count: 1 })).toBe("Can't close: 1 session is still running")
-    expect(i18nT('pages.chatSidebar.close_blocked_short', { count: 1 })).toBe("Can't close: 1 running")
     expect(i18nT('hooks.useCloseSessionTree.title_self')).toBe("Can't close: this session is still running")
     expect(i18nT('hooks.useCloseSessionTree.title_including_self', { count: 1 })).toBe("Can't close: 1 session is still running, including this one")
     expect(i18nT('hooks.useCloseSessionTree.pref_title', { count: 1 })).toBe('Close this session and the 1 session under it?')
@@ -671,7 +670,6 @@ describe('close-tree copy: singular forms', () => {
   it('reads correctly for many', () => {
     expect(i18nT('hooks.useCloseSessionTree.title', { count: 3 })).toBe("Can't close: 3 sessions under this one are still running")
     expect(i18nT('pages.chatSidebar.close_blocked', { count: 4 })).toBe("Can't close: 4 sessions are still running")
-    expect(i18nT('pages.chatSidebar.close_blocked_short', { count: 4 })).toBe("Can't close: 4 running")
     expect(i18nT('hooks.useCloseSessionTree.title_including_self', { count: 4 })).toBe("Can't close: 4 sessions are still running, including this one")
     expect(i18nT('hooks.useCloseSessionTree.closed', { count: 5 })).toBe('Closed 5 sessions')
     expect(i18nT('pages.chatSidebar.close_session_tree', { count: 4, total: 5 })).toBe('Close all 5: this session and the 4 under it (you can undo or reopen them from Older sessions)')

@@ -12258,13 +12258,9 @@
       "close_all_other": "Закрыть все ({{count}})",
       "close_session_tree_hint_other": "Эту сессию и {{count}} под ней. Можно отменить или снова открыть их в «Более старые сессии».",
       "close_blocked_one": "Нельзя закрыть: {{count}} сессия ещё работает",
-      "close_blocked_short_one": "Нельзя закрыть: {{count}} работает",
       "close_blocked_few": "Нельзя закрыть: {{count}} сессии ещё работают",
-      "close_blocked_short_few": "Нельзя закрыть: {{count}} работают",
       "close_blocked_many": "Нельзя закрыть: {{count}} сессий ещё работают",
-      "close_blocked_short_many": "Нельзя закрыть: {{count}} работают",
-      "close_blocked_other": "Нельзя закрыть: {{count}} сессии ещё работают",
-      "close_blocked_short_other": "Нельзя закрыть: {{count}} работают"
+      "close_blocked_other": "Нельзя закрыть: {{count}} сессии ещё работают"
     },
     "connectionsPage": {
       "action_failed": "Не удалось выполнить действие: {{error}}",

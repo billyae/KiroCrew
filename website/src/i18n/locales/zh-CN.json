@@ -11657,8 +11657,7 @@
       "waiting_for_memory": "等待空闲内存",
       "close_all_other": "全部关闭（{{count}}）",
       "close_session_tree_hint_other": "此会话及其下的 {{count}} 个。可以撤销，或在较早的会话中重新打开。",
-      "close_blocked_other": "无法关闭：{{count}} 个会话仍在运行",
-      "close_blocked_short_other": "无法关闭：{{count}} 个在运行"
+      "close_blocked_other": "无法关闭：{{count}} 个会话仍在运行"
     },
     "connectionsPage": {
       "action_failed": "操作失败：{{error}}",

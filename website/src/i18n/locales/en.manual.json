@@ -5318,9 +5318,7 @@
       "close_all_other": "Close all {{count}}",
       "close_session_tree_hint_other": "This session and the {{count}} under it. You can undo, or reopen them from Older sessions.",
       "close_blocked_one": "Can't close: {{count}} session is still running",
-      "close_blocked_short_one": "Can't close: {{count}} running",
-      "close_blocked_other": "Can't close: {{count}} sessions are still running",
-      "close_blocked_short_other": "Can't close: {{count}} running"
+      "close_blocked_other": "Can't close: {{count}} sessions are still running"
     },
     "connectionsPage": {
       "action_failed": "Action failed: {{error}}",

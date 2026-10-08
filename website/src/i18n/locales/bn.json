@@ -11858,9 +11858,7 @@
       "close_all_other": "সব {{count}}টি বন্ধ করো",
       "close_session_tree_hint_other": "এই সেশন ও এর নিচের {{count}}টি। আনডু করতে বা পুরোনো সেশন থেকে আবার খুলতে পারবে।",
       "close_blocked_one": "বন্ধ করা যাবে না: {{count}}টি সেশন এখনও চলছে",
-      "close_blocked_short_one": "বন্ধ করা যাবে না: {{count}}টি চলছে",
-      "close_blocked_other": "বন্ধ করা যাবে না: {{count}}টি সেশন এখনও চলছে",
-      "close_blocked_short_other": "বন্ধ করা যাবে না: {{count}}টি চলছে"
+      "close_blocked_other": "বন্ধ করা যাবে না: {{count}}টি সেশন এখনও চলছে"
     },
     "connectionsPage": {
       "action_failed": "অ্যাকশন ব্যর্থ: {{error}}",

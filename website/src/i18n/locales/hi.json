@@ -11858,9 +11858,7 @@
       "close_all_other": "सभी {{count}} बंद करो",
       "close_session_tree_hint_other": "यह सत्र और इसके नीचे के {{count}}। तुम इसे पूर्ववत कर सकते हो या पुराने सत्र से फिर खोल सकते हो।",
       "close_blocked_one": "बंद नहीं कर सकते: {{count}} सत्र अभी भी चल रहा है",
-      "close_blocked_short_one": "बंद नहीं कर सकते: {{count}} चल रहा है",
-      "close_blocked_other": "बंद नहीं कर सकते: {{count}} सत्र अभी भी चल रहे हैं",
-      "close_blocked_short_other": "बंद नहीं कर सकते: {{count}} चल रहे हैं"
+      "close_blocked_other": "बंद नहीं कर सकते: {{count}} सत्र अभी भी चल रहे हैं"
     },
     "connectionsPage": {
       "action_failed": "कार्रवाई विफल: {{error}}",

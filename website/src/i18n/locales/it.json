@@ -12058,11 +12058,8 @@
       "close_all_other": "Chiudi tutte ({{count}})",
       "close_session_tree_hint_other": "Questa sessione e {{count}} sotto. Puoi annullare o riaprirle da Sessioni più vecchie.",
       "close_blocked_one": "Impossibile chiudere: {{count}} sessione è ancora in esecuzione",
-      "close_blocked_short_one": "Impossibile chiudere: {{count}} in esecuzione",
       "close_blocked_many": "Impossibile chiudere: {{count}} sessioni sono ancora in esecuzione",
-      "close_blocked_short_many": "Impossibile chiudere: {{count}} in esecuzione",
-      "close_blocked_other": "Impossibile chiudere: {{count}} sessioni sono ancora in esecuzione",
-      "close_blocked_short_other": "Impossibile chiudere: {{count}} in esecuzione"
+      "close_blocked_other": "Impossibile chiudere: {{count}} sessioni sono ancora in esecuzione"
     },
     "connectionsPage": {
       "action_failed": "Azione non riuscita: {{error}}",

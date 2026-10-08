@@ -11657,8 +11657,7 @@
       "waiting_for_memory": "空きRAM待ち",
       "close_all_other": "すべて閉じる（{{count}}）",
       "close_session_tree_hint_other": "このセッションとその下の {{count}} 件。元に戻すか、以前のセッションから再び開けます。",
-      "close_blocked_other": "閉じられません：{{count}} 件のセッションがまだ実行中です",
-      "close_blocked_short_other": "閉じられません：{{count}} 件実行中"
+      "close_blocked_other": "閉じられません：{{count}} 件のセッションがまだ実行中です"
     },
     "connectionsPage": {
       "action_failed": "操作に失敗しました: {{error}}",

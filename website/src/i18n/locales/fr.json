@@ -12058,11 +12058,8 @@
       "close_all_other": "Tout fermer ({{count}})",
       "close_session_tree_hint_other": "Cette session et {{count}} en dessous. Tu peux annuler ou les rouvrir depuis Sessions plus anciennes.",
       "close_blocked_one": "Impossible de fermer : {{count}} session est encore en cours",
-      "close_blocked_short_one": "Impossible de fermer : {{count}} en cours",
       "close_blocked_many": "Impossible de fermer : {{count}} sessions sont encore en cours",
-      "close_blocked_short_many": "Impossible de fermer : {{count}} en cours",
-      "close_blocked_other": "Impossible de fermer : {{count}} sessions sont encore en cours",
-      "close_blocked_short_other": "Impossible de fermer : {{count}} en cours"
+      "close_blocked_other": "Impossible de fermer : {{count}} sessions sont encore en cours"
     },
     "connectionsPage": {
       "action_failed": "Échec de l’action : {{error}}",
