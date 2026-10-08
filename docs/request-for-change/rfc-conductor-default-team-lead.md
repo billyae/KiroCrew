@@ -28,7 +28,8 @@ superseded-by: []
   its actions and the `depth` cap), [rfc-crew-log-wake.md](rfc-crew-log-wake.md)
   (how a report wakes the conductor) and
   [rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md) (the
-  crewmate's status board). It amends none of them.
+  crewmate's status board). It AMENDS the first, in the one place §1 names, and
+  neither of the other two.
 - Known limit: lesson 8's mechanism reaches the conductor only in crew-member
   mode, because the shipped `kirocrew-conductor` spec does not mount
   `@kirocrew-panel`. Separate work is closing that, not this change, so row 8
@@ -45,6 +46,26 @@ a worker, so it is never decomposed and one session carries work meant for a tea
 
 Folding the lessons in is what makes a conductor the default team lead instead of
 something each owner re-teaches by hand in every seed.
+
+**This document AMENDS the `Dispatch rule` section of
+[rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md).** That section
+records its table as "As implemented" in the same two texts this change edits, so
+lesson 1 does not merely add to it -- it rewrites two of its three rows:
+
+| `agent` | the item, as that section records it | the item, after this change |
+|---|---|---|
+| `kirocrew-worker` | a leaf — one assertable acceptance condition | clearly ONE leaf — a single assertable acceptance condition, and you can already name the change it makes |
+| `kirocrew-conductor` | decomposes into two or more independently acceptable sub-items, subject to `depth` ≤ 2 | decomposes, or you cannot yet tell how big it is |
+
+The `select_crew` row is unchanged. Note that the `depth` qualifier leaves the
+middle row: the cap still applies and is still enforced in the store, and §3 is
+why stating it inside this row would overstate what it guarantees.
+
+`rfc-conductor-work-ledger.md` is **not edited here**. Its status is `partial`,
+and whatever acceptance it holds does **not** extend to this amendment, which is
+recorded and accepted on its own in §4. This is the arrangement
+[rfc-question-card-auto-submit.md](rfc-question-card-auto-submit.md) uses for the
+same reason: the amended document stays as its own authors left it.
 
 ## 2. The nine lessons, and the mechanism each one reuses
 
