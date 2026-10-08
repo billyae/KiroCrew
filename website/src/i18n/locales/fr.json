@@ -224,6 +224,8 @@
     "discardDraftBody": "Abandonner les modifications de capacités de {{name}} laisse l’éditeur ouvert. Les valeurs enregistrées et les identifiants masqués ne changent pas. Aucun autre membre n’est concerné.",
     "discardDraftConfirm": "Abandonner le brouillon",
     "driftHint": "Le fichier d’agent de {{member}} a été édité en dehors de cette page. Appuie sur Vérifier les modifications pour voir cette édition externe avec ton propre brouillon. Après vérification, Enregistrer écrit la correction ou t’indique pourquoi c’est impossible.",
+    "refused": "Le serveur a refusé ce brouillon ({{code}}). Ton brouillon est conservé. Recharger ne changera rien : modifie ou abandonne le brouillon.",
+    "permissionsReview": "Cette page ne peut pas modifier les approbations de {{member}} : son fichier d’agent dans ~/.kiro/agents contient des paramètres de permissions écrits à la main. Retire-les, puis appuie sur Recharger depuis le serveur. Ton brouillon est conservé. Il s’agit d’un bloc permissions modifié à la main, de autoAllowReadonly ou d’une liste allowed ou trusted dans toolsSettings.",
     "unreviewableDrift": "Le fichier d’agent {{file}} de {{member}} a été édité en dehors de cette page dans un paramètre que cette page ne peut pas afficher, donc cette page ne peut pas écrire la correction et Vérifier les modifications reste désactivé. Annule cette édition externe dans ~/.kiro/agents/{{file}}, puis appuie sur Recharger depuis le serveur."
   },
   "api": {

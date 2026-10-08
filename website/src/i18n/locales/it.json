@@ -224,6 +224,8 @@
     "discardDraftBody": "Annullare le modifiche alle capacità di {{name}} lascia l’editor aperto. I valori salvati e le credenziali nascoste non cambiano. Nessun altro membro è coinvolto.",
     "discardDraftConfirm": "Annulla bozza",
     "driftHint": "Il file agente di {{member}} è stato modificato fuori da questa pagina. Premi Rivedi le modifiche per vedere quella modifica esterna insieme alla tua bozza. Dopo la revisione, Salva scrive la correzione o ti dice perché non può.",
+    "refused": "Il server ha rifiutato questa bozza ({{code}}). La tua bozza è conservata. Ricaricare non cambierà nulla: modifica o scarta la bozza.",
+    "permissionsReview": "Questa pagina non può modificare le approvazioni di {{member}}: il suo file agente in ~/.kiro/agents contiene impostazioni di permessi scritte a mano. Rimuovile, poi premi Ricarica dal server. La tua bozza è conservata. Si tratta di un blocco permissions modificato a mano, di autoAllowReadonly o di un elenco allowed o trusted in toolsSettings.",
     "unreviewableDrift": "Il file agente {{file}} di {{member}} è stato modificato fuori da questa pagina in un’impostazione che questa pagina non può mostrare, quindi questa pagina non può scrivere la correzione e Rivedi le modifiche resta disattivato. Annulla quella modifica esterna in ~/.kiro/agents/{{file}}, poi premi Ricarica dal server."
   },
   "api": {

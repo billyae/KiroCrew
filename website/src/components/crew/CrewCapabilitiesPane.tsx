@@ -20,10 +20,11 @@ type Category = typeof CATEGORIES[number]
 const CATEGORY_KEYS = { mcpServers: 'pages.agentsPage.mcp_servers', tools: 'crewCapabilities.tools', autoApprove: 'pages.agentsPage.auto_approved', skills: 'pages.agentsPage.skills' }
 
 /** The 409 codes a Reload can resolve: the saved state moved under the draft.
- * Every other 409 is a refusal of the draft itself, which a Reload repeats, so
- * telling the user to reload would leave them in a loop. A 409 with no code
- * keeps the stale copy, as before. */
-const STALE_CODES = new Set(['stale_revision', 'stale_preview', 'stale_binding', 'governance_changed', 'source_changed'])
+ * The backend names every such code `stale_*` or `*_changed`. Every other 409
+ * is a refusal of the draft itself, which a Reload repeats, so telling the user
+ * to reload would leave them in a loop. A 409 with no code keeps the stale
+ * copy, as before. */
+const isStaleCode = (code: string) => code.startsWith('stale_') || code.endsWith('_changed')
 
 /** The member's own agent file an `unreviewable_drift` refusal names: a
  * basename Crew chose, never a path or a value from the file. */
@@ -105,11 +106,15 @@ export default function CrewCapabilitiesPane({ member, members = [], hidden, onD
   // speaks, and the Review/Save control stays off until the draft changes or Reload.
   const refused = errorCode === 'unreviewable_drift'
   const conflict = error instanceof ApiError && error.status === 409
+  // Only a Review or Save 409 refuses a draft. The load itself can 409 too
+  // (a missing parent, a shadowed template) when there may be no draft at all,
+  // so those keep the load copy rather than the draft-refusal copy.
+  const draftConflict = conflict && !query.error
   const errorMessage = refused && error instanceof ApiError
     ? t('crewCapabilities.unreviewableDrift', { member, file: refusedFile(error.body) })
-    : conflict && errorCode === 'alternate_permissions_require_review'
+    : draftConflict && errorCode === 'alternate_permissions_require_review'
       ? t('crewCapabilities.permissionsReview', { member })
-      : conflict && errorCode && !STALE_CODES.has(errorCode)
+      : draftConflict && errorCode && !isStaleCode(errorCode)
         ? t('crewCapabilities.refused', { code: errorCode })
         : t(conflict ? 'crewCapabilities.stale' : error instanceof ApiError && [404, 405, 501].includes(error.status) ? 'crewCapabilities.unsupported' : 'crewCapabilities.failed')
   const enabled = !!view && view.schema_version === 1 && view.template.available && !query.isError && (view.mode === 'inherited' || draft?.enroll === true)

@@ -223,6 +223,8 @@
     "discardDraftBody": "Das Verwerfen der Fähigkeiten-Änderungen für {{name}} lässt den Editor offen. Gespeicherte Werte und verborgene Zugangsdaten bleiben unverändert. Kein anderes Mitglied ist betroffen.",
     "discardDraftConfirm": "Entwurf verwerfen",
     "driftHint": "Die Agent-Datei von {{member}} wurde außerhalb dieser Seite bearbeitet. Drücke „Änderungen prüfen“, um diese äußere Bearbeitung zusammen mit deinem eigenen Entwurf zu sehen. Nach der Prüfung schreibt Speichern die Korrektur oder sagt dir, warum das nicht geht.",
+    "refused": "Der Server hat diesen Entwurf abgelehnt ({{code}}). Dein Entwurf bleibt erhalten. Neu laden ändert daran nichts: Bearbeite oder verwirf den Entwurf.",
+    "permissionsReview": "Diese Seite kann die Freigaben für {{member}} nicht ändern: Seine Agent-Datei in ~/.kiro/agents enthält handgeschriebene Berechtigungseinstellungen. Entferne sie und drücke dann „Vom Server neu laden“. Dein Entwurf bleibt erhalten. Gemeint sind ein von Hand bearbeiteter permissions-Block, autoAllowReadonly oder eine allowed- bzw. trusted-Liste in toolsSettings.",
     "unreviewableDrift": "Die Agent-Datei {{file}} von {{member}} wurde außerhalb dieser Seite in einer Einstellung bearbeitet, die diese Seite nicht anzeigen kann, deshalb kann diese Seite die Korrektur nicht schreiben und „Änderungen prüfen“ bleibt ausgeschaltet. Mache diese äußere Bearbeitung in ~/.kiro/agents/{{file}} rückgängig und drücke dann „Vom Server neu laden“."
   },
   "api": {

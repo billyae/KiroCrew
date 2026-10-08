@@ -224,6 +224,8 @@
     "discardDraftBody": "Descartar as edições de capacidades de {{name}} mantém o editor aberto. Os valores salvos e as credenciais ocultas não mudam. Nenhum outro membro é afetado.",
     "discardDraftConfirm": "Descartar rascunho",
     "driftHint": "O arquivo de agente de {{member}} foi editado fora desta página. Pressione Revisar alterações para ver essa edição externa junto com o seu próprio rascunho. Depois de revisar, Salvar grava a correção ou diz por que não consegue.",
+    "refused": "O servidor recusou este rascunho ({{code}}). Seu rascunho foi mantido. Recarregar não vai mudar isso: edite ou descarte o rascunho.",
+    "permissionsReview": "Esta página não consegue alterar as aprovações de {{member}}: o arquivo de agente dele em ~/.kiro/agents tem configurações de permissão escritas à mão. Remova-as e depois pressione Recarregar do servidor. Seu rascunho foi mantido. As configurações são um bloco permissions editado à mão, autoAllowReadonly ou uma lista allowed ou trusted em toolsSettings.",
     "unreviewableDrift": "O arquivo de agente {{file}} de {{member}} foi editado fora desta página em uma configuração que esta página não consegue mostrar, então esta página não consegue gravar a correção e Revisar alterações fica desativado. Desfaça essa edição externa em ~/.kiro/agents/{{file}} e depois pressione Recarregar do servidor."
   },
   "api": {

@@ -519,12 +519,17 @@ routes at `/api/agents/{name}/capabilities` use schema version 1. Preview ends
 in `/preview`; PUT requires its opaque preview token and the GET revision.
 Unknown fields, null sets, stale sources and ambiguous names are refused.
 The pane shows its stale notice ("The saved version changed ... Reload from
-server") only for the 409 codes a reload can resolve: `stale_revision`,
-`stale_preview`, `stale_binding`, `governance_changed` and `source_changed`.
+server") only for the 409 codes a reload can resolve, which the backend names
+`stale_*` or `*_changed` (`stale_revision`, `stale_binding`,
+`parent_identity_changed`, `materialization_changed`, ...).
 Any other 409 refuses the draft itself and repeats on reload, so the pane
 names it instead: `alternate_permissions_require_review` (an approval edit on
 an agent file whose permission settings Crew did not derive) gets its own
 copy, and every other code is shown by name with the draft kept.
+Only a Review or Save 409 gets that draft-refusal copy. A 409 on the load
+itself (`parent_missing`, `foreign_private_copy`, `private_template_shadowed`,
+`source_unreadable`) can arrive with no draft at all, so it keeps the load
+notice.
 
 Enrollment is explicit. Shared members follow their selected Parent; a legacy
 private snapshot starts with every existing row local and every absent Parent
