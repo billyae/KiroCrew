@@ -1337,6 +1337,13 @@ _EXPECTED_STRICT_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
     "kiro_crew/agent_materialization/conductor_agents.py": [
         ("conductor_spec_regeneration", "unknown"),
     ],
+    # Its own label rather than the regeneration one it sits beside, because the
+    # two reads of the same file answer different questions: one asks whether this
+    # release can use the spec, this one asks only who wrote it. A denial row
+    # naming the wrong question sends a reader to the wrong decision.
+    "kiro_crew/agent_materialization/team_lead_agent.py": [
+        ("team_lead_spec_attribution", "unknown"),
+    ],
     "kiro_crew/crewmate_prune_migration.py": [("crewmate_prune", "dashboard")],
     "kiro_crew/dashboard/handlers/sessions.py": [
         ("session_tool_policy", "dashboard"),
