@@ -117,8 +117,13 @@ class BundleResult:
     filename: str
     included: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-    #: member name -> number of redactions applied (0 = clean)
+    #: member name -> number of secret redactions applied (0 = clean)
     redaction_summary: dict[str, int] = field(default_factory=dict)
+    #: Count of home/data-home path prefixes collapsed to ``~`` across all text
+    #: members. Tracked apart from :attr:`redaction_summary` because a path
+    #: collapse hides an OS login, not a secret -- folding it into the secret
+    #: tally would overstate "N secret(s) auto-redacted" in the issue body.
+    path_collapses: int = 0
     github_issue_url: str = ""
     #: The ONE release-provenance resolution this bundle was written from.
     #: :func:`collect_bundle` takes it before the first member and hands it to
@@ -144,6 +149,7 @@ class BundleResult:
             "skipped": self.skipped,
             "redaction_summary": self.redaction_summary,
             "total_redactions": self.total_redactions,
+            "path_collapses": self.path_collapses,
             "github_issue_url": self.github_issue_url,
         }
 
@@ -174,6 +180,135 @@ def _scrub(text: str) -> tuple[str, int]:
         text, n = pattern.subn(repl, text)
         count += n
     return text, count
+
+
+def _is_root_or_single_segment(path: str) -> bool:
+    """True when *path* is a filesystem root or a single top-level segment.
+
+    Collapsing such a prefix is both useless and dangerous: ``/`` or ``C:/``
+    carries no OS login to hide, and matching it would rewrite the leading
+    separator of every absolute path in the bundle. ``/home`` (one segment) is
+    likewise a shared parent, not a login. Only a prefix with a login segment
+    under a parent -- ``/home/alice``, ``C:/Users/alice`` -- is worth collapsing.
+    """
+    norm = path.replace("\\", "/").rstrip("/")
+    if not norm:
+        return True  # bare "/" or "\\"
+    body = norm[2:] if re.match(r"^[A-Za-z]:", norm) else norm
+    segments = [s for s in body.split("/") if s]
+    return len(segments) <= 1
+
+
+def _prefix_spellings(base: str) -> list[str]:
+    """Every on-disk/in-log spelling of a single home-ish *base* path.
+
+    A path written as ``C:\\Users\\al`` by the shell is normalised to
+    ``C:/Users/al`` by tools that rewrite separators (Git Bash, pathlib,
+    Node), and appears as ``C:\\\\Users\\\\al`` once a line is embedded in a
+    JSON string (kiro-chat.log, crash.log are JSON). All three spellings carry
+    the same login and must collapse, so each is matched.
+    """
+    out = [base]
+    if "\\" in base:
+        out.append(base.replace("\\", "/"))  # forward-slash spelling
+        out.append(base.replace("\\", "\\\\"))  # JSON-escaped backslashes
+    return out
+
+
+def _home_prefixes() -> list[str]:
+    """Home-directory prefixes to collapse to ``~`` in bundle text members.
+
+    Only the paths that embed the OS login: the user's home directory and the
+    data-home directory. Each is emitted in every spelling it can appear in (see
+    :func:`_prefix_spellings`): the native form, the forward-slash form, and the
+    JSON-escaped backslash form on Windows.
+
+    The data-home prefix is emitted on its own ONLY when it is not nested under
+    home. When it IS under home (the usual case -- ``<home>/.kiro/crew``),
+    collapsing the HOME prefix alone already rewrites ``<home>/.kiro/crew/x`` to
+    ``~/.kiro/crew/x``, keeping the relative tail the maintainer needs; adding
+    the data-home prefix as well would swallow that tail down to a bare ``~``.
+    Roots and single-segment candidates (``/``, ``/home``, ``C:/``) are dropped
+    -- they carry no login. Empty candidates (a monkeypatched ``home()``
+    returning ``""``) are dropped so they never match everywhere.
+    """
+    home = str(Path.home())
+    data_home = str(config_dir())
+    bases: list[str] = []
+    if home and not _is_root_or_single_segment(home):
+        bases.append(home)
+    if data_home and not _is_root_or_single_segment(data_home):
+        # Nested under home? Then the home collapse already covers it while
+        # preserving the ``.kiro/crew/...`` tail, so do not register it apart.
+        nested = bool(home) and (
+            data_home == home or data_home.startswith(home.rstrip("/\\") + os.sep)
+        )
+        if not nested:
+            bases.append(data_home)
+    raw: list[str] = []
+    for base in bases:
+        raw.extend(_prefix_spellings(base))
+    seen: set[str] = set()
+    prefixes: list[str] = []
+    for p in sorted(raw, key=len, reverse=True):
+        if p and p not in seen:
+            seen.add(p)
+            prefixes.append(p)
+    return prefixes
+
+
+# A home prefix only collapses when the next character ends the path token --
+# a separator, a quote, whitespace, or end-of-string. This is what stops
+# HOME=/home/al from rewriting the unrelated /home/alice.
+_PREFIX_BOUNDARY = r"(?=[/\\\"'\s]|$)"
+
+
+def _collapse_home_prefixes(text: str) -> tuple[str, int]:
+    """Collapse home/data-home prefixes in *text* to ``~``, keeping the tail.
+
+    Narrow by design: it replaces only the leading home or data-home directory
+    with ``~`` and leaves the rest of each path intact, so a traceback frame
+    stays readable -- ``~/.kiro/crew/gateway.log`` -- and system (``/usr``,
+    ``/opt``) and repo-relative (``src/kiro_crew/...``) frames are untouched.
+
+    The match is segment-aware and case-insensitive: a prefix collapses only
+    when a separator, quote, whitespace or end-of-token follows it, so a login
+    that is a strict prefix of a longer one (``/home/al`` vs ``/home/alice``) is
+    not rewritten; case-insensitivity covers the Windows drive/user spellings
+    (``C:\\Users`` vs ``c:\\users``) that differ only by case across tools.
+    """
+    count = 0
+    for prefix in _home_prefixes():
+        pattern = re.compile(re.escape(prefix) + _PREFIX_BOUNDARY, re.IGNORECASE)
+        text, n = pattern.subn("~", text)
+        count += n
+    return text, count
+
+
+def _scrub_bundle(text: str) -> tuple[str, int, int]:
+    """``_scrub`` plus a home-prefix collapse, for bundle text members only.
+
+    The bundle's stated destination is a public issue, so a text member must not
+    carry the OS login: on Windows the login is embedded in nearly every
+    path-bearing line, and ``versions.txt`` embeds the data-home path. The shared
+    :func:`_scrub` is deliberately left alone -- it also redacts the agent-facing
+    protocol-log reader, whose output goes to a model context, not a public
+    issue, so the extra pass is scoped to the bundle here.
+
+    The home collapse runs LAST, after ``_EXTRA_REDACTIONS``, so a credential
+    header sitting directly after a ``file:line:`` prefix is redacted by the
+    credential rules first and never swallowed. The collapse replaces only the
+    home and data-home PREFIX with ``~`` and keeps the rest of each path, so a
+    maintainer still sees the file location that makes a bundle useful; system
+    and repo-relative frames are left intact.
+
+    Returns ``(clean, secrets, path_collapses)``: the secret count and the
+    path-collapse count are kept apart so the issue body does not report a path
+    collapse as a "secret".
+    """
+    text, secrets = _scrub(text)
+    text, collapses = _collapse_home_prefixes(text)
+    return text, secrets, collapses
 
 
 def _kiro_log_dirs() -> list[Path]:
@@ -982,9 +1117,19 @@ def _issue_url(result: BundleResult, note: str, *, prefill: bool = True) -> str:
             [
                 f"Diagnostics bundle: `{result.filename}`",
                 "",
-                f"Collected locally at `{result.zip_path}` — "
-                f"{result.total_redactions} secret(s) auto-redacted before "
-                "packaging.",
+                # No absolute path here: ``result.zip_path`` sits under the
+                # data-home directory, so printing it would leak the OS login
+                # into a public issue -- the very thing this collector scrubs
+                # out of the bundle members. The filename above is enough to
+                # match the attached .zip; the local path stays in the private
+                # terminal output of ``kirocrew doctor``.
+                f"{result.total_redactions} secret(s) auto-redacted"
+                + (
+                    f" and {result.path_collapses} path(s) collapsed to `~`"
+                    if result.path_collapses
+                    else ""
+                )
+                + " before packaging.",
                 "",
                 f"kiro-cli: `{_kiro_cli_version()}`",
                 f"Host: `{platform.platform()}`",
@@ -1081,7 +1226,7 @@ def collect_bundle(
     # manifest.json, AND the pre-filled GitHub issue URL — a user may paste a
     # secret (bearer token, key) into "what happened?", so it needs the same
     # redaction the log members get below.
-    note, _ = _scrub(note or "")
+    note, _, _ = _scrub_bundle(note or "")
 
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     filename = f"kirocrew-diagnostics-{stamp}-{uuid.uuid4().hex[:8]}.zip"
@@ -1140,9 +1285,15 @@ def collect_bundle(
     with os.fdopen(_fd, "wb") as _raw, zipfile.ZipFile(_raw, "w", zipfile.ZIP_DEFLATED) as zf:
         # Generated members first.
         versions = _versions_text(note, identity)
+        # ``versions.txt`` carries the absolute ``data_home`` path
+        # unconditionally, which embeds the OS login. Run it through the bundle
+        # scrub stack so the archive does not ship a local path in a file whose
+        # stated destination is a public issue.
+        versions, versions_secrets, versions_collapses = _scrub_bundle(versions)
         zf.writestr("versions.txt", versions)
         result.included.append("versions.txt")
-        result.redaction_summary["versions.txt"] = 0
+        result.redaction_summary["versions.txt"] = versions_secrets
+        result.path_collapses += versions_collapses
 
         for member, src, _gated in text_sources:
             try:
@@ -1163,10 +1314,11 @@ def collect_bundle(
             if text is None:
                 result.skipped.append(member)
                 continue
-            clean, n = _scrub(text)
+            clean, secrets, collapses = _scrub_bundle(text)
             zf.writestr(member, clean)
             result.included.append(member)
-            result.redaction_summary[member] = n
+            result.redaction_summary[member] = secrets
+            result.path_collapses += collapses
 
         # Manifest last so it reflects the final included/skipped/redaction state.
         # Its provenance keys are the machine-readable twin of ``versions.txt``,
@@ -1189,6 +1341,7 @@ def collect_bundle(
             "skipped": result.skipped,
             "redaction_summary": result.redaction_summary,
             "total_redactions": result.total_redactions,
+            "path_collapses": result.path_collapses,
         }
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         result.included.append("manifest.json")
