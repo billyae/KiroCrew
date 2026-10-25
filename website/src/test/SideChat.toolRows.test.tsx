@@ -207,6 +207,69 @@ describe('side reducer: tool rows', () => {
     expect(side.streaming).toBe(false)
   })
 
+  it('a restore after the socket dropped mid-run draws the stored answer, not the partial split', () => {
+    // The tab drew a text row and a tool row, then missed the rest of the run
+    // and its terminal frame: no local row carries the stored id.
+    let state = reducer(initial, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'user', content: 'q', message_id: 'u1' }))
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'assistant', content: 'Let me check. ' }))
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'tool', content: '🔧 Running: cat /etc/hosts', meta: TOOL_META }))
+    state = reducer(state, sideRestore({
+      slot: SLOT,
+      snapshot: {
+        open: true,
+        created_at: '2026-10-21T06:00:00.000Z',
+        last_run_id: 'r1',
+        running: false,
+        messages: [
+          { id: 'u1', run_id: 'r1', role: 'user', content: 'q', ts: '2026-10-21T06:00:01.000Z' },
+          { id: 'a1', run_id: 'r1', role: 'assistant', content: 'Let me check. Two hosts.', ts: '2026-10-21T06:00:02.000Z' },
+        ],
+      },
+    }))
+    const side = state.slotSide[SLOT]
+    expect(side.messages.map(m => [m.role, m.content])).toEqual([
+      ['user', 'q'],
+      ['assistant', 'Let me check. Two hosts.'],
+    ])
+    expect(side.streaming).toBe(false)
+  })
+
+  it('a terminal frame whose reply the rows do not add up to replaces the partial rows with the reply', () => {
+    // The socket dropped after the first tool row: the text and tool row
+    // after it never arrived, only the terminal frame did.
+    let state = turnUpToTool()
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'assistant', content: 'Two hosts.', final: true, message_id: 'a1', reply: 'Let me check. Then grep. Two hosts.' }))
+    const side = state.slotSide[SLOT]
+    expect(side.messages.map(m => [m.role, m.content])).toEqual([
+      ['user', 'q'],
+      ['assistant', 'Let me check. Then grep. Two hosts.'],
+    ])
+    expect(side.messages.at(-1)?.id).toBe('a1')
+    expect(side.streaming).toBe(false)
+  })
+
+  it('a turn that ends on a tool row keeps the stored id, so a restore keeps its rows', () => {
+    let state = reducer(initial, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'user', content: 'q', message_id: 'u1' }))
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'assistant', content: 'Let me check.\n' }))
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'tool', content: '🔧 Running: cat /etc/hosts', meta: TOOL_META }))
+    state = reducer(state, sseSideResult({ slot: SLOT, run_id: 'r1', role: 'assistant', content: '', final: true, message_id: 'a1', reply: 'Let me check.\n' }))
+    expect(state.slotSide[SLOT].messages.find(m => m.role === 'assistant')?.id).toBe('a1')
+    state = reducer(state, sideRestore({
+      slot: SLOT,
+      snapshot: {
+        open: true,
+        created_at: '2026-10-21T06:00:00.000Z',
+        last_run_id: 'r1',
+        running: false,
+        messages: [
+          { id: 'u1', run_id: 'r1', role: 'user', content: 'q', ts: '2026-10-21T06:00:01.000Z' },
+          { id: 'a1', run_id: 'r1', role: 'assistant', content: 'Let me check.\n', ts: '2026-10-21T06:00:02.000Z' },
+        ],
+      },
+    }))
+    expect(state.slotSide[SLOT].messages.map(m => m.role)).toEqual(['user', 'assistant', 'tool'])
+  })
+
   it('a restore with no local tool rows for the run draws the stored answer', () => {
     const state = reducer(initial, sideRestore({
       slot: SLOT,

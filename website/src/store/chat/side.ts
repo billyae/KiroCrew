@@ -271,15 +271,19 @@ function restoredSide(local: SideState | undefined, snapshot: SideSnapshot): Sid
   // rows. A run this tab drew with tool rows is several rows here (text, tool,
   // text), so the stored answer gives way to this tab's rows for that run, in
   // the order they were drawn. A tab that never saw the run draws the stored text.
-  const localSplit = (runId: string | undefined): SideMessage[] => {
+  // Only once this tab drew the run's terminal frame, which put the stored row's
+  // id on one of its rows: a tab whose socket dropped mid-run holds a partial
+  // split, and the stored answer is the whole of it.
+  const localSplit = (runId: string | undefined, storedId: string): SideMessage[] => {
     if (!runId || !localRows.some(r => r.run_id === runId && r.role === 'tool')) return []
-    return localRows.filter(r => r.run_id === runId && (r.role === 'tool' || (r.role === 'assistant' && !r.is_error)))
+    const rows = localRows.filter(r => r.run_id === runId && (r.role === 'tool' || (r.role === 'assistant' && !r.is_error)))
+    return rows.some(r => r.id === storedId) ? rows : []
   }
   const placed = new Set<SideMessage>()
   const messages: SideMessage[] = (snapshot.messages ?? []).flatMap(m => {
     restoredIds.add(m.id)
     if (m.role === 'assistant' && !m.is_error) {
-      const split = localSplit(m.run_id).filter(r => !placed.has(r))
+      const split = localSplit(m.run_id, m.id).filter(r => !placed.has(r))
       if (split.length) {
         split.forEach(r => placed.add(r))
         return split
@@ -309,6 +313,9 @@ function restoredSide(local: SideState | undefined, snapshot: SideSnapshot): Sid
     }
     const streamedAnswer = row.role === 'assistant' && !row.is_error && !row.id
     if (streamedAnswer && row.run_id && knownRuns.has(row.run_id) && (storedAnswer(row.run_id) || !sawStart(row.run_id))) continue
+    // A tool row of a run whose stored answer stands in its place (not this
+    // tab's split, placed above) would land under that answer.
+    if (row.role === 'tool' && row.run_id && storedAnswer(row.run_id)) continue
     insertAfterRun(messages, row)
   }
 
@@ -489,6 +496,33 @@ export const sideReducers = {
       // A terminal frame after tool rows carries only the text below the last
       // one; `reply` is the whole answer, which is the one row this tab draws.
       if (reply) content = reply
+    } else if (final && reply && !is_error) {
+      // The rows of a split answer add up to exactly the stored reply, so a
+      // tab that missed some of this run's frames (its socket dropped
+      // mid-run) finds that its rows plus this frame do not. It then drops
+      // the run's partial rows and draws `reply` as the run's one answer row.
+      const isRunRow = (m: SideMessage) => m.run_id === run_id && (m.role === 'tool' || (m.role === 'assistant' && !m.is_error))
+      const tail = side.messages[side.messages.length - 1]
+      const tailIsAnswer = tail?.role === 'assistant' && tail.run_id === run_id && !tail.is_error
+      const above = side.messages.slice(0, tailIsAnswer ? -1 : undefined)
+        .filter(m => m.role === 'assistant' && isRunRow(m)).map(m => m.content).join('')
+      if (above + content !== reply) {
+        side.messages = side.messages.filter(m => !isRunRow(m))
+        content = reply
+      }
+    }
+    // An empty terminal frame leaves no row of its own, so the stored row's id
+    // goes on the run's last answer row: a later restore keeps this tab's
+    // rows only when one of them carries it.
+    const keepId = () => {
+      if (!final || !message_id) return
+      for (let i = side.messages.length - 1; i >= 0; i--) {
+        const m = side.messages[i]
+        if (m.run_id === run_id && m.role === 'assistant' && !m.is_error) {
+          m.id = message_id
+          return
+        }
+      }
     }
     if (role === 'tool') {
       // A tool attempt, drawn where it happened: the row lands at the tail, so
@@ -523,6 +557,7 @@ export const sideReducers = {
         // says the pass left the row no text of its own: no row.
         if (!content) {
           side.messages.pop()
+          keepId()
           return
         }
         last.content = content
@@ -539,7 +574,10 @@ export const sideReducers = {
     // A terminal frame carries the text written after the last tool row, so
     // an empty one says the turn ended on that tool call and has no text row
     // to settle; a delta or a non-empty terminal frame starts the row below.
-    if ((final || settle) && !content) return
+    if ((final || settle) && !content) {
+      keepId()
+      return
+    }
     side.messages.push({ role: 'assistant', content, ts: tsIso, run_id, ...(message_id ? { id: message_id } : {}) })
     if (!earlierRun) side.lastRunId = run_id
   },

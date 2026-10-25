@@ -216,6 +216,63 @@ async def test_side_turn_marks_a_refused_tool_and_redacts_its_fields(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_side_turn_keeps_a_bearer_token_in_a_refused_title_out_of_every_frame(
+    tmp_path, monkeypatch
+):
+    """A refused call's title is built by ACP (``build_permission_event``) and
+    scrubbed there. The URL and credential passes must find their spans on the
+    same text: run one after the other, the URL pass swallows the
+    ``Authorization:`` label inside the query, and the ``Bearer <token>`` left
+    behind matches nothing in the frame redaction either."""
+    from kiro_crew.acp._dispatch import build_permission_event
+    from kiro_crew.acp.types import JsonRpcMessage
+
+    state = _make_state(tmp_path)
+    events = _capture_broadcasts(state)
+    parent = state.get_or_create_slot("parent")
+    parent.agent = "kirocrew"
+    parent._side = SideState(open=True, created_at="2026-01-01T00:00:00Z")
+    parent._side.append_user("q")
+    parent._side.last_run_id = "run-1"
+    parent._side.is_complete = False
+
+    async def _fake_get_or_create(key, **kwargs):
+        return MagicMock(), True, False
+
+    state.sessions.get_or_create = _fake_get_or_create
+    state.sessions.release = MagicMock()
+    token = "opaque" + "x7Qz" * 10  # no known prefix: only the label can catch it
+    title = "curl https://example.invalid/c?d=" + "a" * 64 + f"&Authorization: Bearer {token}"
+    msg = JsonRpcMessage(
+        id=7,
+        method="session/request_permission",
+        params={
+            "sessionId": "side-1",
+            "toolCall": {"toolCallId": "call-7", "title": title},
+            "options": [{"optionId": "reject_once", "name": "Reject", "kind": "reject_once"}],
+        },
+    )
+    event, _ = build_permission_event(msg)
+    assert token not in (event.title or "")
+
+    async def _fake_stream(provider, message, *, on_chunk=None, on_tool_call=None, **kwargs):
+        on_tool_call(event, False)
+        on_chunk("I can't run that here.")
+        return "I can't run that here."
+
+    monkeypatch.setattr("kiro_crew.dashboard.handlers.side.stream_and_collect", _fake_stream)
+
+    await _run_side_turn(state, parent, "run-1", "q", is_first_turn=True)
+
+    frames = [d for t, d in events if t == "chat.side_result"]
+    tool_frames = [d for d in frames if d["role"] == "tool"]
+    assert [d["content"][:1] for d in tool_frames] == ["🔧", "🚫"]
+    for frame in frames:
+        assert token not in frame["content"], frame
+        assert all(token not in v for v in (frame.get("meta") or {}).values())
+
+
+@pytest.mark.asyncio
 async def test_side_turn_carries_the_withheld_tail_below_the_tool_row(tmp_path, monkeypatch):
     """The stream redactor withholds a trailing credential-shaped run until more
     text proves it safe. A tool call ends the row, but the frame that settles the
@@ -824,7 +881,7 @@ async def test_side_turn_settles_a_row_whose_drawn_text_a_later_pass_rewrote(tmp
     redactor does this once the open key block and URL are held, so the
     mechanism is pinned with a redactor whose judgment of ``alpha`` waits for
     ``omega``."""
-    from kiro_crew.dashboard import side_segment_redactor as side_module
+    from kiro_crew.dashboard.handlers import side as side_module
 
     real_redact = side_module.redact
 
